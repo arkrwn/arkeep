@@ -5,23 +5,30 @@
 //! prints the root private key to stdout exactly once so the operator can
 //! copy it offline. That key is never written to disk and never logged.
 //!
-//! `init --host <id>` enrolls a host into an existing vault: on the very
-//! first host, it generates the vault's data-encryption key (DEK) and
-//! wraps it for the root keypair (`root_wrap`); on any later host, it
-//! recovers the existing DEK by unsealing and unwrapping an
-//! already-enrolled host's wrap, then wraps that same DEK for the new
-//! host. Either way, this host's own unseal key is sealed with the
-//! platform [`HostSeal`] backend and persisted under
+//! `init --host <id>` enrolls the *first* host into an existing vault: it
+//! generates the vault's data-encryption key (DEK), wraps it for the root
+//! keypair (`root_wrap`), generates this host's unseal key, seals it with
+//! the platform [`HostSeal`] backend, and wraps the DEK for this host.
+//! This host's sealed unseal key is persisted under
 //! `<data_dir>/hosts/<host_id>.seal`.
+//!
+//! Enrolling an *additional* host into a vault that already has one is
+//! deliberately out of scope here and returns
+//! `Err(CliError::RootWrapAlreadySet)`: doing that correctly requires
+//! unsealing the already-enrolled host's own key with *that host's* seal
+//! backend and sealing the new host's key with the *new* host's backend —
+//! two distinct `HostSeal`s. This function's signature only accepts one
+//! `seal`, which is structurally the wrong shape for that operation (on
+//! name-bound backends like `systemd-creds`, unsealing an existing host's
+//! blob with a seal constructed for a different host_id simply fails).
+//! That two-seal operation is Task 12's `run_enroll_host_with_seal`.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use mikvault_core::crypto::{
-    generate_root_keypair, unwrap_dek_for_host, wrap_dek_for_host, wrap_dek_for_root, KeyBytes,
-};
+use mikvault_core::crypto::{generate_root_keypair, wrap_dek_for_host, wrap_dek_for_root, KeyBytes};
 use mikvault_core::format::{FormatError, VaultFile, VaultMeta};
-use mikvault_core::seal::{HostSeal, SealedBlob};
+use mikvault_core::seal::HostSeal;
 
 #[cfg(target_os = "linux")]
 use mikvault_core::seal::SystemdCredsSeal;
@@ -43,6 +50,14 @@ pub enum CliError {
     VaultMissing,
     /// `init --host` was run with a `host_id` that is already enrolled.
     HostAlreadyEnrolled,
+    /// `init --host` was run against a vault that already has
+    /// `root_wrap: Some(_)` (i.e. a host is already enrolled) and a
+    /// *different* `host_id` than any already enrolled. Adding an
+    /// additional host to an already-initialized vault is Task 12's
+    /// `run_enroll_host_with_seal` (which takes both the existing host's
+    /// seal and the new host's seal), not `init --host` — see the module
+    /// doc comment for why a single-seal signature can't do this safely.
+    RootWrapAlreadySet,
 }
 
 impl fmt::Display for CliError {
@@ -55,6 +70,10 @@ impl fmt::Display for CliError {
                 write!(f, "no vault found in this data directory; run `init --root` first")
             }
             CliError::HostAlreadyEnrolled => write!(f, "this host is already enrolled"),
+            CliError::RootWrapAlreadySet => write!(
+                f,
+                "vault already has a host enrolled; use `enroll` to add another host, not `init --host`"
+            ),
         }
     }
 }
@@ -64,7 +83,10 @@ impl std::error::Error for CliError {
         match self {
             CliError::Io(e) => Some(e),
             CliError::Format(e) => Some(e),
-            CliError::VaultExists | CliError::VaultMissing | CliError::HostAlreadyEnrolled => None,
+            CliError::VaultExists
+            | CliError::VaultMissing
+            | CliError::HostAlreadyEnrolled
+            | CliError::RootWrapAlreadySet => None,
         }
     }
 }
@@ -171,22 +193,24 @@ pub fn run_init_root(data_dir: &Path) -> Result<String, CliError> {
     Ok(meta.root_pubkey_fingerprint)
 }
 
-/// Enroll `host_id` into the vault at `data_dir`, using `seal` as the
-/// `HostSeal` backend (injected so tests can use an in-memory fake instead
-/// of the real platform backend).
+/// Enroll the *first* host, `host_id`, into the vault at `data_dir`, using
+/// `seal` as the `HostSeal` backend (injected so tests can use an
+/// in-memory fake instead of the real platform backend).
 ///
 /// - Returns `Err(CliError::VaultMissing)` if `data_dir` has no vault yet
 ///   (i.e. `init --root` was never run).
 /// - Returns `Err(CliError::HostAlreadyEnrolled)` if `host_id` is already
 ///   in `vault.hosts`.
-/// - On the first host (vault has zero hosts), generates a fresh DEK and
-///   sets `vault.root_wrap`.
-/// - On any later host, recovers the existing DEK by unsealing and
-///   unwrapping an already-enrolled host's wrap.
-/// - Either way, generates a fresh unseal key for this host, seals it via
-///   `seal`, persists the sealed blob under
-///   `data_dir/hosts/<host_id>.seal`, wraps the DEK for this host, and
-///   updates `vault.mika` + `meta.json`.
+/// - Returns `Err(CliError::RootWrapAlreadySet)` if the vault already has
+///   `root_wrap: Some(_)` (i.e. some other host is already enrolled) —
+///   see the module doc comment for why adding an *additional* host is
+///   deliberately not handled here.
+/// - Otherwise (the vault has zero hosts and `root_wrap: None`): generates
+///   a fresh DEK, wraps it for the root keypair into `vault.root_wrap`,
+///   generates a fresh unseal key for this host, seals it via `seal`,
+///   persists the sealed blob under `data_dir/hosts/<host_id>.seal`, wraps
+///   the DEK for this host into `vault.hosts[host_id]`, and updates
+///   `vault.mika` + `meta.json`.
 pub fn run_init_host_with_seal(
     data_dir: &Path,
     host_id: &str,
@@ -203,29 +227,14 @@ pub fn run_init_host_with_seal(
         return Err(CliError::HostAlreadyEnrolled);
     }
 
-    let dek: [u8; 32] = if vault.hosts.is_empty() {
-        let dek = random_key();
-        vault.root_wrap = Some(wrap_dek_for_root(&dek, &vault.root_pubkey));
-        dek
-    } else {
-        // Recover the existing DEK via any already-enrolled host's wrap.
-        let (existing_id, existing_wrap) = vault
-            .hosts
-            .iter()
-            .next()
-            .map(|(id, wrap)| (id.clone(), wrap.clone()))
-            .expect("checked non-empty above");
+    if vault.root_wrap.is_some() {
+        return Err(CliError::RootWrapAlreadySet);
+    }
 
-        let sealed_bytes = std::fs::read(host_seal_path(data_dir, &existing_id))?;
-        let existing_host_key = seal
-            .unseal(&SealedBlob(sealed_bytes))
-            .map_err(|e| CliError::Io(std::io::Error::other(e)))?;
+    let dek = random_key();
+    vault.root_wrap = Some(wrap_dek_for_root(&dek, &vault.root_pubkey));
 
-        unwrap_dek_for_host(&existing_wrap, &existing_host_key)
-            .map_err(|e| CliError::Io(std::io::Error::other(e)))?
-    };
-
-    let host_key = random_key();
+    let host_key = KeyBytes::new(random_key());
     let sealed = seal
         .seal(&host_key)
         .map_err(|e| CliError::Io(std::io::Error::other(e)))?;
