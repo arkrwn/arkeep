@@ -16,17 +16,15 @@ Group=cofferak
 # Installed binary. Adjust if you installed it somewhere else.
 ExecStart=/usr/local/bin/cofferakd
 
-# Host unseal key, sealed with systemd-creds. Created by `systemd-creds encrypt`
-# (see docs/deployment.md). Delivered to the unit in $CREDENTIALS_DIRECTORY
-# and never written to disk unsealed.
-LoadCredentialEncrypted=cofferak_host_key:/etc/cofferak/host.cred
-
-# Where vault.cofferak, meta.json, host.seal and audit.jsonl live.
+# Where vault.cofferak, meta.json, host.seal and audit.jsonl live. host.seal is the
+# systemd-creds sealed host key, read directly by cofferakd (see docs/deployment.md).
 Environment=COFFERAK_DATA_DIR=/var/lib/cofferak
 # Unix socket the daemon listens on. The directory is created by RuntimeDirectory.
-Environment=COFFERAK_SOCKET=/run/cofferak/cofferak.sock
+# Socket is cofferak:cofferak, mode 0660; add consuming services to the cofferak group.
+Environment=COFFERAK_SOCKET=/run/cofferak/cofferakd.sock
 
-# Creates /run/cofferak owned by User=cofferak.
+# Creates /run/cofferak owned by User=cofferak. Group members need traverse
+# access to reach the socket.
 RuntimeDirectory=cofferak
 RuntimeDirectoryMode=0750
 # Creates /var/lib/cofferak owned by User=cofferak.

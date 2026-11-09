@@ -22,10 +22,9 @@ if they are unset, the daemon falls back to the per-OS default shown below.
 | `COFFERAK_DATA_DIR` | Directory holding `vault.cofferak`, `host.seal` and `audit.jsonl` | `/var/lib/cofferak` | `~/Library/Application Support/cofferak` |
 | `COFFERAK_SOCKET` | Path of the Unix socket the daemon listens on | `/run/cofferak/cofferakd.sock` | `~/Library/Application Support/cofferak/cofferakd.sock` |
 
-The templates set both variables explicitly. The Linux template uses
-`/run/cofferak/cofferak.sock`, which differs from the built-in fallback
-(`/run/cofferak/cofferakd.sock`). When you change one, change the matching
-client configuration too.
+The templates set both variables explicitly, using the same socket filename
+(`cofferakd.sock`) as the built-in fallback. When you change the socket path,
+change the matching client configuration too.
 
 The daemon will refuse to start if `vault.cofferak` is missing or corrupt, and
 if `host.seal` is missing or cannot be unsealed. It does not create an empty
@@ -39,8 +38,10 @@ The unit template:
 - sets `COFFERAK_DATA_DIR` and `COFFERAK_SOCKET`;
 - uses `RuntimeDirectory=cofferak` to create `/run/cofferak` for the socket,
   and `StateDirectory=cofferak` to create `/var/lib/cofferak` for the data;
-- loads the sealed host key with `LoadCredentialEncrypted=`;
 - restarts the daemon on failure and applies basic hardening.
+
+The daemon reads the sealed host key directly from `$COFFERAK_DATA_DIR/host.seal`.
+The unit does not deliver the key itself.
 
 ### Install
 
@@ -64,9 +65,13 @@ The unit template:
    sudo systemctl daemon-reload
    ```
 
-4. Place the vault files in the data directory (`/var/lib/cofferak`) and make
-   them owned by `cofferak`. Keep `host.seal` and `vault.cofferak` in this
-   directory.
+4. Create the sealed host key and the vault files in the data directory
+   (`/var/lib/cofferak`). See [Sealed host key](#sealed-host-key). Make the
+   directory and its contents owned by `cofferak`:
+
+   ```sh
+   sudo chown -R cofferak:cofferak /var/lib/cofferak
+   ```
 
 5. Start the service and check its status:
 
@@ -78,16 +83,18 @@ The unit template:
 
 ### Sealed host key
 
-The host key is sealed with `systemd-creds` and delivered through
-`LoadCredentialEncrypted=cofferak_host_key:/etc/cofferak/host.cred`.
-Create the sealed file once on the target host, for example:
+The host unseal key is sealed with `systemd-creds` and stored as
+`$COFFERAK_DATA_DIR/host.seal`. `cofferakd` reads that file and unseals it with
+`systemd-creds decrypt --name=cofferakd`, so the seal must be created with the
+same name. Create it once on the target host, with the data directory in place:
 
 ```sh
-sudo install -d -m 0700 /etc/cofferak
-sudo systemd-creds encrypt --name=cofferak_host_key - /etc/cofferak/host.cred
+sudo systemd-creds encrypt --name=cofferakd - /var/lib/cofferak/host.seal
 ```
 
-Read the caveat in [Known gaps](#known-gaps) before relying on this path.
+The `--name=cofferakd` value must match the `name` that `cofferakd`'s
+Linux seal uses (`SystemdCredsSeal { name: "cofferakd" }` in
+`cofferakd/src/main.rs`). A different name makes unsealing fail.
 
 ## macOS (launchd)
 
@@ -141,19 +148,16 @@ To stop and remove the agent:
 launchctl bootout gui/$(id -u)/com.cofferak.cofferakd
 ```
 
-## Known gaps
+## Socket permissions
 
-- **Linux credential delivery is not yet wired into the daemon.** The Linux
-  seal backend (`cofferak-core`, `SystemdCredsSeal`) reads the sealed
-  `host.seal` file from `COFFERAK_DATA_DIR` and calls
-  `systemd-creds decrypt --name=cofferakd`. It does not read
-  `$CREDENTIALS_DIRECTORY/cofferak_host_key`. The `LoadCredentialEncrypted=`
-  line in the unit therefore does not feed the daemon yet, and the credential
-  name in the unit (`cofferak_host_key`) does not match the name the daemon
-  binds into the seal (`cofferakd`). Until this is reconciled, the unit will
-  start the daemon, but unsealing will fail unless `host.seal` was produced
-  with the name the daemon expects.
-- **Socket permissions are not set by the daemon.** The design calls for mode
-  `0600`, owner `root:cofferak` on Linux. `cofferakd` binds the socket with
-  the default umask, so restrict access through the unit's `UMask=` or the
-  data and runtime directory modes until the daemon sets them itself.
+The daemon runs as the unprivileged `cofferak` user, so the socket it creates
+is owned by `cofferak:cofferak` with mode `0660`. `cofferakd` enforces this
+mode in code after binding. A service that needs access must run as a user in
+the `cofferak` group, which the unit's `RuntimeDirectoryMode=0750` allows:
+
+```sh
+sudo usermod -aG cofferak <consuming-service-user>
+```
+
+Do not make the socket root-owned. The daemon cannot create a root-owned
+socket while running as `cofferak`.

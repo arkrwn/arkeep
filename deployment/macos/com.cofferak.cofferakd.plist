@@ -29,7 +29,7 @@
         <string>/Users/REPLACE_WITH_USER/Library/Application Support/cofferak</string>
         <!-- Unix socket the daemon listens on. The parent directory must exist. -->
         <key>COFFERAK_SOCKET</key>
-        <string>/Users/REPLACE_WITH_USER/Library/Application Support/cofferak/cofferak.sock</string>
+        <string>/Users/REPLACE_WITH_USER/Library/Application Support/cofferak/cofferakd.sock</string>
     </dict>
 
     <key>RunAtLoad</key>
