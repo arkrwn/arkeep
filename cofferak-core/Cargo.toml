@@ -1,0 +1,9 @@
+[package]
+name = "cofferak-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Core library for cofferak: envelope encryption and vault storage"
+
+[dependencies]

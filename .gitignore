@@ -4,3 +4,4 @@ Cargo.lock.bak
 *.cred
 vault.cofferak
 meta.json
+/.superpowers/
