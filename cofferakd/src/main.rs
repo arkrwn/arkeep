@@ -1,1 +1,3 @@
+mod protocol;
+
 fn main() {}
