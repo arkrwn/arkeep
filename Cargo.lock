@@ -236,6 +236,7 @@ dependencies = [
 name = "cofferakd"
 version = "0.1.0"
 dependencies = [
+ "cofferak-core",
  "serde",
  "serde_json",
 ]
