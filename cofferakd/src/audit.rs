@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
-use std::io::{self, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 /// A single audit record. Never holds an access token, only the service id.
@@ -35,12 +35,25 @@ impl AuditLog {
 
     /// Appends one entry as a single JSON line.
     pub fn append(&self, entry: &AuditEntry) -> io::Result<()> {
-        let mut line = serde_json::to_vec(entry).map_err(io::Error::other)?;
-        line.push(b'\n');
         let mut file = OpenOptions::new()
+            .read(true)
             .append(true)
             .create(true)
             .open(&self.path)?;
+        let mut line = Vec::new();
+        // If a previous write was cut short, the file ends mid-line. Terminate that
+        // fragment first so the new entry starts on its own line instead of being
+        // concatenated onto it (which would make the valid entry unparseable).
+        if file.metadata()?.len() > 0 {
+            file.seek(SeekFrom::End(-1))?;
+            let mut last = [0u8; 1];
+            file.read_exact(&mut last)?;
+            if last[0] != b'\n' {
+                line.push(b'\n');
+            }
+        }
+        line.extend(serde_json::to_vec(entry).map_err(io::Error::other)?);
+        line.push(b'\n');
         file.write_all(&line)
     }
 
@@ -116,6 +129,25 @@ mod tests {
         }
         let log = AuditLog::open(&path).unwrap();
         assert_eq!(log.tail(2).unwrap(), vec![entry(1), entry(2)]);
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn append_after_partial_line_does_not_concatenate() {
+        let path = temp_path("partial");
+        let log = AuditLog::open(&path).unwrap();
+        log.append(&entry(1)).unwrap();
+        // Simulate a crash or short write that left a line with no trailing newline.
+        OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(b"{\"ts\":2,\"ser")
+            .unwrap();
+        log.append(&entry(3)).unwrap();
+
+        assert_eq!(log.tail(10).unwrap(), vec![entry(1), entry(3)]);
 
         let _ = fs::remove_file(&path);
     }
