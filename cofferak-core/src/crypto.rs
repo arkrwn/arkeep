@@ -21,6 +21,7 @@ use std::ops::Deref;
 use aes_gcm_siv::aead::{Aead, AeadCore, KeyInit};
 use aes_gcm_siv::{Aes256GcmSiv, Key as AesKey, Nonce as AesNonce};
 use rand_core::OsRng;
+use serde::{Deserialize, Serialize};
 use x25519_dalek::{EphemeralSecret, PublicKey, StaticSecret};
 use zeroize::Zeroize;
 
@@ -71,12 +72,18 @@ impl fmt::Display for CryptoError {
 impl std::error::Error for CryptoError {}
 
 /// A DEK wrapped (encrypted) under a symmetric host key.
+///
+/// `Debug`/`Clone`/`PartialEq` are derived (in addition to `Serialize` /
+/// `Deserialize`) so that Task 3's on-disk format, which embeds this struct
+/// directly inside `VaultFile`, can round-trip-test equality.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DekWrapHost {
     pub nonce: [u8; 12],
     pub ciphertext: Vec<u8>,
 }
 
 /// A DEK wrapped (encrypted) for a root X25519 keypair, ECIES-style.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DekWrapRoot {
     pub ephemeral_pubkey: [u8; 32],
     pub nonce: [u8; 12],
@@ -84,6 +91,7 @@ pub struct DekWrapRoot {
 }
 
 /// A vault entry encrypted under the vault's DEK.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EncryptedEntry {
     pub nonce: [u8; 12],
     pub ciphertext: Vec<u8>,
