@@ -1,0 +1,47 @@
+# systemd unit template for cofferakd.
+#
+# Copy to /etc/systemd/system/cofferakd.service and edit the marked lines.
+# See docs/deployment.md for the full install procedure.
+[Unit]
+Description=cofferak secrets vault daemon
+After=local-fs.target
+Wants=local-fs.target
+
+[Service]
+Type=simple
+# Dedicated unprivileged account; create it first (see docs/deployment.md).
+User=cofferak
+Group=cofferak
+
+# Installed binary. Adjust if you installed it somewhere else.
+ExecStart=/usr/local/bin/cofferakd
+
+# Host unseal key, sealed with systemd-creds. Created by `systemd-creds encrypt`
+# (see docs/deployment.md). Delivered to the unit in $CREDENTIALS_DIRECTORY
+# and never written to disk unsealed.
+LoadCredentialEncrypted=cofferak_host_key:/etc/cofferak/host.cred
+
+# Where vault.cofferak, meta.json, host.seal and audit.jsonl live.
+Environment=COFFERAK_DATA_DIR=/var/lib/cofferak
+# Unix socket the daemon listens on. The directory is created by RuntimeDirectory.
+Environment=COFFERAK_SOCKET=/run/cofferak/cofferak.sock
+
+# Creates /run/cofferak owned by User=cofferak.
+RuntimeDirectory=cofferak
+RuntimeDirectoryMode=0750
+# Creates /var/lib/cofferak owned by User=cofferak.
+StateDirectory=cofferak
+StateDirectoryMode=0700
+UMask=0077
+
+Restart=on-failure
+RestartSec=5
+
+# Basic hardening.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+
+[Install]
+WantedBy=multi-user.target
