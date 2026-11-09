@@ -4,3 +4,4 @@ Cargo.lock.bak
 *.cred
 vault.mika
 meta.json
+/.superpowers/
