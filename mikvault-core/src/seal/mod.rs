@@ -20,6 +20,12 @@ mod linux;
 #[cfg(target_os = "linux")]
 pub use linux::SystemdCredsSeal;
 
+#[cfg(target_os = "macos")]
+mod macos;
+
+#[cfg(target_os = "macos")]
+pub use macos::KeychainSeal;
+
 /// An opaque, host-sealed blob produced by a [`HostSeal`] implementation.
 ///
 /// The bytes are only meaningful to the backend (and host) that produced
