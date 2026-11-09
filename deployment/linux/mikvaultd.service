@@ -16,17 +16,15 @@ Group=mikvault
 # Installed binary. Adjust if you installed it somewhere else.
 ExecStart=/usr/local/bin/mikvaultd
 
-# Host unseal key, sealed with systemd-creds. Created by `systemd-creds encrypt`
-# (see docs/deployment.md). Delivered to the unit in $CREDENTIALS_DIRECTORY
-# and never written to disk unsealed.
-LoadCredentialEncrypted=mikvault_host_key:/etc/mikvault/host.cred
-
-# Where vault.mika, meta.json, host.seal and audit.jsonl live.
+# Where vault.mika, meta.json, host.seal and audit.jsonl live. host.seal is the
+# systemd-creds sealed host key, read directly by mikvaultd (see docs/deployment.md).
 Environment=MIKVAULT_DATA_DIR=/var/lib/mikvault
 # Unix socket the daemon listens on. The directory is created by RuntimeDirectory.
-Environment=MIKVAULT_SOCKET=/run/mikvault/mikvault.sock
+# Socket is mikvault:mikvault, mode 0660; add consuming services to the mikvault group.
+Environment=MIKVAULT_SOCKET=/run/mikvault/mikvaultd.sock
 
-# Creates /run/mikvault owned by User=mikvault.
+# Creates /run/mikvault owned by User=mikvault. Group members need traverse
+# access to reach the socket.
 RuntimeDirectory=mikvault
 RuntimeDirectoryMode=0750
 # Creates /var/lib/mikvault owned by User=mikvault.

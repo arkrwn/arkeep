@@ -29,7 +29,7 @@
         <string>/Users/REPLACE_WITH_USER/Library/Application Support/mikvault</string>
         <!-- Unix socket the daemon listens on. The parent directory must exist. -->
         <key>MIKVAULT_SOCKET</key>
-        <string>/Users/REPLACE_WITH_USER/Library/Application Support/mikvault/mikvault.sock</string>
+        <string>/Users/REPLACE_WITH_USER/Library/Application Support/mikvault/mikvaultd.sock</string>
     </dict>
 
     <key>RunAtLoad</key>

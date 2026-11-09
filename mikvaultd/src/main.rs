@@ -149,6 +149,17 @@ fn main() {
         );
         std::process::exit(1);
     });
+    // Enforce the socket mode in code rather than relying on the ambient umask.
+    if let Err(e) = std::fs::set_permissions(
+        &sock_path,
+        <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o660),
+    ) {
+        eprintln!(
+            "mikvaultd: could not set permissions on socket at {}: {e}",
+            sock_path.display()
+        );
+        std::process::exit(1);
+    }
 
     for stream in listener.incoming() {
         let stream = match stream {
