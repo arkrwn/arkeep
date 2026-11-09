@@ -204,8 +204,8 @@ restart, secret read, or secret write.
   templates.
 - A `docs/recovery-runbook.md` documents the `recover --root-key` disaster
   path step by step.
-- License: MIT (default choice; swap later if the creator prefers
-  otherwise).
+- License: Apache License 2.0, with a NOTICE/TRADEMARK.md/CLA.md pack
+  shared across the creator's open-source projects.
 - No AI attribution anywhere — no co-author trailers, no "generated with"
   text, in commits, code comments, or docs.
 
