@@ -350,9 +350,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "cofferak-sdk"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cofferakd"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "cofferak-core",
  "serde",
  "serde_json",

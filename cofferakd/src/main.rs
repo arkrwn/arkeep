@@ -5,6 +5,7 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use cofferak_core::crypto::{decrypt_entry, unwrap_dek_for_host};
 use cofferak_core::format::{FormatError, VaultFile};
 use cofferak_core::seal::{HostSeal, SealedBlob};
 
@@ -14,7 +15,7 @@ use cofferak_core::seal::KeychainSeal;
 use cofferak_core::seal::SystemdCredsSeal;
 
 use cofferakd::audit::AuditLog;
-use cofferakd::daemon::Daemon;
+use cofferakd::daemon::{token_key, Daemon};
 use cofferakd::protocol::{decode_request, encode, Response};
 
 /// Default data directory on Linux, used unless `$COFFERAK_DATA_DIR` is set.
@@ -75,19 +76,83 @@ pub fn load_vault_or_exit(data_dir: &Path) -> Result<VaultFile, String> {
     })
 }
 
+/// Build the `HostSeal` backend for `host_id`. **Must match
+/// `cofferak-cli/src/commands/init.rs`'s `current_host_seal(host_id)`
+/// exactly** — the daemon and the CLI are sealing/unsealing the same
+/// per-host blob under the same OS-level identity (Keychain
+/// service/account, or `systemd-creds` credential name), so a mismatch
+/// here means the daemon can never unseal what `init --host`/
+/// `enroll-host` sealed.
 #[cfg(target_os = "linux")]
-fn host_seal() -> SystemdCredsSeal {
+fn host_seal(host_id: &str) -> SystemdCredsSeal {
     SystemdCredsSeal {
-        name: "cofferakd".to_string(),
+        name: format!("cofferak-{host_id}"),
     }
 }
 
 #[cfg(target_os = "macos")]
-fn host_seal() -> KeychainSeal {
+fn host_seal(host_id: &str) -> KeychainSeal {
     KeychainSeal {
-        service: "cofferakd".to_string(),
-        account: "host-key".to_string(),
+        service: "cofferak".to_string(),
+        account: host_id.to_string(),
     }
+}
+
+/// Which host this daemon process is running as. `$COFFERAK_HOST_ID` if
+/// set; otherwise, if the vault has exactly one enrolled host, that one
+/// (the common single-host case needs no extra configuration); otherwise
+/// an error naming every enrolled host so the operator can set the env
+/// var explicitly.
+fn resolve_host_id(vault: &VaultFile) -> Result<String, String> {
+    if let Ok(id) = std::env::var("COFFERAK_HOST_ID") {
+        if !id.is_empty() {
+            return Ok(id);
+        }
+    }
+    let mut ids: Vec<&String> = vault.hosts.keys().collect();
+    match ids.len() {
+        0 => Err("this vault has no enrolled hosts yet; run `cofferak init --host` first".into()),
+        1 => Ok(ids.remove(0).clone()),
+        _ => Err(format!(
+            "this vault has multiple enrolled hosts ({}); set $COFFERAK_HOST_ID to the one this process runs as",
+            ids.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+        )),
+    }
+}
+
+/// Decrypt and deserialize every enrolled service's `AccessToken` out of
+/// `vault.services`, keyed for [`Daemon`] by [`token_key`] (the wire
+/// token string clients send). A service entry that fails to
+/// decrypt/deserialize is skipped with a warning rather than aborting
+/// startup over one bad entry — mirroring the audit log's "skip the
+/// malformed line, keep the rest" philosophy.
+fn load_tokens(
+    vault: &VaultFile,
+    dek: &[u8; 32],
+) -> BTreeMap<String, cofferak_core::acl::AccessToken> {
+    let mut tokens = BTreeMap::new();
+    for (service_id, entry) in &vault.services {
+        let plaintext = match decrypt_entry(dek, entry) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                eprintln!(
+                    "cofferakd: could not decrypt token for service '{service_id}': {e}, skipping it"
+                );
+                continue;
+            }
+        };
+        let token: cofferak_core::acl::AccessToken = match bincode::deserialize(&plaintext) {
+            Ok(token) => token,
+            Err(e) => {
+                eprintln!(
+                    "cofferakd: could not decode token for service '{service_id}': {e}, skipping it"
+                );
+                continue;
+            }
+        };
+        tokens.insert(token_key(&token.secret), token);
+    }
+    tokens
 }
 
 fn main() {
@@ -103,8 +168,13 @@ fn main() {
         }
     };
 
-    let seal = host_seal();
-    let sealed_path = data_dir.join("host.seal");
+    let host_id = resolve_host_id(&vault).unwrap_or_else(|msg| {
+        eprintln!("cofferakd: {msg}");
+        std::process::exit(1);
+    });
+
+    let seal = host_seal(&host_id);
+    let sealed_path = data_dir.join("hosts").join(format!("{host_id}.seal"));
     let sealed_bytes = std::fs::read(&sealed_path).unwrap_or_else(|e| {
         eprintln!(
             "cofferakd: could not read sealed host key at {}: {e}",
@@ -112,8 +182,18 @@ fn main() {
         );
         std::process::exit(1);
     });
-    let dek = seal.unseal(&SealedBlob(sealed_bytes)).unwrap_or_else(|e| {
-        eprintln!("cofferakd: failed to unseal host key: {e}");
+    let host_key = seal.unseal(&SealedBlob(sealed_bytes)).unwrap_or_else(|e| {
+        eprintln!("cofferakd: failed to unseal this host's key: {e}");
+        std::process::exit(1);
+    });
+    let host_wrap = vault.hosts.get(&host_id).unwrap_or_else(|| {
+        eprintln!(
+            "cofferakd: host '{host_id}' has a sealed key file but is not enrolled in this vault"
+        );
+        std::process::exit(1);
+    });
+    let dek = unwrap_dek_for_host(host_wrap, &host_key).unwrap_or_else(|e| {
+        eprintln!("cofferakd: failed to unwrap this vault's DEK for host '{host_id}': {e}");
         std::process::exit(1);
     });
 
@@ -126,11 +206,7 @@ fn main() {
         std::process::exit(1);
     });
 
-    // Token provisioning (loading the real token store from disk) lands in
-    // a later task; start with an empty token map so the daemon still
-    // compiles and runs end-to-end, denying every request until tokens are
-    // wired in.
-    let tokens: BTreeMap<String, cofferak_core::acl::AccessToken> = BTreeMap::new();
+    let tokens = load_tokens(&vault, &dek);
 
     let daemon = Arc::new(Mutex::new(Daemon::new(dek, vault, tokens, audit)));
 

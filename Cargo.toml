@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["cofferak-core", "cofferakd", "cofferak-cli"]
+members = ["cofferak-core", "cofferakd", "cofferak-cli", "sdk/rust/cofferak-sdk"]
 
 [workspace.package]
 version = "0.1.0"

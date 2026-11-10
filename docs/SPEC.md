@@ -61,7 +61,40 @@ Unix socket, enforcing each token's path-prefix ACL, until shutdown (DEK
 zeroized). No creator/root-private-key interaction on any normal boot,
 restart, read, or write.
 
-## 6. CLI surface (current)
+`cofferakd` needs `$COFFERAK_HOST_ID` to know which enrolled host it is
+running as whenever the vault has more than one (default: the single
+host, if there's only one). It reads that host's sealed key from
+`hosts/<id>.seal`, unwraps the DEK from `vault.hosts[id]`, and decrypts
+every `vault.services` entry into an `AccessToken` keyed by the hex of
+its own `secret` (matching the wire `token` string clients send) before
+serving any request (see ADR 0006 — this token-loading step was
+missing for a while and is now fixed and real).
+
+## 6. Wire protocol
+
+Newline-delimited JSON over the Unix socket at `$COFFERAK_SOCKET`
+(`cofferakd/src/protocol.rs`'s `Request`/`Response`, serde's default
+externally-tagged enum encoding — every SDK in §8 implements this
+exactly):
+
+```
+Request  → {"Get":{"token":"<hex>","path":"a/b"}}
+          | {"Set":{"token":"<hex>","path":"a/b","value":[1,2,3]}}
+          | {"Rm":{"token":"<hex>","path":"a/b"}}
+          | {"List":{"token":"<hex>","prefix":"a"}}
+
+Response → {"Value":[1,2,3]} | {"Listed":["a/b","a/c"]}
+          | "Ok" | "Denied" | "NotFound" | {"Err":"message"}
+```
+
+`value`/`Value` are plain JSON arrays of byte values (`Vec<u8>`'s
+default `serde_json` encoding) — **not** base64. This has bitten one SDK
+already (Go's `encoding/json` base64-encodes `[]byte` by default; see
+`sdk/go/cofferak/cofferak.go`'s explicit `[]int` conversion) — any future
+SDK must convert explicitly too, not rely on its language's default
+byte-array JSON encoding.
+
+## 7. CLI surface (current)
 
 `init --root|--host`, `enroll-host`, `enroll-service`, `set|get|rm|list`
 (over the socket), `rotate-dek` (direct file, atomic write-temp-then-rename),
@@ -69,9 +102,18 @@ restart, read, or write.
 `audit tail`. See `cofferak-cli/src/main.rs` for exact flags — this spec
 does not restate flag syntax.
 
-## 7. What's deliberately out of scope
+## 8. SDKs
+
+Client SDKs implementing §6's wire protocol exist for Rust, Go, Python,
+and TypeScript/JavaScript (`sdk/<lang>/...`), each with a smoke test
+(`sdk/<lang>/.../examples/smoke.*`) proven against a real daemon by
+`scripts/sdk-smoke.sh`, wired into CI as the `sdk-smoke` job. See ADR
+0005 and `docs/sample-integration/` for usage. Planned: C, C++, Perl,
+Ruby (`docs/sample-integration/roadmap.md`).
+
+## 9. What's deliberately out of scope
 
 No multi-operator/quorum (no Shamir shares) — single creator, single root
-trust. No general config templating. No remote/clustered mode. No
-automatic wiring of multiple CLI-enrolled hosts into one running daemon
-(see `docs/PROGRESS.md` for this gap's current status).
+trust. No general config templating. No remote/clustered mode. One
+`cofferakd` process serves exactly one host (`$COFFERAK_HOST_ID`) — nothing
+load-balances or proxies across multiple enrolled hosts' daemons.
