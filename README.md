@@ -167,10 +167,44 @@ on macOS). `set`/`get`/`rm`/`list` additionally accept `--socket <PATH>`
 | `audit tail [--count N]` | Print the last `N` (default 20) entries of the daemon's audit log, read directly from `<data_dir>/audit.jsonl`. |
 
 `mikavtd` itself takes no CLI flags; it reads `MIKAVT_DATA_DIR` and
-`MIKAVT_SOCKET` from the environment (same per-OS defaults as above).
-See [`docs/deployment.md`](docs/deployment.md) for running it as a
-systemd service (Linux) or a launchd agent (macOS), including the
-`systemd-creds`/Keychain host-key sealing steps and socket permissions.
+`MIKAVT_SOCKET` from the environment (same per-OS defaults as above), and
+`MIKAVT_HOST_ID` to pick which enrolled host's sealed key to use when the
+vault has more than one (unneeded, and inferred automatically, when
+there's exactly one). See [`docs/deployment.md`](docs/deployment.md) for
+running it as a systemd service (Linux) or a launchd agent (macOS),
+including the `systemd-creds`/Keychain host-key sealing steps and socket
+permissions.
+
+## SDKs
+
+A consuming service talks to `mikavtd` over its Unix socket using the
+newline-delimited JSON protocol in [`docs/SPEC.md`](docs/SPEC.md) §6.
+Four client SDKs implement it today — each is smoke-tested for real
+against a running daemon in CI (`scripts/sdk-smoke.sh`,
+`.github/workflows/ci.yml`'s `sdk-smoke` job), not just documented:
+
+| Language | Package | Example |
+|---|---|---|
+| Rust | [`sdk/rust/mikavt-sdk`](sdk/rust/mikavt-sdk) | [`docs/sample-integration/rust.md`](docs/sample-integration/rust.md) |
+| Go | [`sdk/go/mikavt`](sdk/go/mikavt) | [`docs/sample-integration/go.md`](docs/sample-integration/go.md) |
+| Python | [`sdk/python/mikavt_sdk`](sdk/python/mikavt_sdk) | [`docs/sample-integration/python.md`](docs/sample-integration/python.md) |
+| TypeScript | [`sdk/javascript/mikavt-sdk`](sdk/javascript/mikavt-sdk) | [`docs/sample-integration/typescript.md`](docs/sample-integration/typescript.md) |
+| JavaScript | same package, compiled `dist/` | [`docs/sample-integration/javascript.md`](docs/sample-integration/javascript.md) |
+
+```python
+# Python, the shortest example — same shape in every SDK above.
+from mikavt_sdk import Client
+
+client = Client("/run/mikavt/mikavtd.sock")
+client.set("<token>", "myapp/DB_PASSWORD", b"s3cr3t")
+value = client.get("<token>", "myapp/DB_PASSWORD")
+```
+
+None of these are published to a package registry yet — consume them via
+a local path/relative reference (see each SDK's own page above) until
+the wire protocol and SDK surface area are stable enough to commit to.
+Planned next: C, C++, Perl, Ruby — see
+[`docs/sample-integration/roadmap.md`](docs/sample-integration/roadmap.md).
 
 ## Building and testing
 
@@ -185,6 +219,12 @@ clear message if `systemd-creds` isn't on `PATH`, e.g. off Linux) and
 `tests/seal_macos.rs` (runs for real against a uniquely-named,
 test-scoped Keychain item on macOS, and cleans it up afterward).
 
+To additionally prove every SDK against a real running daemon:
+
+```bash
+./scripts/sdk-smoke.sh
+```
+
 ## Further reading
 
 - [`docs/deployment.md`](docs/deployment.md) — running `mikavtd` as a
@@ -193,9 +233,9 @@ test-scoped Keychain item on macOS, and cleans it up afterward).
 - [`docs/recovery-runbook.md`](docs/recovery-runbook.md) — disaster
   recovery with the offline root private key, for an operator who has
   never seen this project before.
-- [`docs/integrations.md`](docs/integrations.md) — worked examples:
-  systemd unit for a consuming service, shell examples for
-  get/set/list, a minimal raw-socket Rust client.
+- [`docs/sample-integration/`](docs/sample-integration/) — worked, CI-run
+  examples: CLI/shell, and the Rust/Go/Python/TypeScript/JavaScript SDKs
+  below.
 - [`docs/SPEC.md`](docs/SPEC.md) — full design: on-disk format, the
   daemon's request protocol, and the disaster-recovery flow.
 - [`docs/adr/`](docs/adr/) — numbered point decisions (why envelope

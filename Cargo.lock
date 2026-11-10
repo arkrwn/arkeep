@@ -350,9 +350,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "mikavt-sdk"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "mikavtd"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "mikavt-core",
  "serde",
  "serde_json",

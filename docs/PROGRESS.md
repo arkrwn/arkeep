@@ -25,14 +25,29 @@ from a command or test that was actually run. States: `todo`, `doing`,
 | CI (fmt, clippy, test on ubuntu + macos, on every push and PR) | done | `.github/workflows/ci.yml`; `cargo fmt --all -- --check` / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo test --workspace` all clean in a fresh clone |
 | Packaging (README, LICENSE pack, recovery runbook) | done | Apache-2.0 + NOTICE/TRADEMARK/CLA; fresh `git clone` → `cargo build --workspace --release` → `cargo test --workspace` passed with no other context |
 | Rename `mikvault` → `mikavt` | done | Full workspace rebuild + `cargo test --workspace` + `cargo clippy -D warnings` green after the rename; binary name is `mikavt` |
+| Real per-host DEK reconstruction + token loading in `mikavtd` (ADR 0006) | done | Was a real, previously-unexercised bug (daemon denied every request, always) — fixed; `./scripts/sdk-smoke.sh` (full mode, Linux) now runs the real `mikavt`/`mikavtd` binaries end to end and passes |
+| SDK: Rust (`sdk/rust/mikavt-sdk`) | done | `sdk-smoke` passes locally and is wired into CI |
+| SDK: Go (`sdk/go/mikavt`) | done | Same; required an explicit `[]int` conversion workaround for `encoding/json`'s base64 default on `[]byte` — see ADR 0005/`docs/SPEC.md` §6 |
+| SDK: Python (`sdk/python/mikavt_sdk`) | done | Same, stdlib only |
+| SDK: TypeScript/JavaScript (`sdk/javascript/mikavt-sdk`) | done | Same; smoke test runs against the compiled `dist/` output, proving the JS consumption path too |
+| `sdk-smoke` CI job | done | Added to `.github/workflows/ci.yml`; `ubuntu-latest` runs "full" mode (real binaries + real `systemd-creds`), `macos-latest` runs "dev" mode (see ADR 0007) |
 
 ## Known gaps / open items
 
-- No task currently wires multiple CLI-enrolled hosts into one running
-  `mikavtd` process (the daemon only ever serves the single host whose
-  sealed blob lives at the fixed per-host path it was started with).
+- **macOS Keychain cross-process access (ADR 0007, open, not yet fixed).**
+  `mikavtd` reading a sealed key that `mikavt init --host` (a different
+  binary) created hangs waiting on an authorization step that can't
+  render in a non-interactive session, rather than failing fast. Verified
+  independent of this project's code (`security find-generic-password`
+  itself hangs the same way). `scripts/sdk-smoke.sh` falls back to an
+  in-memory dev daemon on macOS to still prove the SDKs for real; the
+  authoritative full end-to-end proof runs in CI on `ubuntu-latest`
+  (`systemd-creds` has no equivalent per-process ACL problem).
+- One `mikavtd` process serves exactly one host (`$MIKAVT_HOST_ID`); it
+  does not load-balance or proxy across multiple enrolled hosts.
   `enroll-host` correctly re-wraps the DEK for additional hosts on disk;
-  nothing yet starts a daemon that reads more than one of those wraps.
+  nothing starts one daemon that serves more than one of those hosts at
+  once (not currently a goal — see `docs/SPEC.md` §9).
 - `mikavt-cli/src/main.rs` and a few of its test files reach `mikavtd`'s
   `protocol`/`daemon`/`audit` modules via `#[path]` rather than
   `mikavtd::...` directly (ADR 0004) — a scoped-out cleanup, not a defect.

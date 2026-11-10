@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["mikavt-core", "mikavtd", "mikavt-cli"]
+members = ["mikavt-core", "mikavtd", "mikavt-cli", "sdk/rust/mikavt-sdk"]
 
 [workspace.package]
 version = "0.1.0"

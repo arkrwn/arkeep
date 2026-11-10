@@ -83,6 +83,15 @@ multi-agent review process by default. Only escalate to a dedicated
 multi-agent review workflow when the human maintainer explicitly asks for
 one — it is not this repo's default working mode.
 
+## Adding a new SDK or sample integration
+
+Follow ADR 0005: a new language SDK ships with a real smoke test
+(`sdk/<lang>/.../examples/smoke.*`) wired into `scripts/sdk-smoke.sh` and
+the `sdk-smoke` CI job — not just a doc page claiming it works. Add the
+matching page to `docs/sample-integration/` and update the SDK table in
+`README.md` and `docs/SPEC.md` §8. A sample that only exists as
+documentation, never executed, is not done.
+
 ## CI
 
 `.github/workflows/ci.yml` runs on every push and every pull request:

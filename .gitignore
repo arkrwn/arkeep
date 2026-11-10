@@ -5,3 +5,8 @@ Cargo.lock.bak
 vault.mika
 meta.json
 /.superpowers/
+node_modules/
+dist/
+*.tsbuildinfo
+__pycache__/
+*.pyc
