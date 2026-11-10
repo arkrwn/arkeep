@@ -58,3 +58,8 @@ jobs:
 
       - name: Run every SDK's smoke test against a real daemon
         run: ./scripts/sdk-smoke.sh
+
+      # openssl ships preinstalled on both ubuntu-latest and
+      # macos-latest GitHub-hosted runners.
+      - name: Run the server-mode (TLS + mutual TLS) smoke test
+        run: ./scripts/server-mode-smoke.sh

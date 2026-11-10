@@ -210,6 +210,17 @@ fn main() {
 
     let daemon = Arc::new(Mutex::new(Daemon::new(dek, vault, tokens, audit)));
 
+    // Server mode (ADR 0008): additive, opt-in via $COFFERAK_TLS_ADDR. The
+    // Unix socket below is unaffected either way.
+    match cofferakd::tls_server::resolve() {
+        Ok(Some(tls_config)) => cofferakd::tls_server::start(tls_config, Arc::clone(&daemon)),
+        Ok(None) => {}
+        Err(msg) => {
+            eprintln!("cofferakd: {msg}");
+            std::process::exit(1);
+        }
+    }
+
     let sock_path = socket_path();
     let _ = std::fs::remove_file(&sock_path);
     let listener = UnixListener::bind(&sock_path).unwrap_or_else(|e| {
