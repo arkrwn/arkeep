@@ -35,9 +35,7 @@ use cofferak_core::crypto::{encrypt_entry, unwrap_dek_for_host, wrap_dek_for_hos
 use cofferak_core::format::{VaultFile, VaultMeta};
 use cofferak_core::seal::{HostSeal, SealedBlob};
 
-use super::init::{
-    current_host_seal, host_seal_path, meta_path, random_key, vault_path, CliError,
-};
+use super::init::{current_host_seal, host_seal_path, meta_path, random_key, vault_path, CliError};
 
 /// Enroll `new_host_id` into a vault that already has `this_host_id`
 /// enrolled.
@@ -97,9 +95,10 @@ pub fn run_enroll_host_with_seal(
     std::fs::create_dir_all(data_dir.join("hosts"))?;
     std::fs::write(host_seal_path(data_dir, new_host_id), &sealed.0)?;
 
-    vault
-        .hosts
-        .insert(new_host_id.to_string(), wrap_dek_for_host(&dek, &new_host_key));
+    vault.hosts.insert(
+        new_host_id.to_string(),
+        wrap_dek_for_host(&dek, &new_host_key),
+    );
 
     vault.save(&vpath)?;
     let meta = VaultMeta::from_vault(&vault);
@@ -210,8 +209,8 @@ pub fn run_enroll_service_with_seal(
         secret: random_key(),
     };
 
-    let plaintext = bincode::serialize(&token)
-        .map_err(|e| CliError::Io(std::io::Error::other(e)))?;
+    let plaintext =
+        bincode::serialize(&token).map_err(|e| CliError::Io(std::io::Error::other(e)))?;
     let entry = encrypt_entry(&dek, &plaintext);
 
     vault.services.insert(service_id.to_string(), entry);

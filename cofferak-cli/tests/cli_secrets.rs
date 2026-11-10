@@ -24,18 +24,22 @@
 //! import; this is the "real `UnixListener` thread serving
 //! `Daemon::handle_request`" the task brief calls for, not a mock.
 
-#[path = "../../cofferakd/src/protocol.rs"]
-mod protocol;
 #[path = "../../cofferakd/src/audit.rs"]
 mod audit;
-#[path = "../../cofferakd/src/daemon.rs"]
-mod daemon;
+#[allow(dead_code)] // each test binary uses only a subset of these shared source modules
 #[path = "../src/client.rs"]
 mod client;
-#[path = "../src/commands/init.rs"]
-mod init;
+#[path = "../../cofferakd/src/daemon.rs"]
+mod daemon;
+#[allow(dead_code)] // each test binary uses only a subset of these shared source modules
 #[path = "../src/commands/enroll.rs"]
 mod enroll;
+#[allow(dead_code)] // each test binary uses only a subset of these shared source modules
+#[path = "../src/commands/init.rs"]
+mod init;
+#[path = "../../cofferakd/src/protocol.rs"]
+mod protocol;
+#[allow(dead_code)] // each test binary uses only a subset of these shared source modules
 #[path = "../src/commands/secrets.rs"]
 mod secrets;
 
@@ -48,7 +52,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use cofferak_core::acl::{AccessToken, Permission};
-use cofferak_core::crypto::{decrypt_entry, encrypt_entry, generate_root_keypair, unwrap_dek_for_host};
+use cofferak_core::crypto::{
+    decrypt_entry, encrypt_entry, generate_root_keypair, unwrap_dek_for_host,
+};
 use cofferak_core::format::{VaultEntry, VaultFile};
 use cofferak_core::seal::{HostSeal, SealError, SealedBlob};
 
@@ -265,16 +271,25 @@ fn requests_outside_the_token_prefix_are_denied_not_panicking_or_empty() {
     let token = token_key(&TOKEN_SECRET);
 
     let get_result = run_get(&client, &token, "other/KEY");
-    assert!(matches!(get_result, Err(CliError::Denied)), "{get_result:?}");
+    assert!(
+        matches!(get_result, Err(CliError::Denied)),
+        "{get_result:?}"
+    );
 
     let set_result = run_set(&client, &token, "other/KEY", b"x".to_vec());
-    assert!(matches!(set_result, Err(CliError::Denied)), "{set_result:?}");
+    assert!(
+        matches!(set_result, Err(CliError::Denied)),
+        "{set_result:?}"
+    );
 
     let rm_result = run_rm(&client, &token, "other/KEY");
     assert!(matches!(rm_result, Err(CliError::Denied)), "{rm_result:?}");
 
     let list_result = run_list(&client, &token, "other");
-    assert!(matches!(list_result, Err(CliError::Denied)), "{list_result:?}");
+    assert!(
+        matches!(list_result, Err(CliError::Denied)),
+        "{list_result:?}"
+    );
 
     let _ = std::fs::remove_file(&audit_path);
 }
@@ -329,8 +344,7 @@ fn run_rotate_dek_reencrypts_entries_and_services_and_invalidates_old_dek() {
     let seal_a = FakeHostSeal { tag: 0xA1 };
     run_init_host_with_seal(&dir, "host-a", &seal_a).expect("enroll host-a");
     let seal_b = FakeHostSeal { tag: 0xB2 };
-    run_enroll_host_with_seal(&dir, "host-a", "host-b", &seal_a, &seal_b)
-        .expect("enroll host-b");
+    run_enroll_host_with_seal(&dir, "host-a", "host-b", &seal_a, &seal_b).expect("enroll host-b");
 
     // Recover the DEK that enrollment just generated, to manually seed
     // three entries plus one service token: `init`/`enroll` have no
@@ -385,7 +399,10 @@ fn run_rotate_dek_reencrypts_entries_and_services_and_invalidates_old_dek() {
         new_dek_via_a, new_dek_via_b,
         "both hosts must recover the identical new DEK"
     );
-    assert_ne!(new_dek_via_a, old_dek, "rotation must actually change the DEK");
+    assert_ne!(
+        new_dek_via_a, old_dek,
+        "rotation must actually change the DEK"
+    );
 
     // Every entry and the service token still decrypt to their original
     // plaintext under the new DEK.
@@ -414,10 +431,7 @@ fn run_rotate_dek_reencrypts_entries_and_services_and_invalidates_old_dek() {
     let old_dek_via_old_wrap = unwrap_dek_for_host(&old_wrap_a, &host_key_a)
         .expect("the old wrap bytes still unwrap with the unchanged host key");
     assert_eq!(old_dek_via_old_wrap, old_dek);
-    let first_entry = rotated
-        .entries
-        .get(plaintexts[0].0)
-        .expect("entry exists");
+    let first_entry = rotated.entries.get(plaintexts[0].0).expect("entry exists");
     let old_dek_decrypt_result = decrypt_entry(&old_dek_via_old_wrap, &first_entry.ciphertext);
     assert!(
         old_dek_decrypt_result.is_err(),
@@ -453,10 +467,12 @@ fn run_rotate_dek_with_an_unenrolled_host_fails_without_panicking_or_rotating() 
     let hosts: Vec<(String, Box<dyn HostSeal>)> =
         vec![("host-c".to_string(), Box::new(FakeHostSeal { tag: 0xC3 }))];
     let result = run_rotate_dek(&dir, &hosts);
-    assert!(result.is_err(), "rotating against an unenrolled host must fail, not succeed");
+    assert!(
+        result.is_err(),
+        "rotating against an unenrolled host must fail, not succeed"
+    );
 
-    let vault_bytes_after =
-        std::fs::read(vault_path(&dir)).expect("vault.cofferak should still exist");
+    let vault_bytes_after = std::fs::read(vault_path(&dir)).expect("vault.cofferak should still exist");
     assert_eq!(
         vault_bytes_before, vault_bytes_after,
         "a failed rotation must not modify vault.cofferak"

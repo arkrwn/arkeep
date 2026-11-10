@@ -66,7 +66,6 @@ impl Client {
                 "daemon closed the connection without sending a response",
             ));
         }
-        decode_response(&line)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+        decode_response(&line).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
     }
 }
