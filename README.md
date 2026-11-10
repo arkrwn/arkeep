@@ -1,13 +1,13 @@
-# mikvault
+# mikavt
 
 A small, dependency-free secrets vault for any service on Linux or macOS —
 no HashiCorp Vault, no cloud KMS, no network service beyond a local Unix
-socket. Clone it into a project as a `mikvault/` subdirectory, or run it
+socket. Clone it into a project as a `mikavt/` subdirectory, or run it
 standalone.
 
 > **Status: feature-complete.** The crypto/format/ACL core, both
-> `HostSeal` backends, the daemon (`mikvaultd`), the admin CLI
-> (`mikvault-cli`), deployment templates, and an audit log are all
+> `HostSeal` backends, the daemon (`mikavtd`), the admin CLI
+> (`mikavt-cli`), deployment templates, and an audit log are all
 > implemented and tested. See [Commands](#commands) for the full CLI
 > surface and [Quickstart](#quickstart) to stand up a vault end to end.
 
@@ -15,7 +15,7 @@ standalone.
 
 Most secrets-management setups either hand you a server to operate
 (Vault, a cloud KMS) or a flat encrypted file with one shared passphrase.
-mikvault is neither: it's an **envelope-encryption** vault where the key
+mikavt is neither: it's an **envelope-encryption** vault where the key
 that decrypts your secrets is itself sealed by the operating system's own
 secure-storage primitive — `systemd-creds` on Linux, Keychain on macOS —
 so the unseal key is never a plaintext file sitting next to the vault.
@@ -23,7 +23,7 @@ so the unseal key is never a plaintext file sitting next to the vault.
 - **No external dependency.** No server to run, no account to create, no
   network call to any third-party KMS. The only two things on the wire
   are a local Unix socket and the files on disk.
-- **One codebase, two platforms.** `mikvault-core` (crypto, on-disk
+- **One codebase, two platforms.** `mikavt-core` (crypto, on-disk
   format, ACL) is entirely platform-agnostic; only the small `HostSeal`
   trait has a platform-specific implementation, so the same logic — and
   the same tests — run on both Linux and macOS.
@@ -46,33 +46,35 @@ so the unseal key is never a plaintext file sitting next to the vault.
   prefixes and a permission level (read / write / read-write) — never
   the DEK itself.
 
-See [`docs/superpowers/specs/2026-11-09-mikvault-design.md`](docs/superpowers/specs/2026-11-09-mikvault-design.md)
-for the full design, including the on-disk format, the daemon's request
-protocol, and the disaster-recovery flow.
+See [`docs/SPEC.md`](docs/SPEC.md) for the full design, including the
+on-disk format, the daemon's request protocol, and the disaster-recovery
+flow, and [`docs/adr/`](docs/adr/) for the point decisions behind it.
 
 ## Repository layout
 
 ```
-mikvault/
-  mikvault-core/   # lib: crypto, on-disk format, ACL, HostSeal — no process I/O beyond disk reads/writes
-  mikvaultd/       # daemon: Unix-socket API, platform seal integration, audit log
-  mikvault-cli/    # admin CLI: init/enroll-host/enroll-service/set/get/rm/list/rotate-dek/recover/audit tail
+mikavt/
+  mikavt-core/   # lib: crypto, on-disk format, ACL, HostSeal — no process I/O beyond disk reads/writes
+  mikavtd/       # daemon: Unix-socket API, platform seal integration, audit log
+  mikavt-cli/    # admin CLI: init/enroll-host/enroll-service/set/get/rm/list/rotate-dek/recover/audit tail
   deployment/      # copy-and-edit systemd unit (Linux) and launchd plist (macOS)
-  docs/            # design spec, deployment guide, recovery runbook, implementation plan
+  docs/            # SPEC.md, adr/, PROGRESS.md, deployment guide, recovery
+                   # runbook, integration examples
+SDD.md             # the design/documentation practice this repo follows
 ```
 
 ## What's implemented
 
-- **Envelope crypto** (`mikvault-core::crypto`): AES-256-GCM-SIV DEK
+- **Envelope crypto** (`mikavt-core::crypto`): AES-256-GCM-SIV DEK
   wrap/unwrap per host, X25519 ECIES wrap/unwrap for the offline root key,
   AEAD entry encryption, zeroize-on-drop key handling.
-- **On-disk format** (`mikvault-core::format`): the `vault.mika` binary
+- **On-disk format** (`mikavt-core::format`): the `vault.mika` binary
   file and its `meta.json` sidecar, with corrupt/truncated input returned
   as a typed error rather than a panic or a silently fresh vault.
-- **Path-prefix ACL** (`mikvault-core::acl`): per-service access tokens
+- **Path-prefix ACL** (`mikavt-core::acl`): per-service access tokens
   scoped to path prefixes and a permission level, with a traversal-safe
   prefix check.
-- **`HostSeal` trait + both backends** (`mikvault-core::seal`): the one
+- **`HostSeal` trait + both backends** (`mikavt-core::seal`): the one
   platform-dependent abstraction, with:
   - `SystemdCredsSeal` (Linux) — shells out to the real `systemd-creds`
     binary.
@@ -82,23 +84,24 @@ mikvault/
   Both map failures to the same `SealError::{Unavailable, Invalid, Io}`
   taxonomy, so callers (and tests) don't need to care which platform
   they're on.
-- **`mikvaultd`**: the daemon. Loads `vault.mika`, unseals its own host
+- **`mikavtd`**: the daemon. Loads `vault.mika`, unseals its own host
   key, opens the append-only audit log, then serves `Get`/`Set`/`Rm`/`List`
   requests from service tokens over a Unix socket (newline-delimited JSON).
-  Reads `MIKVAULT_DATA_DIR` and `MIKVAULT_SOCKET` at startup (falling back
+  Reads `MIKAVT_DATA_DIR` and `MIKAVT_SOCKET` at startup (falling back
   to a per-OS default — see [`docs/deployment.md`](docs/deployment.md)),
   and refuses to start rather than silently creating an empty vault if
   `vault.mika` or the sealed host key is missing or unreadable.
-- **`mikvault-cli`**: the admin CLI (see [Commands](#commands) below) —
+- **`mikavt-cli`** (binary name `mikavt`): the admin CLI (see
+  [Commands](#commands) below) —
   vault/host bootstrap, service enrollment, `set`/`get`/`rm`/`list` over
   the daemon socket, DEK rotation, disaster recovery, and audit log
   inspection.
 - **Deployment templates** (`deployment/`): a systemd unit for Linux and a
   launchd plist for macOS, documented end to end in
   [`docs/deployment.md`](docs/deployment.md).
-- **Audit log** (`mikvaultd::audit`): an append-only JSON-lines log of
+- **Audit log** (`mikavtd::audit`): an append-only JSON-lines log of
   every service request (`<ts> <service_id> <action> <path> <result>`),
-  readable offline via `mikvault-cli audit tail`.
+  readable offline via `mikavt audit tail`.
 
 ## Quickstart
 
@@ -114,40 +117,40 @@ cargo build --workspace --release
 #    hardware token or a printed page) and never store it on a host that
 #    runs the daemon. It is the only way to recover the vault if every
 #    enrolled host is lost; see docs/recovery-runbook.md.
-./target/release/mikvault-cli init --root --data-dir ./data
+./target/release/mikavt init --root --data-dir ./data
 
 # 2. Enroll this host. This generates the vault's DEK, wraps it for the
 #    root key and for this host, and seals this host's own unseal key
 #    with the platform HostSeal backend (systemd-creds on Linux, Keychain
 #    on macOS).
-./target/release/mikvault-cli init --host myhost --data-dir ./data
+./target/release/mikavt init --host myhost --data-dir ./data
 
 # 3. Start the daemon (foreground, for a quickstart — see
 #    docs/deployment.md to run it as a systemd/launchd service instead).
-MIKVAULT_DATA_DIR=./data MIKVAULT_SOCKET=./data/mikvaultd.sock \
-  ./target/release/mikvaultd &
+MIKAVT_DATA_DIR=./data MIKAVT_SOCKET=./data/mikavtd.sock \
+  ./target/release/mikavtd &
 
 # 4. Enroll a consuming service, scoped to a path prefix. The printed
 #    token is shown exactly once — hand it to the service's own config.
-./target/release/mikvault-cli enroll-service myapp \
+./target/release/mikavt enroll-service myapp \
   --paths myapp/ --perm rw --data-dir ./data
 
 # 5. Set and get a secret over the daemon's socket.
-export MIKVAULT_TOKEN=<token printed by step 4>
-./target/release/mikvault-cli set myapp/db-password 's3cr3t' \
-  --socket ./data/mikvaultd.sock
-./target/release/mikvault-cli get myapp/db-password \
-  --socket ./data/mikvaultd.sock
+export MIKAVT_TOKEN=<token printed by step 4>
+./target/release/mikavt set myapp/db-password 's3cr3t' \
+  --socket ./data/mikavtd.sock
+./target/release/mikavt get myapp/db-password \
+  --socket ./data/mikavtd.sock
 ```
 
 ## Commands
 
-All `mikvault-cli` subcommands accept `--data-dir <DIR>` (or
-`$MIKVAULT_DATA_DIR`), defaulting to the platform data directory
-(`/var/lib/mikvault` on Linux, `~/Library/Application Support/mikvault`
+All `mikavt-cli` subcommands accept `--data-dir <DIR>` (or
+`$MIKAVT_DATA_DIR`), defaulting to the platform data directory
+(`/var/lib/mikavt` on Linux, `~/Library/Application Support/mikavt`
 on macOS). `set`/`get`/`rm`/`list` additionally accept `--socket <PATH>`
-(or `$MIKVAULT_SOCKET`) and a service token via `--token` (or
-`$MIKVAULT_TOKEN`).
+(or `$MIKAVT_SOCKET`) and a service token via `--token` (or
+`$MIKAVT_TOKEN`).
 
 | Command | Purpose |
 |---------|---------|
@@ -163,8 +166,8 @@ on macOS). `set`/`get`/`rm`/`list` additionally accept `--socket <PATH>`
 | `recover --root-key <path> --new-host <id>` | Disaster recovery: enroll a new host using the offline root private key, bypassing every enrolled host's own sealed blob. See [`docs/recovery-runbook.md`](docs/recovery-runbook.md). |
 | `audit tail [--count N]` | Print the last `N` (default 20) entries of the daemon's audit log, read directly from `<data_dir>/audit.jsonl`. |
 
-`mikvaultd` itself takes no CLI flags; it reads `MIKVAULT_DATA_DIR` and
-`MIKVAULT_SOCKET` from the environment (same per-OS defaults as above).
+`mikavtd` itself takes no CLI flags; it reads `MIKAVT_DATA_DIR` and
+`MIKAVT_SOCKET` from the environment (same per-OS defaults as above).
 See [`docs/deployment.md`](docs/deployment.md) for running it as a
 systemd service (Linux) or a launchd agent (macOS), including the
 `systemd-creds`/Keychain host-key sealing steps and socket permissions.
@@ -176,7 +179,7 @@ cargo build --workspace
 cargo test --workspace
 ```
 
-`mikvault-core`'s test suite includes real integration tests against the
+`mikavt-core`'s test suite includes real integration tests against the
 platform's actual sealing facility — `tests/seal_linux.rs` (skips with a
 clear message if `systemd-creds` isn't on `PATH`, e.g. off Linux) and
 `tests/seal_macos.rs` (runs for real against a uniquely-named,
@@ -184,15 +187,24 @@ test-scoped Keychain item on macOS, and cleans it up afterward).
 
 ## Further reading
 
-- [`docs/deployment.md`](docs/deployment.md) — running `mikvaultd` as a
+- [`docs/deployment.md`](docs/deployment.md) — running `mikavtd` as a
   systemd service or launchd agent, environment variables, socket
   permissions.
 - [`docs/recovery-runbook.md`](docs/recovery-runbook.md) — disaster
   recovery with the offline root private key, for an operator who has
   never seen this project before.
-- [`docs/superpowers/specs/2026-11-09-mikvault-design.md`](docs/superpowers/specs/2026-11-09-mikvault-design.md)
-  — full design: on-disk format, the daemon's request protocol, and the
-  disaster-recovery flow.
+- [`docs/integrations.md`](docs/integrations.md) — worked examples:
+  systemd unit for a consuming service, shell examples for
+  get/set/list, a minimal raw-socket Rust client.
+- [`docs/SPEC.md`](docs/SPEC.md) — full design: on-disk format, the
+  daemon's request protocol, and the disaster-recovery flow.
+- [`docs/adr/`](docs/adr/) — numbered point decisions (why envelope
+  encryption, why no external vault/KMS dependency, why the `HostSeal`
+  abstraction, why `mikavtd` has a library target).
+- [`docs/PROGRESS.md`](docs/PROGRESS.md) — implementation status, one row
+  per area, each backed by what was actually run.
+- [`SDD.md`](SDD.md) — the design/documentation practice this project
+  follows; read it before making an architectural change.
 
 ## Contributing
 
@@ -202,6 +214,6 @@ the project's CLA ([CLA.md](CLA.md)) on your first pull request.
 ## License
 
 Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE). The
-`mikvault` name and logo are governed separately by the
+`mikavt` name and logo are governed separately by the
 [trademark policy](TRADEMARK.md): the license covers the code, not the
 name.

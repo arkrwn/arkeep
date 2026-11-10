@@ -322,20 +322,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
-name = "mikvault-cli"
+name = "mikavt-cli"
 version = "0.1.0"
 dependencies = [
  "bincode",
  "clap",
- "mikvault-core",
- "mikvaultd",
+ "mikavt-core",
+ "mikavtd",
  "rand_core",
  "serde",
  "serde_json",
 ]
 
 [[package]]
-name = "mikvault-core"
+name = "mikavt-core"
 version = "0.1.0"
 dependencies = [
  "aes-gcm-siv",
@@ -350,10 +350,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "mikvaultd"
+name = "mikavtd"
 version = "0.1.0"
 dependencies = [
- "mikvault-core",
+ "mikavt-core",
  "serde",
  "serde_json",
 ]

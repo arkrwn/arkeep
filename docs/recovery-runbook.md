@@ -1,35 +1,35 @@
 # Disaster recovery runbook
 
-This runbook walks a new operator through recovering a mikvault vault
+This runbook walks a new operator through recovering a mikavt vault
 when every enrolled host's sealed key is gone — the host machine was
 destroyed, its disk was wiped, or its `host.seal` file (or
 `<data_dir>/hosts/<host-id>.seal`) is lost or corrupted. It uses the one
 break-glass path that does not depend on any enrolled host: the **offline
 root private key** that was printed to stdout exactly once, when the
-vault was created with `mikvault-cli init --root`, and that you (the
+vault was created with `mikavt-cli init --root`, and that you (the
 operator) were expected to copy somewhere off-machine at that time — a
 password manager, a hardware token, a printed page in a safe.
 
 If you don't have that root private key, this runbook cannot help you:
 there is no other way to recover an existing vault's data-encryption key
 (DEK). Design intentionally has no "forgot my key" path — see
-[`docs/superpowers/specs/2026-11-09-mikvault-design.md`](superpowers/specs/2026-11-09-mikvault-design.md)
+[`docs/superpowers/specs/2026-11-09-mikavt-design.md`](superpowers/specs/2026-11-09-mikavt-design.md)
 for why.
 
 If you still have at least one enrolled host with a working `host.seal`,
-you don't need this runbook — use `mikvault-cli enroll-host` instead (see
+you don't need this runbook — use `mikavt-cli enroll-host` instead (see
 the root [README](../README.md#commands)); it's the normal path for
 adding a host and doesn't touch the root key at all.
 
 ## What you need before you start
 
 1. **The root private key**, as a 64-character hex string. This is
-   exactly what `init --root` printed between the `=== MIKVAULT ROOT
+   exactly what `init --root` printed between the `=== MIKAVT ROOT
    PRIVATE KEY ===` banner lines when the vault was first created. It
    looks like this (example, not a real key):
 
    ```
-   === MIKVAULT ROOT PRIVATE KEY — copy this offline now, it will not be shown again ===
+   === MIKAVT ROOT PRIVATE KEY — copy this offline now, it will not be shown again ===
    3a1f...   (64 hex characters)
    ======================================================================================
    ```
@@ -43,14 +43,14 @@ adding a host and doesn't touch the root key at all.
 
 3. **A machine to run the recovery on.** This becomes the new enrolled
    host. It needs:
-   - the `mikvault-cli` binary (built from this repository: `cargo build
-     --workspace --release`, then use `target/release/mikvault-cli`);
+   - the `mikavt-cli` binary (built from this repository: `cargo build
+     --workspace --release`, then use `target/release/mikavt-cli`);
    - on Linux, `systemd-creds` on `PATH`; on macOS, a user Keychain
      session (recovery seals the new host's key the same way `init
      --host`/`enroll-host` do — see the root
      [README](../README.md#why));
    - a decision for the new host's id — any string not already used by
-     an enrolled host in this vault (check with `mikvault-cli audit tail`
+     an enrolled host in this vault (check with `mikavt-cli audit tail`
      or by inspecting `meta.json`'s host list if unsure).
 
 ## Step 1 — turn the hex key back into a 32-byte key file
@@ -65,19 +65,19 @@ On macOS or Linux, with the hex string in `$ROOT_KEY_HEX`:
 
 ```bash
 ROOT_KEY_HEX=3a1f...   # paste the 64 hex characters you copied offline
-echo -n "$ROOT_KEY_HEX" | xxd -r -p > /tmp/mikvault-root.key
+echo -n "$ROOT_KEY_HEX" | xxd -r -p > /tmp/mikavt-root.key
 ```
 
 Confirm the file is exactly 32 bytes:
 
 ```bash
-wc -c /tmp/mikvault-root.key   # must print "32"
+wc -c /tmp/mikavt-root.key   # must print "32"
 ```
 
 If `xxd` isn't available, `python3` works too:
 
 ```bash
-python3 -c "import sys; sys.stdout.buffer.write(bytes.fromhex('$ROOT_KEY_HEX'))" > /tmp/mikvault-root.key
+python3 -c "import sys; sys.stdout.buffer.write(bytes.fromhex('$ROOT_KEY_HEX'))" > /tmp/mikavt-root.key
 ```
 
 Treat this file as sensitive for as long as it exists: it unwraps the
@@ -88,8 +88,8 @@ Step 4 regardless of outcome.
 ## Step 2 — run `recover`
 
 ```bash
-mikvault-cli recover \
-  --root-key /tmp/mikvault-root.key \
+mikavt-cli recover \
+  --root-key /tmp/mikavt-root.key \
   --new-host <new-host-id> \
   --data-dir <path-to-vault-data-dir>
 ```
@@ -99,9 +99,9 @@ mikvault-cli recover \
   something that isn't already enrolled (see Prerequisites above);
   `recover` will refuse with "this host is already enrolled" if it is.
 - `--data-dir <DIR>` — the vault's data directory (containing
-  `vault.mika`). If omitted, it falls back to `$MIKVAULT_DATA_DIR`, then
-  the platform default (`/var/lib/mikvault` on Linux,
-  `~/Library/Application Support/mikvault` on macOS).
+  `vault.mika`). If omitted, it falls back to `$MIKAVT_DATA_DIR`, then
+  the platform default (`/var/lib/mikavt` on Linux,
+  `~/Library/Application Support/mikavt` on macOS).
 
 On success you'll see:
 
@@ -120,8 +120,8 @@ This has:
 - wrapped the DEK for `<new-host-id>` and written `vault.mika` +
   `meta.json` back to disk.
 
-You can now start `mikvaultd` on this machine against the same
-`--data-dir` (or `$MIKVAULT_DATA_DIR`) and it will unseal
+You can now start `mikavtd` on this machine against the same
+`--data-dir` (or `$MIKAVT_DATA_DIR`) and it will unseal
 `<new-host-id>`'s key and serve requests normally — see
 [`docs/deployment.md`](deployment.md).
 
@@ -143,17 +143,17 @@ exact same command again.
 
 Once the new host is recovered:
 
-1. Start (or restart) `mikvaultd` on this machine, pointed at the same
+1. Start (or restart) `mikavtd` on this machine, pointed at the same
    `--data-dir`. See [`docs/deployment.md`](deployment.md) for running it
    as a systemd service (Linux) or launchd agent (macOS) rather than in
    the foreground.
 2. Existing service tokens still work unchanged — `recover` only adds a
    host, it doesn't touch `vault.services` or any stored secret.
 3. If you have other machines that also need to be enrolled hosts (for
-   redundancy), use `mikvault-cli enroll-host <id> --this-host
+   redundancy), use `mikavt-cli enroll-host <id> --this-host
    <new-host-id>` from one of them, now that `<new-host-id>` is a valid,
    working enrolled host whose sealed blob can be unsealed.
-4. Consider rotating the DEK afterward (`mikvault-cli rotate-dek --hosts
+4. Consider rotating the DEK afterward (`mikavt-cli rotate-dek --hosts
    <csv>`) if the loss of the old host(s) is at all suspicious (e.g.
    stolen hardware, not just failed hardware) — the old host's sealed
    blob being gone doesn't by itself prove the key material was exposed,
@@ -166,7 +166,7 @@ Whether Step 2 succeeded or failed, delete the raw key file you created
 in Step 1 as soon as you're done with it:
 
 ```bash
-rm -f /tmp/mikvault-root.key
+rm -f /tmp/mikavt-root.key
 ```
 
 The root private key itself (the hex string) is not single-use — keep it

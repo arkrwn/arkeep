@@ -1,0 +1,26 @@
+[package]
+name = "mikavt-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "mikavt command-line interface"
+
+[[bin]]
+name = "mikavt"
+path = "src/main.rs"
+
+[dependencies]
+mikavt-core = { path = "../mikavt-core" }
+# `mikavtd` now has a library target (see `mikavtd/src/lib.rs`), so
+# `audit.rs`'s `run_audit_tail` depends on `mikavtd::audit::{AuditLog,
+# AuditEntry}` directly rather than pulling the source in via `#[path]`.
+mikavtd = { path = "../mikavtd" }
+clap = { version = "4", features = ["derive", "env"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+bincode = "1"
+# `src/client.rs` still pulls in its own copy of `mikavtd/src/protocol.rs`
+# via `#[path]` rather than `mikavtd::protocol` (pre-existing convention,
+# left as-is by Task 15); these back that `serde`/`serde_json`-based copy.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

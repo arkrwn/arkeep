@@ -1,0 +1,20 @@
+[package]
+name = "mikavt-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Core library for mikavt: envelope encryption and vault storage"
+
+[dependencies]
+aes-gcm-siv = "0.11.1"
+rand_core = { version = "0.6", features = ["getrandom"] }
+x25519-dalek = { version = "2.0.1", features = ["static_secrets"] }
+zeroize = "1.8.2"
+serde = { version = "1", features = ["derive"] }
+bincode = "1"
+serde_json = "1"
+sha2 = "0.10"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3.7.0"

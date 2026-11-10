@@ -1,0 +1,45 @@
+# systemd unit template for mikavtd.
+#
+# Copy to /etc/systemd/system/mikavtd.service and edit the marked lines.
+# See docs/deployment.md for the full install procedure.
+[Unit]
+Description=mikavt secrets vault daemon
+After=local-fs.target
+Wants=local-fs.target
+
+[Service]
+Type=simple
+# Dedicated unprivileged account; create it first (see docs/deployment.md).
+User=mikavt
+Group=mikavt
+
+# Installed binary. Adjust if you installed it somewhere else.
+ExecStart=/usr/local/bin/mikavtd
+
+# Where vault.mika, meta.json, host.seal and audit.jsonl live. host.seal is the
+# systemd-creds sealed host key, read directly by mikavtd (see docs/deployment.md).
+Environment=MIKAVT_DATA_DIR=/var/lib/mikavt
+# Unix socket the daemon listens on. The directory is created by RuntimeDirectory.
+# Socket is mikavt:mikavt, mode 0660; add consuming services to the mikavt group.
+Environment=MIKAVT_SOCKET=/run/mikavt/mikavtd.sock
+
+# Creates /run/mikavt owned by User=mikavt. Group members need traverse
+# access to reach the socket.
+RuntimeDirectory=mikavt
+RuntimeDirectoryMode=0750
+# Creates /var/lib/mikavt owned by User=mikavt.
+StateDirectory=mikavt
+StateDirectoryMode=0700
+UMask=0077
+
+Restart=on-failure
+RestartSec=5
+
+# Basic hardening.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+
+[Install]
+WantedBy=multi-user.target
