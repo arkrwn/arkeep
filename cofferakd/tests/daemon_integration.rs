@@ -1,24 +1,15 @@
-// The daemon is a binary-only crate, so its modules are compiled in
-// directly, same pattern as `audit_integration.rs`.
-#[path = "../src/protocol.rs"]
-mod protocol;
-#[path = "../src/audit.rs"]
-mod audit;
-#[path = "../src/daemon.rs"]
-mod daemon;
-
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Barrier, Mutex};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use audit::AuditLog;
-use daemon::{token_key, Daemon};
 use cofferak_core::acl::{AccessToken, Permission};
 use cofferak_core::crypto::generate_root_keypair;
 use cofferak_core::format::VaultFile;
-use protocol::{Request, Response};
+use cofferakd::audit::AuditLog;
+use cofferakd::daemon::{token_key, Daemon};
+use cofferakd::protocol::{Request, Response};
 
 fn temp_audit_path(tag: &str) -> PathBuf {
     let nanos = SystemTime::now()
