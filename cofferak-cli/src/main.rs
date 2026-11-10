@@ -17,6 +17,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use client::Client;
 use commands::enroll::{run_enroll_host_with_seal, run_enroll_service};
 use commands::init::{current_host_seal, run_init_host, run_init_root};
+use commands::recover::run_recover;
 use commands::secrets::{run_get, run_list, run_rm, run_rotate_dek, run_set};
 use cofferak_core::acl::Permission;
 use cofferak_core::seal::HostSeal;
@@ -49,6 +50,9 @@ enum Command {
     /// Rotate the vault's DEK (operates on `vault.cofferak` directly, not
     /// over the socket).
     RotateDek(RotateDekArgs),
+    /// Disaster recovery: enroll a new host using the offline root
+    /// private key, bypassing every enrolled host's own sealed blob.
+    Recover(RecoverArgs),
 }
 
 #[derive(Args)]
@@ -173,6 +177,24 @@ struct RotateDekArgs {
     /// machine.
     #[arg(long = "hosts", value_name = "CSV")]
     hosts: String,
+
+    /// Vault data directory. Defaults to the platform data dir, or
+    /// `$COFFERAK_DATA_DIR` if set.
+    #[arg(long, value_name = "DIR")]
+    data_dir: Option<PathBuf>,
+}
+
+#[derive(Args)]
+struct RecoverArgs {
+    /// Path to a file holding the offline root private key (32 raw
+    /// bytes), printed once by `init --root` for the operator to copy
+    /// down.
+    #[arg(long = "root-key", value_name = "PATH")]
+    root_key: PathBuf,
+
+    /// The new host's id to enroll via recovery.
+    #[arg(long = "new-host", value_name = "ID")]
+    new_host_id: String,
 
     /// Vault data directory. Defaults to the platform data dir, or
     /// `$COFFERAK_DATA_DIR` if set.
@@ -420,6 +442,20 @@ fn main() {
                 Ok(()) => println!("DEK rotated"),
                 Err(e) => {
                     eprintln!("cofferak-cli: rotate-dek failed: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Command::Recover(args) => {
+            let data_dir = resolve_data_dir(args.data_dir);
+            let new_host_seal = current_host_seal(&args.new_host_id);
+
+            match run_recover(&data_dir, &args.root_key, &args.new_host_id, new_host_seal.as_ref()) {
+                Ok(()) => {
+                    println!("host '{}' recovered via offline root key", args.new_host_id);
+                }
+                Err(e) => {
+                    eprintln!("cofferak-cli: recover failed: {e}");
                     std::process::exit(1);
                 }
             }
