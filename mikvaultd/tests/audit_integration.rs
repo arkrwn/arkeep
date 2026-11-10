@@ -1,8 +1,4 @@
-// The daemon is a binary-only crate, so the audit module is compiled in directly.
-#[path = "../src/audit.rs"]
-mod audit;
-
-use audit::{AuditEntry, AuditLog};
+use mikvaultd::audit::{AuditEntry, AuditLog};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
