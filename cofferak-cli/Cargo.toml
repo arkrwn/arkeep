@@ -10,3 +10,4 @@ description = "cofferak command-line interface"
 cofferak-core = { path = "../cofferak-core" }
 clap = { version = "4", features = ["derive"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
+bincode = "1"
