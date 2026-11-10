@@ -328,6 +328,7 @@ dependencies = [
  "bincode",
  "clap",
  "mikvault-core",
+ "mikvaultd",
  "rand_core",
  "serde",
  "serde_json",
