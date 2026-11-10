@@ -329,6 +329,8 @@ dependencies = [
  "clap",
  "cofferak-core",
  "rand_core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

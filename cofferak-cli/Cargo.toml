@@ -8,6 +8,11 @@ description = "cofferak command-line interface"
 
 [dependencies]
 cofferak-core = { path = "../cofferak-core" }
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
 bincode = "1"
+# Not a dependency on the `cofferakd` crate (it has no library target):
+# these back `src/client.rs`'s `#[path]`-included copy of
+# `cofferakd/src/protocol.rs`, which is itself `serde`/`serde_json`-based.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

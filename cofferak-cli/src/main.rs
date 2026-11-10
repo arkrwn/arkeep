@@ -1,12 +1,25 @@
+mod client;
 mod commands;
+
+// `cofferakd` is a binary-only crate (no library target), so the wire
+// protocol `client` speaks is compiled directly into *this* binary via
+// `#[path]` — the same convention this workspace already uses for
+// sharing a sibling binary crate's modules (see every integration test
+// under `tests/`, and `commands/enroll.rs`'s doc comment for the
+// in-crate version of the same trick).
+#[path = "../../cofferakd/src/protocol.rs"]
+mod protocol;
 
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
+use client::Client;
 use commands::enroll::{run_enroll_host_with_seal, run_enroll_service};
 use commands::init::{current_host_seal, run_init_host, run_init_root};
+use commands::secrets::{run_get, run_list, run_rm, run_rotate_dek, run_set};
 use cofferak_core::acl::Permission;
+use cofferak_core::seal::HostSeal;
 
 /// `cofferak-cli`: administer a cofferak vault (init, enroll, ...).
 #[derive(Parser)]
@@ -25,6 +38,17 @@ enum Command {
     EnrollHost(EnrollHostArgs),
     /// Enroll a service, printing its one-time access token.
     EnrollService(EnrollServiceArgs),
+    /// Set a secret's value (over the daemon's Unix socket).
+    Set(SetArgs),
+    /// Get a secret's value (over the daemon's Unix socket).
+    Get(GetArgs),
+    /// Remove a secret (over the daemon's Unix socket).
+    Rm(RmArgs),
+    /// List secret paths under a prefix (over the daemon's Unix socket).
+    List(ListArgs),
+    /// Rotate the vault's DEK (operates on `vault.cofferak` directly, not
+    /// over the socket).
+    RotateDek(RotateDekArgs),
 }
 
 #[derive(Args)]
@@ -80,6 +104,82 @@ struct EnrollServiceArgs {
     data_dir: Option<PathBuf>,
 }
 
+#[derive(Args)]
+struct SetArgs {
+    /// Secret path to write.
+    path: String,
+    /// Value to store, taken as raw UTF-8 bytes of this argument.
+    value: String,
+    /// Service access token (hex-encoded secret). Defaults to
+    /// `$COFFERAK_TOKEN` if set.
+    #[arg(long, env = "COFFERAK_TOKEN")]
+    token: String,
+    /// Daemon Unix socket path. Defaults to the platform socket path, or
+    /// `$COFFERAK_SOCKET` if set.
+    #[arg(long, value_name = "PATH")]
+    socket: Option<PathBuf>,
+}
+
+#[derive(Args)]
+struct GetArgs {
+    /// Secret path to read.
+    path: String,
+    /// Service access token (hex-encoded secret). Defaults to
+    /// `$COFFERAK_TOKEN` if set.
+    #[arg(long, env = "COFFERAK_TOKEN")]
+    token: String,
+    /// Daemon Unix socket path. Defaults to the platform socket path, or
+    /// `$COFFERAK_SOCKET` if set.
+    #[arg(long, value_name = "PATH")]
+    socket: Option<PathBuf>,
+}
+
+#[derive(Args)]
+struct RmArgs {
+    /// Secret path to remove.
+    path: String,
+    /// Service access token (hex-encoded secret). Defaults to
+    /// `$COFFERAK_TOKEN` if set.
+    #[arg(long, env = "COFFERAK_TOKEN")]
+    token: String,
+    /// Daemon Unix socket path. Defaults to the platform socket path, or
+    /// `$COFFERAK_SOCKET` if set.
+    #[arg(long, value_name = "PATH")]
+    socket: Option<PathBuf>,
+}
+
+#[derive(Args)]
+struct ListArgs {
+    /// Path prefix to list. Defaults to the empty string (which the
+    /// daemon's ACL check rejects for every token, since a token's
+    /// granted prefixes are always non-empty) — pass an explicit prefix
+    /// under your token's grant.
+    #[arg(default_value = "")]
+    prefix: String,
+    /// Service access token (hex-encoded secret). Defaults to
+    /// `$COFFERAK_TOKEN` if set.
+    #[arg(long, env = "COFFERAK_TOKEN")]
+    token: String,
+    /// Daemon Unix socket path. Defaults to the platform socket path, or
+    /// `$COFFERAK_SOCKET` if set.
+    #[arg(long, value_name = "PATH")]
+    socket: Option<PathBuf>,
+}
+
+#[derive(Args)]
+struct RotateDekArgs {
+    /// Comma-separated list of already-enrolled host ids to re-wrap the
+    /// fresh DEK for. Must include at least one host enrolled on this
+    /// machine.
+    #[arg(long = "hosts", value_name = "CSV")]
+    hosts: String,
+
+    /// Vault data directory. Defaults to the platform data dir, or
+    /// `$COFFERAK_DATA_DIR` if set.
+    #[arg(long, value_name = "DIR")]
+    data_dir: Option<PathBuf>,
+}
+
 /// CLI-facing spelling of [`Permission`] (`ro`/`rw`), converted with
 /// [`PermArg::into_permission`].
 #[derive(Clone, Copy, ValueEnum)]
@@ -116,6 +216,38 @@ fn resolve_data_dir(cli_data_dir: Option<PathBuf>) -> PathBuf {
     cli_data_dir
         .or_else(|| std::env::var_os("COFFERAK_DATA_DIR").map(PathBuf::from))
         .unwrap_or_else(default_data_dir)
+}
+
+/// Default Unix socket path on Linux, used unless `$COFFERAK_SOCKET` or
+/// `--socket` is set. Mirrors `cofferakd`'s own default.
+#[cfg(target_os = "linux")]
+fn default_socket_path() -> PathBuf {
+    PathBuf::from("/run/cofferak/cofferakd.sock")
+}
+
+/// Default Unix socket path on macOS, used unless `$COFFERAK_SOCKET` or
+/// `--socket` is set. Mirrors `cofferakd`'s own default.
+#[cfg(target_os = "macos")]
+fn default_socket_path() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/".to_string());
+    PathBuf::from(home).join("Library/Application Support/cofferak/cofferakd.sock")
+}
+
+fn resolve_socket_path(cli_socket: Option<PathBuf>) -> PathBuf {
+    cli_socket
+        .or_else(|| std::env::var_os("COFFERAK_SOCKET").map(PathBuf::from))
+        .unwrap_or_else(default_socket_path)
+}
+
+/// Connect to the daemon at `socket`, or print a clear error and exit.
+fn connect_or_exit(socket: &std::path::Path) -> Client {
+    Client::connect(socket).unwrap_or_else(|e| {
+        eprintln!(
+            "cofferak-cli: could not connect to daemon at {}: {e}",
+            socket.display()
+        );
+        std::process::exit(1);
+    })
 }
 
 fn main() {
@@ -215,6 +347,79 @@ fn main() {
                 }
                 Err(e) => {
                     eprintln!("cofferak-cli: enroll-service failed: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Command::Set(args) => {
+            let client = connect_or_exit(&resolve_socket_path(args.socket));
+            match run_set(&client, &args.token, &args.path, args.value.into_bytes()) {
+                Ok(()) => println!("ok"),
+                Err(e) => {
+                    eprintln!("cofferak-cli: set failed: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Command::Get(args) => {
+            let client = connect_or_exit(&resolve_socket_path(args.socket));
+            match run_get(&client, &args.token, &args.path) {
+                Ok(value) => {
+                    use std::io::Write;
+                    // The value is arbitrary bytes, not necessarily UTF-8
+                    // text, so write it raw rather than assuming it can
+                    // be formatted as a `String`.
+                    let _ = std::io::stdout().write_all(&value);
+                    let _ = std::io::stdout().write_all(b"\n");
+                }
+                Err(e) => {
+                    eprintln!("cofferak-cli: get failed: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Command::Rm(args) => {
+            let client = connect_or_exit(&resolve_socket_path(args.socket));
+            match run_rm(&client, &args.token, &args.path) {
+                Ok(()) => println!("removed"),
+                Err(e) => {
+                    eprintln!("cofferak-cli: rm failed: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Command::List(args) => {
+            let client = connect_or_exit(&resolve_socket_path(args.socket));
+            match run_list(&client, &args.token, &args.prefix) {
+                Ok(paths) => {
+                    for path in paths {
+                        println!("{path}");
+                    }
+                }
+                Err(e) => {
+                    eprintln!("cofferak-cli: list failed: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Command::RotateDek(args) => {
+            let data_dir = resolve_data_dir(args.data_dir);
+
+            let hosts: Vec<(String, Box<dyn HostSeal>)> = args
+                .hosts
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|id| {
+                    let seal: Box<dyn HostSeal> = current_host_seal(id);
+                    (id.to_string(), seal)
+                })
+                .collect();
+
+            match run_rotate_dek(&data_dir, &hosts) {
+                Ok(()) => println!("DEK rotated"),
+                Err(e) => {
+                    eprintln!("cofferak-cli: rotate-dek failed: {e}");
                     std::process::exit(1);
                 }
             }
