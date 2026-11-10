@@ -14,6 +14,11 @@
 //! 64 lowercase hex chars), and `MIKAVT_TOKEN_PREFIX` (required) from the
 //! environment. Exits as soon as it has bound the socket by printing
 //! `ready` to stdout, then serves forever until killed.
+//!
+//! Also starts the server-mode TLS/TCP listener (ADR 0008) if
+//! `MIKAVT_TLS_ADDR` (+ `MIKAVT_TLS_CERT`/`MIKAVT_TLS_KEY`, optionally
+//! `MIKAVT_TLS_CLIENT_CA`) is set — the same opt-in env vars `main.rs`
+//! reads, serving the same `daemon` over both transports at once.
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
@@ -77,6 +82,20 @@ fn main() {
     });
 
     let daemon = Arc::new(Mutex::new(Daemon::new(dek, vault, tokens, audit)));
+
+    // Server mode (ADR 0008), same as the real `main.rs`: additive, only
+    // if $MIKAVT_TLS_ADDR is set. Lets scripts/sdk-smoke.sh prove the
+    // TLS/TCP transport too without needing the real HostSeal-backed
+    // binary (see this file's module doc and ADR 0007 for why that's
+    // not always possible non-interactively on macOS).
+    match mikavtd::tls_server::resolve() {
+        Ok(Some(tls_config)) => mikavtd::tls_server::start(tls_config, Arc::clone(&daemon)),
+        Ok(None) => {}
+        Err(msg) => {
+            eprintln!("dev-daemon: {msg}");
+            std::process::exit(1);
+        }
+    }
 
     let _ = std::fs::remove_file(&socket_path);
     let listener = UnixListener::bind(&socket_path).unwrap_or_else(|e| {

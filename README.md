@@ -1,15 +1,19 @@
 # mikavt
 
-A small, dependency-free secrets vault for any service on Linux or macOS —
-no HashiCorp Vault, no cloud KMS, no network service beyond a local Unix
-socket. Clone it into a project as a `mikavt/` subdirectory, or run it
-standalone.
+A small, dependency-free secrets vault for any service on Linux or macOS
+— no HashiCorp Vault, no cloud KMS. Clone it into a project as a
+`mikavt/` subdirectory, or run it standalone. By default it speaks only
+to clients on the same host, over a local Unix socket; opt in to
+**server mode** (`$MIKAVT_TLS_ADDR`, see [Server mode](#server-mode))
+and it's also reachable remotely, over TLS/mutual-TLS, with the exact
+same protocol and the exact same per-service access tokens.
 
 > **Status: feature-complete.** The crypto/format/ACL core, both
-> `HostSeal` backends, the daemon (`mikavtd`), the admin CLI
-> (`mikavt-cli`), deployment templates, and an audit log are all
-> implemented and tested. See [Commands](#commands) for the full CLI
-> surface and [Quickstart](#quickstart) to stand up a vault end to end.
+> `HostSeal` backends, the daemon (`mikavtd`), server mode (TLS/mTLS
+> over TCP), the admin CLI (`mikavt-cli`), four client SDKs, deployment
+> templates, and an audit log are all implemented and tested. See
+> [Commands](#commands) for the full CLI surface and
+> [Quickstart](#quickstart) to stand up a vault end to end.
 
 ## Why
 
@@ -20,9 +24,10 @@ that decrypts your secrets is itself sealed by the operating system's own
 secure-storage primitive — `systemd-creds` on Linux, Keychain on macOS —
 so the unseal key is never a plaintext file sitting next to the vault.
 
-- **No external dependency.** No server to run, no account to create, no
-  network call to any third-party KMS. The only two things on the wire
-  are a local Unix socket and the files on disk.
+- **No external dependency.** No third-party server to run, no account
+  to create, no call out to any third-party KMS. `mikavt` is the only
+  server involved, and it's yours — local Unix socket by default, or
+  your own TLS endpoint if you turn on server mode.
 - **One codebase, two platforms.** `mikavt-core` (crypto, on-disk
   format, ACL) is entirely platform-agnostic; only the small `HostSeal`
   trait has a platform-specific implementation, so the same logic — and
@@ -50,6 +55,48 @@ See [`docs/SPEC.md`](docs/SPEC.md) for the full design, including the
 on-disk format, the daemon's request protocol, and the disaster-recovery
 flow, and [`docs/adr/`](docs/adr/) for the point decisions behind it.
 
+## Server mode
+
+By default `mikavtd` only listens on a local Unix socket — the fastest
+and smallest-attack-surface option when every client is on the same
+host. **Server mode** is the opt-in path for when a client genuinely
+isn't: set `$MIKAVT_TLS_ADDR` (e.g. `0.0.0.0:8443`) and the daemon also
+listens on TLS-wrapped TCP, serving the *exact same* `Request`/`Response`
+protocol and the *exact same* per-service access tokens — not a second
+API to learn, not a second thing to keep in sync. See
+[ADR 0008](docs/adr/0008-server-mode-rpc-over-tls.md) for why this (RPC
+over TLS) was chosen over REST or WebSocket.
+
+```bash
+# Server side: turn on TLS alongside the existing Unix socket.
+MIKAVT_DATA_DIR=./data \
+MIKAVT_TLS_ADDR=0.0.0.0:8443 \
+MIKAVT_TLS_CERT=./server.pem \
+MIKAVT_TLS_KEY=./server.key \
+  ./target/release/mikavtd &
+
+# Optional: require a client certificate too (mutual TLS), on top of
+# the service's access token — belt and suspenders, not a replacement.
+# MIKAVT_TLS_CLIENT_CA=./ca.pem
+```
+
+| Variable | Purpose |
+|---|---|
+| `MIKAVT_TLS_ADDR` | `host:port` to listen on. Unset = server mode is off (Unix socket only). |
+| `MIKAVT_TLS_CERT` / `MIKAVT_TLS_KEY` | Server certificate + private key (PEM). Required once `MIKAVT_TLS_ADDR` is set. |
+| `MIKAVT_TLS_CLIENT_CA` | Optional. CA (PEM) to verify client certificates against — turns on mutual TLS. |
+
+TLS is pure-Rust (`rustls`, no OpenSSL/C dependency) — see ADR 0008. The
+Rust SDK supports this transport today (`Client::connect_tls`,
+[`docs/sample-integration/rust.md`](docs/sample-integration/rust.md));
+the Go/Python/TypeScript/JavaScript SDKs are still Unix-socket-only (see
+[`docs/PROGRESS.md`](docs/PROGRESS.md)). Proven for real, including the
+mutual-TLS reject/accept paths, by:
+
+```bash
+./scripts/server-mode-smoke.sh
+```
+
 ## Repository layout
 
 ```
@@ -57,9 +104,11 @@ mikavt/
   mikavt-core/   # lib: crypto, on-disk format, ACL, HostSeal — no process I/O beyond disk reads/writes
   mikavtd/       # daemon: Unix-socket API, platform seal integration, audit log
   mikavt-cli/    # admin CLI: init/enroll-host/enroll-service/set/get/rm/list/rotate-dek/recover/audit tail
-  deployment/      # copy-and-edit systemd unit (Linux) and launchd plist (macOS)
-  docs/            # SPEC.md, adr/, PROGRESS.md, deployment guide, recovery
-                   # runbook, integration examples
+  sdk/           # client SDKs: rust, go, python, javascript (TypeScript)
+  deployment/    # copy-and-edit systemd unit (Linux) and launchd plist (macOS)
+  scripts/       # sdk-smoke.sh, server-mode-smoke.sh — real, run-it-yourself proof
+  docs/          # SPEC.md, adr/, PROGRESS.md, deployment guide, recovery
+                 # runbook, sample-integration/
 SDD.md             # the design/documentation practice this repo follows
 ```
 
@@ -86,11 +135,17 @@ SDD.md             # the design/documentation practice this repo follows
   they're on.
 - **`mikavtd`**: the daemon. Loads `vault.mika`, unseals its own host
   key, opens the append-only audit log, then serves `Get`/`Set`/`Rm`/`List`
-  requests from service tokens over a Unix socket (newline-delimited JSON).
+  requests from service tokens over a Unix socket (newline-delimited
+  JSON) and, in [server mode](#server-mode), TLS/TCP too — the same
+  protocol, same tokens, same `Daemon::handle_request` either way.
   Reads `MIKAVT_DATA_DIR` and `MIKAVT_SOCKET` at startup (falling back
   to a per-OS default — see [`docs/deployment.md`](docs/deployment.md)),
   and refuses to start rather than silently creating an empty vault if
   `vault.mika` or the sealed host key is missing or unreadable.
+- **Server mode** (`mikavtd::tls_server`): opt-in TLS/TCP listener
+  alongside the Unix socket, pure-Rust TLS (`rustls`), optional mutual
+  TLS. See [Server mode](#server-mode) and
+  [ADR 0008](docs/adr/0008-server-mode-rpc-over-tls.md).
 - **`mikavt-cli`** (binary name `mikavt`): the admin CLI (see
   [Commands](#commands) below) —
   vault/host bootstrap, service enrollment, `set`/`get`/`rm`/`list` over
@@ -116,7 +171,8 @@ cargo build --workspace --release
 #    is printed to stdout exactly once — copy it offline (e.g. onto a
 #    hardware token or a printed page) and never store it on a host that
 #    runs the daemon. It is the only way to recover the vault if every
-#    enrolled host is lost; see docs/recovery-runbook.md.
+#    enrolled host is lost; see docs/key-security.md (how to actually
+#    secure it) and docs/recovery-runbook.md (how to use it to recover).
 ./target/release/mikavt init --root --data-dir ./data
 
 # 2. Enroll this host. This generates the vault's DEK, wraps it for the
@@ -167,21 +223,25 @@ on macOS). `set`/`get`/`rm`/`list` additionally accept `--socket <PATH>`
 | `audit tail [--count N]` | Print the last `N` (default 20) entries of the daemon's audit log, read directly from `<data_dir>/audit.jsonl`. |
 
 `mikavtd` itself takes no CLI flags; it reads `MIKAVT_DATA_DIR` and
-`MIKAVT_SOCKET` from the environment (same per-OS defaults as above), and
+`MIKAVT_SOCKET` from the environment (same per-OS defaults as above),
 `MIKAVT_HOST_ID` to pick which enrolled host's sealed key to use when the
 vault has more than one (unneeded, and inferred automatically, when
-there's exactly one). See [`docs/deployment.md`](docs/deployment.md) for
+there's exactly one), and `MIKAVT_TLS_*` to turn on [server
+mode](#server-mode). See [`docs/deployment.md`](docs/deployment.md) for
 running it as a systemd service (Linux) or a launchd agent (macOS),
 including the `systemd-creds`/Keychain host-key sealing steps and socket
 permissions.
 
 ## SDKs
 
-A consuming service talks to `mikavtd` over its Unix socket using the
-newline-delimited JSON protocol in [`docs/SPEC.md`](docs/SPEC.md) §6.
-Four client SDKs implement it today — each is smoke-tested for real
-against a running daemon in CI (`scripts/sdk-smoke.sh`,
-`.github/workflows/ci.yml`'s `sdk-smoke` job), not just documented:
+A consuming service talks to `mikavtd` over its Unix socket — or, in
+[server mode](#server-mode), TLS/TCP — using the newline-delimited JSON
+protocol in [`docs/SPEC.md`](docs/SPEC.md) §6. Four client SDKs
+implement it today — each is smoke-tested for real against a running
+daemon in CI (`scripts/sdk-smoke.sh`, `.github/workflows/ci.yml`'s
+`sdk-smoke` job), not just documented. Of the four, Rust also supports
+the TLS/mTLS transport (`scripts/server-mode-smoke.sh`); the others are
+still Unix-socket-only (tracked in `docs/PROGRESS.md`):
 
 | Language | Package | Example |
 |---|---|---|
@@ -225,11 +285,22 @@ To additionally prove every SDK against a real running daemon:
 ./scripts/sdk-smoke.sh
 ```
 
+And to prove server mode (TLS + mutual TLS) for real, including the
+mTLS reject/accept paths:
+
+```bash
+./scripts/server-mode-smoke.sh
+```
+
 ## Further reading
 
 - [`docs/deployment.md`](docs/deployment.md) — running `mikavtd` as a
   systemd service or launchd agent, environment variables, socket
   permissions.
+- [`docs/key-security.md`](docs/key-security.md) — how to actually
+  secure the root private key `init --root` prints once: offline
+  storage options, custody splitting, what never to do with it, and
+  periodic recovery drills.
 - [`docs/recovery-runbook.md`](docs/recovery-runbook.md) — disaster
   recovery with the offline root private key, for an operator who has
   never seen this project before.
@@ -240,7 +311,8 @@ To additionally prove every SDK against a real running daemon:
   daemon's request protocol, and the disaster-recovery flow.
 - [`docs/adr/`](docs/adr/) — numbered point decisions (why envelope
   encryption, why no external vault/KMS dependency, why the `HostSeal`
-  abstraction, why `mikavtd` has a library target).
+  abstraction, why `mikavtd` has a library target, why server mode is
+  RPC-over-TLS rather than REST/WebSocket).
 - [`docs/PROGRESS.md`](docs/PROGRESS.md) — implementation status, one row
   per area, each backed by what was actually run.
 - [`SDD.md`](SDD.md) — the design/documentation practice this project

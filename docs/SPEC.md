@@ -56,10 +56,11 @@ mikavt-cli/    # `mikavt` binary: init, enroll-host, enroll-service, set,
 ## 5. Daily operation
 
 Boot → OS delivers the host's sealed unseal key → `mikavtd` unseals the
-DEK → decrypts the entry table into memory → serves requests over a local
-Unix socket, enforcing each token's path-prefix ACL, until shutdown (DEK
-zeroized). No creator/root-private-key interaction on any normal boot,
-restart, read, or write.
+DEK → decrypts the entry table into memory → serves requests over a
+local Unix socket, and over TLS/TCP if server mode (§6a) is on,
+enforcing each token's path-prefix ACL, until shutdown (DEK zeroized).
+No creator/root-private-key interaction on any normal boot, restart,
+read, or write.
 
 `mikavtd` needs `$MIKAVT_HOST_ID` to know which enrolled host it is
 running as whenever the vault has more than one (default: the single
@@ -94,6 +95,18 @@ already (Go's `encoding/json` base64-encodes `[]byte` by default; see
 SDK must convert explicitly too, not rely on its language's default
 byte-array JSON encoding.
 
+## 6a. Server mode (ADR 0008)
+
+Opt-in: `$MIKAVT_TLS_ADDR` (plus `$MIKAVT_TLS_CERT`/`$MIKAVT_TLS_KEY`,
+optionally `$MIKAVT_TLS_CLIENT_CA` for mutual TLS) starts a second
+listener, TLS-wrapped TCP, serving the *exact same* §6 wire protocol and
+the *exact same* `Daemon::handle_request` as the Unix socket — not a
+separate API. TLS is `rustls` (pure Rust, no OpenSSL/C dependency). The
+per-service access token (§2) is still checked unconditionally; a client
+certificate (mTLS) is an additional transport-level check, never a
+substitute for the token. Proven for real, including the mTLS
+reject/accept paths, by `scripts/server-mode-smoke.sh`.
+
 ## 7. CLI surface (current)
 
 `init --root|--host`, `enroll-host`, `enroll-service`, `set|get|rm|list`
@@ -108,12 +121,14 @@ Client SDKs implementing §6's wire protocol exist for Rust, Go, Python,
 and TypeScript/JavaScript (`sdk/<lang>/...`), each with a smoke test
 (`sdk/<lang>/.../examples/smoke.*`) proven against a real daemon by
 `scripts/sdk-smoke.sh`, wired into CI as the `sdk-smoke` job. See ADR
-0005 and `docs/sample-integration/` for usage. Planned: C, C++, Perl,
-Ruby (`docs/sample-integration/roadmap.md`).
+0005 and `docs/sample-integration/` for usage. Of the four, only Rust
+currently supports the §6a TLS/mTLS transport (`Client::connect_tls`);
+the rest are Unix-socket-only (tracked in `docs/PROGRESS.md`). Planned:
+C, C++, Perl, Ruby (`docs/sample-integration/roadmap.md`).
 
 ## 9. What's deliberately out of scope
 
 No multi-operator/quorum (no Shamir shares) — single creator, single root
-trust. No general config templating. No remote/clustered mode. One
-`mikavtd` process serves exactly one host (`$MIKAVT_HOST_ID`) — nothing
-load-balances or proxies across multiple enrolled hosts' daemons.
+trust. No general config templating. No clustering/load-balancing across
+multiple `mikavtd` instances — one process serves exactly one host
+(`$MIKAVT_HOST_ID`), whether over the Unix socket, TLS, or both.

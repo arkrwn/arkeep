@@ -31,6 +31,10 @@ from a command or test that was actually run. States: `todo`, `doing`,
 | SDK: Python (`sdk/python/mikavt_sdk`) | done | Same, stdlib only |
 | SDK: TypeScript/JavaScript (`sdk/javascript/mikavt-sdk`) | done | Same; smoke test runs against the compiled `dist/` output, proving the JS consumption path too |
 | `sdk-smoke` CI job | done | Added to `.github/workflows/ci.yml`; `ubuntu-latest` runs "full" mode (real binaries + real `systemd-creds`), `macos-latest` runs "dev" mode (see ADR 0007) |
+| Server mode: TLS/TCP listener in `mikavtd` (ADR 0008) | done | `./scripts/server-mode-smoke.sh`: real self-signed CA/cert generated with `openssl`, real TLS handshake, real token auth over TLS, real denied-path check — all passing |
+| Server mode: mutual TLS (`$MIKAVT_TLS_CLIENT_CA`) | done | Same script's second phase: a client with no cert is rejected by the handshake, a client with a CA-signed cert succeeds — both verified, not assumed |
+| Server mode: Rust SDK TLS client (`Client::connect_tls`) | done | `sdk/rust/mikavt-sdk/examples/smoke_tls.rs`, run for real by `scripts/server-mode-smoke.sh` |
+| Server mode: Go/Python/TypeScript/JavaScript SDK TLS clients | todo | Not started. Each still only supports the Unix socket. Follow ADR 0005's rule when added: real smoke test before claiming it works |
 
 ## Known gaps / open items
 
