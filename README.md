@@ -5,11 +5,11 @@ no HashiCorp Vault, no cloud KMS, no network service beyond a local Unix
 socket. Clone it into a project as a `mikvault/` subdirectory, or run it
 standalone.
 
-> **Status: early development.** The crypto/format/ACL core and both
-> `HostSeal` backends are implemented and tested. The daemon
-> (`mikvaultd`) and admin CLI (`mikvault-cli`) are not built yet — see
-> [Roadmap](#roadmap). Build and test instructions below apply to what
-> exists today (`mikvault-core`).
+> **Status: feature-complete.** The crypto/format/ACL core, both
+> `HostSeal` backends, the daemon (`mikvaultd`), the admin CLI
+> (`mikvault-cli`), deployment templates, and an audit log are all
+> implemented and tested. See [Commands](#commands) for the full CLI
+> surface and [Quickstart](#quickstart) to stand up a vault end to end.
 
 ## Why
 
@@ -55,12 +55,13 @@ protocol, and the disaster-recovery flow.
 ```
 mikvault/
   mikvault-core/   # lib: crypto, on-disk format, ACL, HostSeal — no process I/O beyond disk reads/writes
-  mikvaultd/       # daemon (planned): Unix-socket API, platform seal integration, audit log
-  mikvault-cli/    # admin CLI (planned)
-  docs/            # design spec and implementation plan
+  mikvaultd/       # daemon: Unix-socket API, platform seal integration, audit log
+  mikvault-cli/    # admin CLI: init/enroll-host/enroll-service/set/get/rm/list/rotate-dek/recover/audit tail
+  deployment/      # copy-and-edit systemd unit (Linux) and launchd plist (macOS)
+  docs/            # design spec, deployment guide, recovery runbook, implementation plan
 ```
 
-## What's implemented today
+## What's implemented
 
 - **Envelope crypto** (`mikvault-core::crypto`): AES-256-GCM-SIV DEK
   wrap/unwrap per host, X25519 ECIES wrap/unwrap for the offline root key,
@@ -81,11 +82,94 @@ mikvault/
   Both map failures to the same `SealError::{Unavailable, Invalid, Io}`
   taxonomy, so callers (and tests) don't need to care which platform
   they're on.
+- **`mikvaultd`**: the daemon. Loads `vault.mika`, unseals its own host
+  key, opens the append-only audit log, then serves `Get`/`Set`/`Rm`/`List`
+  requests from service tokens over a Unix socket (newline-delimited JSON).
+  Reads `MIKVAULT_DATA_DIR` and `MIKVAULT_SOCKET` at startup (falling back
+  to a per-OS default — see [`docs/deployment.md`](docs/deployment.md)),
+  and refuses to start rather than silently creating an empty vault if
+  `vault.mika` or the sealed host key is missing or unreadable.
+- **`mikvault-cli`**: the admin CLI (see [Commands](#commands) below) —
+  vault/host bootstrap, service enrollment, `set`/`get`/`rm`/`list` over
+  the daemon socket, DEK rotation, disaster recovery, and audit log
+  inspection.
+- **Deployment templates** (`deployment/`): a systemd unit for Linux and a
+  launchd plist for macOS, documented end to end in
+  [`docs/deployment.md`](docs/deployment.md).
+- **Audit log** (`mikvaultd::audit`): an append-only JSON-lines log of
+  every service request (`<ts> <service_id> <action> <path> <result>`),
+  readable offline via `mikvault-cli audit tail`.
 
-## Building and testing
+## Quickstart
 
 Requires a stable Rust toolchain (MSRV 1.75, pinned in
 `rust-toolchain.toml`).
+
+```bash
+# Build everything (library, daemon, CLI).
+cargo build --workspace --release
+
+# 1. Create a brand-new vault and its root keypair. The root private key
+#    is printed to stdout exactly once — copy it offline (e.g. onto a
+#    hardware token or a printed page) and never store it on a host that
+#    runs the daemon. It is the only way to recover the vault if every
+#    enrolled host is lost; see docs/recovery-runbook.md.
+./target/release/mikvault-cli init --root --data-dir ./data
+
+# 2. Enroll this host. This generates the vault's DEK, wraps it for the
+#    root key and for this host, and seals this host's own unseal key
+#    with the platform HostSeal backend (systemd-creds on Linux, Keychain
+#    on macOS).
+./target/release/mikvault-cli init --host myhost --data-dir ./data
+
+# 3. Start the daemon (foreground, for a quickstart — see
+#    docs/deployment.md to run it as a systemd/launchd service instead).
+MIKVAULT_DATA_DIR=./data MIKVAULT_SOCKET=./data/mikvaultd.sock \
+  ./target/release/mikvaultd &
+
+# 4. Enroll a consuming service, scoped to a path prefix. The printed
+#    token is shown exactly once — hand it to the service's own config.
+./target/release/mikvault-cli enroll-service myapp \
+  --paths myapp/ --perm rw --data-dir ./data
+
+# 5. Set and get a secret over the daemon's socket.
+export MIKVAULT_TOKEN=<token printed by step 4>
+./target/release/mikvault-cli set myapp/db-password 's3cr3t' \
+  --socket ./data/mikvaultd.sock
+./target/release/mikvault-cli get myapp/db-password \
+  --socket ./data/mikvaultd.sock
+```
+
+## Commands
+
+All `mikvault-cli` subcommands accept `--data-dir <DIR>` (or
+`$MIKVAULT_DATA_DIR`), defaulting to the platform data directory
+(`/var/lib/mikvault` on Linux, `~/Library/Application Support/mikvault`
+on macOS). `set`/`get`/`rm`/`list` additionally accept `--socket <PATH>`
+(or `$MIKVAULT_SOCKET`) and a service token via `--token` (or
+`$MIKVAULT_TOKEN`).
+
+| Command | Purpose |
+|---------|---------|
+| `init --root` | Create a brand-new vault and root X25519 keypair. Prints the root private key once. |
+| `init --host <id>` | Enroll the *first* host into a vault created by `init --root`. |
+| `enroll-host <new-id> --this-host <id>` | Enroll an *additional* host, using an already-enrolled host's own sealed key to recover the DEK. |
+| `enroll-service <id> --paths <csv> --perm <ro\|rw>` | Enroll a consuming service and print its one-time access token. |
+| `set <path> <value> --token <t>` | Write a secret (over the daemon socket). |
+| `get <path> --token <t>` | Read a secret (over the daemon socket). |
+| `rm <path> --token <t>` | Remove a secret (over the daemon socket). |
+| `list [prefix] --token <t>` | List secret paths under a prefix (over the daemon socket). |
+| `rotate-dek --hosts <csv>` | Generate a fresh DEK, re-encrypt every entry/token, and re-wrap it for the root key and the given hosts. Operates on `vault.mika` directly, not over the socket. |
+| `recover --root-key <path> --new-host <id>` | Disaster recovery: enroll a new host using the offline root private key, bypassing every enrolled host's own sealed blob. See [`docs/recovery-runbook.md`](docs/recovery-runbook.md). |
+| `audit tail [--count N]` | Print the last `N` (default 20) entries of the daemon's audit log, read directly from `<data_dir>/audit.jsonl`. |
+
+`mikvaultd` itself takes no CLI flags; it reads `MIKVAULT_DATA_DIR` and
+`MIKVAULT_SOCKET` from the environment (same per-OS defaults as above).
+See [`docs/deployment.md`](docs/deployment.md) for running it as a
+systemd service (Linux) or a launchd agent (macOS), including the
+`systemd-creds`/Keychain host-key sealing steps and socket permissions.
+
+## Building and testing
 
 ```bash
 cargo build --workspace
@@ -98,14 +182,17 @@ clear message if `systemd-creds` isn't on `PATH`, e.g. off Linux) and
 `tests/seal_macos.rs` (runs for real against a uniquely-named,
 test-scoped Keychain item on macOS, and cleans it up afterward).
 
-## Roadmap
+## Further reading
 
-The remaining work (daemon request handling, admin CLI, audit log,
-deployment templates, end-to-end lifecycle test, CI) is tracked in
-[`docs/superpowers/plans/2026-11-09-mikvault.md`](docs/superpowers/plans/2026-11-09-mikvault.md).
-Once the CLI lands, the quickstart here will cover: generating a root
-keypair, enrolling the first host, enrolling a consuming service, and
-`set`/`get` over the daemon's local socket.
+- [`docs/deployment.md`](docs/deployment.md) — running `mikvaultd` as a
+  systemd service or launchd agent, environment variables, socket
+  permissions.
+- [`docs/recovery-runbook.md`](docs/recovery-runbook.md) — disaster
+  recovery with the offline root private key, for an operator who has
+  never seen this project before.
+- [`docs/superpowers/specs/2026-11-09-mikvault-design.md`](docs/superpowers/specs/2026-11-09-mikvault-design.md)
+  — full design: on-disk format, the daemon's request protocol, and the
+  disaster-recovery flow.
 
 ## Contributing
 
