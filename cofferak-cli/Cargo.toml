@@ -6,6 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 description = "cofferak command-line interface"
 
+[[bin]]
+name = "cofferak"
+path = "src/main.rs"
+
 [dependencies]
 cofferak-core = { path = "../cofferak-core" }
 # `cofferakd` now has a library target (see `cofferakd/src/lib.rs`), so

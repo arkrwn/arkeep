@@ -46,9 +46,9 @@ so the unseal key is never a plaintext file sitting next to the vault.
   prefixes and a permission level (read / write / read-write) — never
   the DEK itself.
 
-See [`docs/superpowers/specs/2026-11-09-cofferak-design.md`](docs/superpowers/specs/2026-11-09-cofferak-design.md)
-for the full design, including the on-disk format, the daemon's request
-protocol, and the disaster-recovery flow.
+See [`docs/SPEC.md`](docs/SPEC.md) for the full design, including the
+on-disk format, the daemon's request protocol, and the disaster-recovery
+flow, and [`docs/adr/`](docs/adr/) for the point decisions behind it.
 
 ## Repository layout
 
@@ -58,7 +58,9 @@ cofferak/
   cofferakd/       # daemon: Unix-socket API, platform seal integration, audit log
   cofferak-cli/    # admin CLI: init/enroll-host/enroll-service/set/get/rm/list/rotate-dek/recover/audit tail
   deployment/      # copy-and-edit systemd unit (Linux) and launchd plist (macOS)
-  docs/            # design spec, deployment guide, recovery runbook, implementation plan
+  docs/            # SPEC.md, adr/, PROGRESS.md, deployment guide, recovery
+                   # runbook, integration examples
+SDD.md             # the design/documentation practice this repo follows
 ```
 
 ## What's implemented
@@ -89,7 +91,8 @@ cofferak/
   to a per-OS default — see [`docs/deployment.md`](docs/deployment.md)),
   and refuses to start rather than silently creating an empty vault if
   `vault.cofferak` or the sealed host key is missing or unreadable.
-- **`cofferak-cli`**: the admin CLI (see [Commands](#commands) below) —
+- **`cofferak-cli`** (binary name `cofferak`): the admin CLI (see
+  [Commands](#commands) below) —
   vault/host bootstrap, service enrollment, `set`/`get`/`rm`/`list` over
   the daemon socket, DEK rotation, disaster recovery, and audit log
   inspection.
@@ -98,7 +101,7 @@ cofferak/
   [`docs/deployment.md`](docs/deployment.md).
 - **Audit log** (`cofferakd::audit`): an append-only JSON-lines log of
   every service request (`<ts> <service_id> <action> <path> <result>`),
-  readable offline via `cofferak-cli audit tail`.
+  readable offline via `cofferak audit tail`.
 
 ## Quickstart
 
@@ -114,13 +117,13 @@ cargo build --workspace --release
 #    hardware token or a printed page) and never store it on a host that
 #    runs the daemon. It is the only way to recover the vault if every
 #    enrolled host is lost; see docs/recovery-runbook.md.
-./target/release/cofferak-cli init --root --data-dir ./data
+./target/release/cofferak init --root --data-dir ./data
 
 # 2. Enroll this host. This generates the vault's DEK, wraps it for the
 #    root key and for this host, and seals this host's own unseal key
 #    with the platform HostSeal backend (systemd-creds on Linux, Keychain
 #    on macOS).
-./target/release/cofferak-cli init --host myhost --data-dir ./data
+./target/release/cofferak init --host myhost --data-dir ./data
 
 # 3. Start the daemon (foreground, for a quickstart — see
 #    docs/deployment.md to run it as a systemd/launchd service instead).
@@ -129,14 +132,14 @@ COFFERAK_DATA_DIR=./data COFFERAK_SOCKET=./data/cofferakd.sock \
 
 # 4. Enroll a consuming service, scoped to a path prefix. The printed
 #    token is shown exactly once — hand it to the service's own config.
-./target/release/cofferak-cli enroll-service myapp \
+./target/release/cofferak enroll-service myapp \
   --paths myapp/ --perm rw --data-dir ./data
 
 # 5. Set and get a secret over the daemon's socket.
 export COFFERAK_TOKEN=<token printed by step 4>
-./target/release/cofferak-cli set myapp/db-password 's3cr3t' \
+./target/release/cofferak set myapp/db-password 's3cr3t' \
   --socket ./data/cofferakd.sock
-./target/release/cofferak-cli get myapp/db-password \
+./target/release/cofferak get myapp/db-password \
   --socket ./data/cofferakd.sock
 ```
 
@@ -190,9 +193,18 @@ test-scoped Keychain item on macOS, and cleans it up afterward).
 - [`docs/recovery-runbook.md`](docs/recovery-runbook.md) — disaster
   recovery with the offline root private key, for an operator who has
   never seen this project before.
-- [`docs/superpowers/specs/2026-11-09-cofferak-design.md`](docs/superpowers/specs/2026-11-09-cofferak-design.md)
-  — full design: on-disk format, the daemon's request protocol, and the
-  disaster-recovery flow.
+- [`docs/integrations.md`](docs/integrations.md) — worked examples:
+  systemd unit for a consuming service, shell examples for
+  get/set/list, a minimal raw-socket Rust client.
+- [`docs/SPEC.md`](docs/SPEC.md) — full design: on-disk format, the
+  daemon's request protocol, and the disaster-recovery flow.
+- [`docs/adr/`](docs/adr/) — numbered point decisions (why envelope
+  encryption, why no external vault/KMS dependency, why the `HostSeal`
+  abstraction, why `cofferakd` has a library target).
+- [`docs/PROGRESS.md`](docs/PROGRESS.md) — implementation status, one row
+  per area, each backed by what was actually run.
+- [`SDD.md`](SDD.md) — the design/documentation practice this project
+  follows; read it before making an architectural change.
 
 ## Contributing
 

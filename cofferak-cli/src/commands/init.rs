@@ -26,9 +26,7 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use cofferak_core::crypto::{
-    generate_root_keypair, wrap_dek_for_host, wrap_dek_for_root, KeyBytes,
-};
+use cofferak_core::crypto::{generate_root_keypair, wrap_dek_for_host, wrap_dek_for_root, KeyBytes};
 use cofferak_core::format::{FormatError, VaultFile, VaultMeta};
 use cofferak_core::seal::HostSeal;
 
@@ -224,9 +222,7 @@ pub fn run_init_root(data_dir: &Path) -> Result<String, CliError> {
     meta.save(&meta_path(data_dir))?;
 
     let hex_privkey: String = root_privkey.iter().map(|b| format!("{b:02x}")).collect();
-    println!(
-        "=== COFFERAK ROOT PRIVATE KEY — copy this offline now, it will not be shown again ==="
-    );
+    println!("=== COFFERAK ROOT PRIVATE KEY — copy this offline now, it will not be shown again ===");
     println!("{hex_privkey}");
     println!(
         "======================================================================================"
