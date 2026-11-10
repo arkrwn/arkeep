@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# Proves server mode (ADR 0008) for real: generates a real self-signed
-# CA + server certificate with openssl, starts mikavtd/examples/
-# dev-daemon.rs listening on both the Unix socket AND TLS/TCP, then runs
-# the Rust SDK's TLS smoke test against the real TLS listener over a
-# real TLS handshake. Not a mocked test — if this script passes, server
-# mode actually works.
+# Proves server mode (ADR 0008) for real, for every SDK that implements
+# it: generates a real self-signed CA + server certificate with
+# openssl, starts mikavtd/examples/dev-daemon.rs listening on both the
+# Unix socket AND TLS/TCP, then runs each SDK's TLS smoke test against
+# the real TLS listener over a real TLS handshake — including a battery
+# of adversarial cases (wrong hostname, no client cert, a client cert
+# from an untrusted CA) that must each FAIL, not just the happy path
+# that must succeed. Not a mocked test — if this script passes, server
+# mode actually works, for every language it claims to support.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -16,6 +19,12 @@ TLS_ADDR="127.0.0.1:$TLS_PORT"
 SERVER_NAME="mikavt-smoke-test"
 DAEMON_PID=""
 
+# Languages whose SDK supports the TLS/TCP transport today (ADR 0008 /
+# docs/PROGRESS.md). Add a language here only once its SDK has a real
+# `connect_tls`-equivalent AND an `examples/smoke_tls.*` this script can
+# run — never add one "to be implemented," per ADR 0005.
+TLS_LANGS=(rust go python javascript)
+
 cleanup() {
   if [[ -n "$DAEMON_PID" ]] && kill -0 "$DAEMON_PID" 2>/dev/null; then
     kill "$DAEMON_PID" 2>/dev/null || true
@@ -24,6 +33,46 @@ cleanup() {
   rm -rf "$WORKDIR"
 }
 trap cleanup EXIT
+
+# Runs one language's TLS smoke example with the given TLS parameters.
+# Every SDK reads the same env var names (MIKAVT_TLS_ADDR,
+# MIKAVT_TLS_SERVER_NAME, MIKAVT_TLS_CA, MIKAVT_TLS_CLIENT_CERT,
+# MIKAVT_TLS_CLIENT_KEY, MIKAVT_TOKEN) — that consistency is what lets
+# this one function drive all four without per-language special-casing
+# beyond which binary/interpreter actually runs.
+run_tls_smoke() {
+  local lang="$1" allowed="$2" denied="$3" server_name="$4" client_cert="${5:-}" client_key="${6:-}"
+  export MIKAVT_TLS_ADDR="$TLS_ADDR"
+  export MIKAVT_TLS_SERVER_NAME="$server_name"
+  export MIKAVT_TLS_CA="$WORKDIR/ca.pem"
+  export MIKAVT_TLS_CLIENT_CERT="$client_cert"
+  export MIKAVT_TLS_CLIENT_KEY="$client_key"
+  export MIKAVT_TOKEN="$TOKEN"
+  case "$lang" in
+    rust) cargo run --release --example smoke_tls -p mikavt-sdk -- "$allowed" "$denied" ;;
+    go) (cd sdk/go/mikavt && go run ./examples/smoke_tls "$allowed" "$denied") ;;
+    python) python3 sdk/python/mikavt_sdk/examples/smoke_tls.py "$allowed" "$denied" ;;
+    javascript) node sdk/javascript/mikavt-sdk/examples/smoke_tls.js "$allowed" "$denied" ;;
+    *) echo "run_tls_smoke: unknown language '$lang'" >&2; return 1 ;;
+  esac
+}
+
+# Runs run_tls_smoke and requires it to FAIL (used for every adversarial
+# case below) — fails this script loudly, with the captured output, if
+# the smoke test unexpectedly succeeded.
+expect_tls_rejected() {
+  local description="$1"; shift
+  local lang="$1" log
+  log="$(mktemp)"
+  if run_tls_smoke "$@" >"$log" 2>&1; then
+    echo "expected $description to be REJECTED, but it succeeded:" >&2
+    cat "$log" >&2
+    rm -f "$log"
+    exit 1
+  fi
+  rm -f "$log"
+  echo "   ([$lang] $description: correctly rejected)"
+}
 
 echo "== generating a self-signed CA + server cert for $SERVER_NAME =="
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
@@ -72,26 +121,16 @@ fi
 # socket in main()/dev-daemon.rs).
 sleep 0.3
 
-echo "== rust SDK TLS smoke test (server mode) =="
-MIKAVT_TLS_ADDR="$TLS_ADDR" \
-MIKAVT_TLS_SERVER_NAME="$SERVER_NAME" \
-MIKAVT_TLS_CA="$WORKDIR/ca.pem" \
-MIKAVT_TOKEN="$TOKEN" \
-  cargo run --release --example smoke_tls -p mikavt-sdk -- "sdk-smoke/rust-tls" "other/denied"
+for lang in "${TLS_LANGS[@]}"; do
+  echo "== [$lang] TLS smoke test (server mode) =="
+  run_tls_smoke "$lang" "sdk-smoke/$lang-tls" "other/denied" "$SERVER_NAME"
 
-echo "== hostname verification: connecting with the WRONG expected server name must fail =="
-# Defends against a MITM presenting a different (even CA-signed) cert
-# for a different name. The real server cert's CN/SAN is $SERVER_NAME.
-if MIKAVT_TLS_ADDR="$TLS_ADDR" \
-   MIKAVT_TLS_SERVER_NAME="not-$SERVER_NAME" \
-   MIKAVT_TLS_CA="$WORKDIR/ca.pem" \
-   MIKAVT_TOKEN="$TOKEN" \
-   cargo run --release --example smoke_tls -p mikavt-sdk -- "sdk-smoke/rust-tls-wrongname" "other/denied" 2>/tmp/mikavt-wrong-hostname.log; then
-  echo "expected a hostname mismatch to be REJECTED, but the handshake succeeded" >&2
-  cat /tmp/mikavt-wrong-hostname.log >&2
-  exit 1
-fi
-echo "   (correctly rejected, as expected)"
+  echo "== [$lang] hostname verification: wrong expected server name must fail =="
+  # Defends against a MITM presenting a different (even CA-signed) cert
+  # for a different name. The real server cert's CN/SAN is $SERVER_NAME.
+  expect_tls_rejected "a hostname mismatch" \
+    "$lang" "sdk-smoke/$lang-tls-wrongname" "other/denied" "not-$SERVER_NAME"
+done
 
 kill "$DAEMON_PID" 2>/dev/null || true
 wait "$DAEMON_PID" 2>/dev/null || true
@@ -104,6 +143,17 @@ openssl req -newkey rsa:2048 -nodes \
 openssl x509 -req -in "$WORKDIR/client.csr" \
   -CA "$WORKDIR/ca.pem" -CAkey "$WORKDIR/ca.key" -CAcreateserial \
   -days 1 -out "$WORKDIR/client.pem" 2>/dev/null
+
+echo "== generating a client cert signed by a DIFFERENT (rogue) CA =="
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+  -subj "/CN=rogue-ca" \
+  -keyout "$WORKDIR/rogue-ca.key" -out "$WORKDIR/rogue-ca.pem" 2>/dev/null
+openssl req -newkey rsa:2048 -nodes \
+  -subj "/CN=rogue-client" \
+  -keyout "$WORKDIR/rogue-client.key" -out "$WORKDIR/rogue-client.csr" 2>/dev/null
+openssl x509 -req -in "$WORKDIR/rogue-client.csr" \
+  -CA "$WORKDIR/rogue-ca.pem" -CAkey "$WORKDIR/rogue-ca.key" -CAcreateserial \
+  -days 1 -out "$WORKDIR/rogue-client.pem" 2>/dev/null
 
 echo "== starting the dev-only daemon again, this time requiring client certs (mTLS) =="
 MIKAVT_SOCKET="$SOCKET" \
@@ -121,48 +171,19 @@ for _ in $(seq 1 50); do
 done
 sleep 0.3
 
-echo "== mTLS: connecting WITHOUT a client cert must fail the handshake =="
-if MIKAVT_TLS_ADDR="$TLS_ADDR" \
-   MIKAVT_TLS_SERVER_NAME="$SERVER_NAME" \
-   MIKAVT_TLS_CA="$WORKDIR/ca.pem" \
-   MIKAVT_TOKEN="$TOKEN" \
-   cargo run --release --example smoke_tls -p mikavt-sdk -- "sdk-smoke/rust-tls-notls" "other/denied" 2>/tmp/mikavt-mtls-noclient.log; then
-  echo "expected the no-client-cert connection to FAIL against an mTLS-only server, but it succeeded" >&2
-  cat /tmp/mikavt-mtls-noclient.log >&2
-  exit 1
-fi
-echo "   (correctly rejected, as expected)"
+for lang in "${TLS_LANGS[@]}"; do
+  echo "== [$lang] mTLS: connecting WITHOUT a client cert must fail =="
+  expect_tls_rejected "a connection with no client cert against an mTLS-only server" \
+    "$lang" "sdk-smoke/$lang-tls-notls" "other/denied" "$SERVER_NAME"
 
-echo "== mTLS: connecting WITH a cert from a DIFFERENT (rogue) CA must fail =="
-openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
-  -subj "/CN=rogue-ca" \
-  -keyout "$WORKDIR/rogue-ca.key" -out "$WORKDIR/rogue-ca.pem" 2>/dev/null
-openssl req -newkey rsa:2048 -nodes \
-  -subj "/CN=rogue-client" \
-  -keyout "$WORKDIR/rogue-client.key" -out "$WORKDIR/rogue-client.csr" 2>/dev/null
-openssl x509 -req -in "$WORKDIR/rogue-client.csr" \
-  -CA "$WORKDIR/rogue-ca.pem" -CAkey "$WORKDIR/rogue-ca.key" -CAcreateserial \
-  -days 1 -out "$WORKDIR/rogue-client.pem" 2>/dev/null
-if MIKAVT_TLS_ADDR="$TLS_ADDR" \
-   MIKAVT_TLS_SERVER_NAME="$SERVER_NAME" \
-   MIKAVT_TLS_CA="$WORKDIR/ca.pem" \
-   MIKAVT_TLS_CLIENT_CERT="$WORKDIR/rogue-client.pem" \
-   MIKAVT_TLS_CLIENT_KEY="$WORKDIR/rogue-client.key" \
-   MIKAVT_TOKEN="$TOKEN" \
-   cargo run --release --example smoke_tls -p mikavt-sdk -- "sdk-smoke/rust-tls-rogue" "other/denied" 2>/tmp/mikavt-mtls-rogue.log; then
-  echo "expected a client cert signed by an untrusted CA to be REJECTED, but it was accepted" >&2
-  cat /tmp/mikavt-mtls-rogue.log >&2
-  exit 1
-fi
-echo "   (correctly rejected, as expected)"
+  echo "== [$lang] mTLS: connecting WITH a cert from a DIFFERENT (rogue) CA must fail =="
+  expect_tls_rejected "a client cert signed by an untrusted CA" \
+    "$lang" "sdk-smoke/$lang-tls-rogue" "other/denied" "$SERVER_NAME" \
+    "$WORKDIR/rogue-client.pem" "$WORKDIR/rogue-client.key"
 
-echo "== mTLS: connecting WITH the matching (trusted-CA-signed) client cert must succeed =="
-MIKAVT_TLS_ADDR="$TLS_ADDR" \
-MIKAVT_TLS_SERVER_NAME="$SERVER_NAME" \
-MIKAVT_TLS_CA="$WORKDIR/ca.pem" \
-MIKAVT_TLS_CLIENT_CERT="$WORKDIR/client.pem" \
-MIKAVT_TLS_CLIENT_KEY="$WORKDIR/client.key" \
-MIKAVT_TOKEN="$TOKEN" \
-  cargo run --release --example smoke_tls -p mikavt-sdk -- "sdk-smoke/rust-mtls" "other/denied"
+  echo "== [$lang] mTLS: connecting WITH the matching (trusted-CA-signed) client cert must succeed =="
+  run_tls_smoke "$lang" "sdk-smoke/$lang-mtls" "other/denied" "$SERVER_NAME" \
+    "$WORKDIR/client.pem" "$WORKDIR/client.key"
+done
 
-echo "== server mode (TLS + mTLS) smoke test passed =="
+echo "== server mode (TLS + mTLS) smoke test passed for: ${TLS_LANGS[*]} =="

@@ -93,13 +93,15 @@ lines and a 30-second per-connection timeout — see
 [ADR 0008](docs/adr/0008-server-mode-rpc-over-tls.md)'s "Security
 hardening applied" section, including the one disclosed limitation
 (no connection-rate limiting yet — put a reverse proxy in front for an
-internet-facing deployment). The Rust SDK supports this transport today
-(`Client::connect_tls`,
-[`docs/sample-integration/rust.md`](docs/sample-integration/rust.md));
-the Go/Python/TypeScript/JavaScript SDKs are still Unix-socket-only (see
-[`docs/PROGRESS.md`](docs/PROGRESS.md)). Proven for real — server-cert
-validation, hostname-mismatch rejection, and mutual-TLS's reject/accept
-paths (including a cert signed by a different, untrusted CA) — by:
+internet-facing deployment). **All four SDKs** support this transport
+today, each using only its own language's standard-library TLS (no
+third-party TLS dependency anywhere): Rust (`rustls`), Go
+(`crypto/tls`), Python (`ssl`), TypeScript/JavaScript (`node:tls`) — see
+each SDK's page under [`docs/sample-integration/`](docs/sample-integration/)
+for its `connect_tls`/`ConnectTLS`/`connect_tls`/`connectTls` usage.
+Proven for real, for every one of them — server-cert validation,
+hostname-mismatch rejection, and mutual-TLS's reject/accept paths
+(including a cert signed by a different, untrusted CA) — by:
 
 ```bash
 ./scripts/server-mode-smoke.sh
@@ -243,21 +245,24 @@ permissions.
 ## SDKs
 
 A consuming service talks to `mikavtd` over its Unix socket — or, in
-[server mode](#server-mode), TLS/TCP — using the newline-delimited JSON
-protocol in [`docs/SPEC.md`](docs/SPEC.md) §6. Four client SDKs
-implement it today — each is smoke-tested for real against a running
-daemon in CI (`scripts/sdk-smoke.sh`, `.github/workflows/ci.yml`'s
-`sdk-smoke` job), not just documented. Of the four, Rust also supports
-the TLS/mTLS transport (`scripts/server-mode-smoke.sh`); the others are
-still Unix-socket-only (tracked in `docs/PROGRESS.md`):
+[server mode](#server-mode), TLS/mTLS over TCP — using the
+newline-delimited JSON protocol in [`docs/SPEC.md`](docs/SPEC.md) §6.
+Four client SDKs implement it today, **all four over both transports**
+— each is smoke-tested for real against a running daemon in CI
+(`scripts/sdk-smoke.sh` for the Unix socket, `scripts/server-mode-smoke.sh`
+for TLS/mTLS including adversarial reject cases, both wired into
+`.github/workflows/ci.yml`), not just documented:
 
-| Language | Package | Example |
-|---|---|---|
-| Rust | [`sdk/rust/mikavt-sdk`](sdk/rust/mikavt-sdk) | [`docs/sample-integration/rust.md`](docs/sample-integration/rust.md) |
-| Go | [`sdk/go/mikavt`](sdk/go/mikavt) | [`docs/sample-integration/go.md`](docs/sample-integration/go.md) |
-| Python | [`sdk/python/mikavt_sdk`](sdk/python/mikavt_sdk) | [`docs/sample-integration/python.md`](docs/sample-integration/python.md) |
-| TypeScript | [`sdk/javascript/mikavt-sdk`](sdk/javascript/mikavt-sdk) | [`docs/sample-integration/typescript.md`](docs/sample-integration/typescript.md) |
-| JavaScript | same package, compiled `dist/` | [`docs/sample-integration/javascript.md`](docs/sample-integration/javascript.md) |
+| Language | Package | TLS library | Example |
+|---|---|---|---|
+| Rust | [`sdk/rust/mikavt-sdk`](sdk/rust/mikavt-sdk) | `rustls` | [`docs/sample-integration/rust.md`](docs/sample-integration/rust.md) |
+| Go | [`sdk/go/mikavt`](sdk/go/mikavt) | `crypto/tls` (stdlib) | [`docs/sample-integration/go.md`](docs/sample-integration/go.md) |
+| Python | [`sdk/python/mikavt_sdk`](sdk/python/mikavt_sdk) | `ssl` (stdlib) | [`docs/sample-integration/python.md`](docs/sample-integration/python.md) |
+| TypeScript | [`sdk/javascript/mikavt-sdk`](sdk/javascript/mikavt-sdk) | `node:tls` (stdlib) | [`docs/sample-integration/typescript.md`](docs/sample-integration/typescript.md) |
+| JavaScript | same package, compiled `dist/` | `node:tls` (stdlib) | [`docs/sample-integration/javascript.md`](docs/sample-integration/javascript.md) |
+
+No third-party TLS library anywhere — every SDK uses its own language's
+standard library for the TLS transport.
 
 ```python
 # Python, the shortest example — same shape in every SDK above.
