@@ -307,6 +307,9 @@ mTLS reject/accept paths:
 
 ## Further reading
 
+- [`docs/comparison.md`](docs/comparison.md) — how mikavt compares to
+  `.env` files, HashiCorp Vault, Infisical, and AWS Secrets Manager,
+  and honestly, when one of those is the better fit instead.
 - [`docs/deployment.md`](docs/deployment.md) — running `mikavtd` as a
   systemd service or launchd agent, environment variables, socket
   permissions.
