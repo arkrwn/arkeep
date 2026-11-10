@@ -5,11 +5,11 @@ no HashiCorp Vault, no cloud KMS, no network service beyond a local Unix
 socket. Clone it into a project as a `cofferak/` subdirectory, or run it
 standalone.
 
-> **Status: early development.** The crypto/format/ACL core and both
-> `HostSeal` backends are implemented and tested. The daemon
-> (`cofferakd`) and admin CLI (`cofferak-cli`) are not built yet — see
-> [Roadmap](#roadmap). Build and test instructions below apply to what
-> exists today (`cofferak-core`).
+> **Status: feature-complete.** The crypto/format/ACL core, both
+> `HostSeal` backends, the daemon (`cofferakd`), the admin CLI
+> (`cofferak-cli`), deployment templates, and an audit log are all
+> implemented and tested. See [Commands](#commands) for the full CLI
+> surface and [Quickstart](#quickstart) to stand up a vault end to end.
 
 ## Why
 
@@ -55,12 +55,13 @@ protocol, and the disaster-recovery flow.
 ```
 cofferak/
   cofferak-core/   # lib: crypto, on-disk format, ACL, HostSeal — no process I/O beyond disk reads/writes
-  cofferakd/       # daemon (planned): Unix-socket API, platform seal integration, audit log
-  cofferak-cli/    # admin CLI (planned)
-  docs/            # design spec and implementation plan
+  cofferakd/       # daemon: Unix-socket API, platform seal integration, audit log
+  cofferak-cli/    # admin CLI: init/enroll-host/enroll-service/set/get/rm/list/rotate-dek/recover/audit tail
+  deployment/      # copy-and-edit systemd unit (Linux) and launchd plist (macOS)
+  docs/            # design spec, deployment guide, recovery runbook, implementation plan
 ```
 
-## What's implemented today
+## What's implemented
 
 - **Envelope crypto** (`cofferak-core::crypto`): AES-256-GCM-SIV DEK
   wrap/unwrap per host, X25519 ECIES wrap/unwrap for the offline root key,
@@ -81,11 +82,94 @@ cofferak/
   Both map failures to the same `SealError::{Unavailable, Invalid, Io}`
   taxonomy, so callers (and tests) don't need to care which platform
   they're on.
+- **`cofferakd`**: the daemon. Loads `vault.cofferak`, unseals its own host
+  key, opens the append-only audit log, then serves `Get`/`Set`/`Rm`/`List`
+  requests from service tokens over a Unix socket (newline-delimited JSON).
+  Reads `COFFERAK_DATA_DIR` and `COFFERAK_SOCKET` at startup (falling back
+  to a per-OS default — see [`docs/deployment.md`](docs/deployment.md)),
+  and refuses to start rather than silently creating an empty vault if
+  `vault.cofferak` or the sealed host key is missing or unreadable.
+- **`cofferak-cli`**: the admin CLI (see [Commands](#commands) below) —
+  vault/host bootstrap, service enrollment, `set`/`get`/`rm`/`list` over
+  the daemon socket, DEK rotation, disaster recovery, and audit log
+  inspection.
+- **Deployment templates** (`deployment/`): a systemd unit for Linux and a
+  launchd plist for macOS, documented end to end in
+  [`docs/deployment.md`](docs/deployment.md).
+- **Audit log** (`cofferakd::audit`): an append-only JSON-lines log of
+  every service request (`<ts> <service_id> <action> <path> <result>`),
+  readable offline via `cofferak-cli audit tail`.
 
-## Building and testing
+## Quickstart
 
 Requires a stable Rust toolchain (MSRV 1.75, pinned in
 `rust-toolchain.toml`).
+
+```bash
+# Build everything (library, daemon, CLI).
+cargo build --workspace --release
+
+# 1. Create a brand-new vault and its root keypair. The root private key
+#    is printed to stdout exactly once — copy it offline (e.g. onto a
+#    hardware token or a printed page) and never store it on a host that
+#    runs the daemon. It is the only way to recover the vault if every
+#    enrolled host is lost; see docs/recovery-runbook.md.
+./target/release/cofferak-cli init --root --data-dir ./data
+
+# 2. Enroll this host. This generates the vault's DEK, wraps it for the
+#    root key and for this host, and seals this host's own unseal key
+#    with the platform HostSeal backend (systemd-creds on Linux, Keychain
+#    on macOS).
+./target/release/cofferak-cli init --host myhost --data-dir ./data
+
+# 3. Start the daemon (foreground, for a quickstart — see
+#    docs/deployment.md to run it as a systemd/launchd service instead).
+COFFERAK_DATA_DIR=./data COFFERAK_SOCKET=./data/cofferakd.sock \
+  ./target/release/cofferakd &
+
+# 4. Enroll a consuming service, scoped to a path prefix. The printed
+#    token is shown exactly once — hand it to the service's own config.
+./target/release/cofferak-cli enroll-service myapp \
+  --paths myapp/ --perm rw --data-dir ./data
+
+# 5. Set and get a secret over the daemon's socket.
+export COFFERAK_TOKEN=<token printed by step 4>
+./target/release/cofferak-cli set myapp/db-password 's3cr3t' \
+  --socket ./data/cofferakd.sock
+./target/release/cofferak-cli get myapp/db-password \
+  --socket ./data/cofferakd.sock
+```
+
+## Commands
+
+All `cofferak-cli` subcommands accept `--data-dir <DIR>` (or
+`$COFFERAK_DATA_DIR`), defaulting to the platform data directory
+(`/var/lib/cofferak` on Linux, `~/Library/Application Support/cofferak`
+on macOS). `set`/`get`/`rm`/`list` additionally accept `--socket <PATH>`
+(or `$COFFERAK_SOCKET`) and a service token via `--token` (or
+`$COFFERAK_TOKEN`).
+
+| Command | Purpose |
+|---------|---------|
+| `init --root` | Create a brand-new vault and root X25519 keypair. Prints the root private key once. |
+| `init --host <id>` | Enroll the *first* host into a vault created by `init --root`. |
+| `enroll-host <new-id> --this-host <id>` | Enroll an *additional* host, using an already-enrolled host's own sealed key to recover the DEK. |
+| `enroll-service <id> --paths <csv> --perm <ro\|rw>` | Enroll a consuming service and print its one-time access token. |
+| `set <path> <value> --token <t>` | Write a secret (over the daemon socket). |
+| `get <path> --token <t>` | Read a secret (over the daemon socket). |
+| `rm <path> --token <t>` | Remove a secret (over the daemon socket). |
+| `list [prefix] --token <t>` | List secret paths under a prefix (over the daemon socket). |
+| `rotate-dek --hosts <csv>` | Generate a fresh DEK, re-encrypt every entry/token, and re-wrap it for the root key and the given hosts. Operates on `vault.cofferak` directly, not over the socket. |
+| `recover --root-key <path> --new-host <id>` | Disaster recovery: enroll a new host using the offline root private key, bypassing every enrolled host's own sealed blob. See [`docs/recovery-runbook.md`](docs/recovery-runbook.md). |
+| `audit tail [--count N]` | Print the last `N` (default 20) entries of the daemon's audit log, read directly from `<data_dir>/audit.jsonl`. |
+
+`cofferakd` itself takes no CLI flags; it reads `COFFERAK_DATA_DIR` and
+`COFFERAK_SOCKET` from the environment (same per-OS defaults as above).
+See [`docs/deployment.md`](docs/deployment.md) for running it as a
+systemd service (Linux) or a launchd agent (macOS), including the
+`systemd-creds`/Keychain host-key sealing steps and socket permissions.
+
+## Building and testing
 
 ```bash
 cargo build --workspace
@@ -98,14 +182,17 @@ clear message if `systemd-creds` isn't on `PATH`, e.g. off Linux) and
 `tests/seal_macos.rs` (runs for real against a uniquely-named,
 test-scoped Keychain item on macOS, and cleans it up afterward).
 
-## Roadmap
+## Further reading
 
-The remaining work (daemon request handling, admin CLI, audit log,
-deployment templates, end-to-end lifecycle test, CI) is tracked in
-[`docs/superpowers/plans/2026-11-09-cofferak.md`](docs/superpowers/plans/2026-11-09-cofferak.md).
-Once the CLI lands, the quickstart here will cover: generating a root
-keypair, enrolling the first host, enrolling a consuming service, and
-`set`/`get` over the daemon's local socket.
+- [`docs/deployment.md`](docs/deployment.md) — running `cofferakd` as a
+  systemd service or launchd agent, environment variables, socket
+  permissions.
+- [`docs/recovery-runbook.md`](docs/recovery-runbook.md) — disaster
+  recovery with the offline root private key, for an operator who has
+  never seen this project before.
+- [`docs/superpowers/specs/2026-11-09-cofferak-design.md`](docs/superpowers/specs/2026-11-09-cofferak-design.md)
+  — full design: on-disk format, the daemon's request protocol, and the
+  disaster-recovery flow.
 
 ## Contributing
 
