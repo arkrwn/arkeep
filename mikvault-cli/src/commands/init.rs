@@ -26,14 +26,16 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use mikvault_core::crypto::{generate_root_keypair, wrap_dek_for_host, wrap_dek_for_root, KeyBytes};
+use mikvault_core::crypto::{
+    generate_root_keypair, wrap_dek_for_host, wrap_dek_for_root, KeyBytes,
+};
 use mikvault_core::format::{FormatError, VaultFile, VaultMeta};
 use mikvault_core::seal::HostSeal;
 
-#[cfg(target_os = "linux")]
-use mikvault_core::seal::SystemdCredsSeal;
 #[cfg(target_os = "macos")]
 use mikvault_core::seal::KeychainSeal;
+#[cfg(target_os = "linux")]
+use mikvault_core::seal::SystemdCredsSeal;
 
 /// Errors produced by the `init` CLI command.
 #[derive(Debug)]

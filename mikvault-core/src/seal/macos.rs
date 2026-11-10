@@ -62,8 +62,7 @@ impl HostSeal for KeychainSeal {
             return Err(SealError::Invalid);
         }
 
-        let bytes =
-            get_generic_password(&self.service, &self.account).map_err(map_sf_error)?;
+        let bytes = get_generic_password(&self.service, &self.account).map_err(map_sf_error)?;
 
         if bytes.len() != 32 {
             return Err(SealError::Invalid);

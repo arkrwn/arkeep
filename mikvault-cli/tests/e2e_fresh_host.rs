@@ -33,22 +33,27 @@
 //! copy of `mikvaultd/src/main.rs`'s accept loop that `cli_secrets.rs`
 //! already uses.
 
-#[path = "../../mikvaultd/src/protocol.rs"]
-mod protocol;
 #[path = "../../mikvaultd/src/audit.rs"]
 mod audit;
-#[path = "../../mikvaultd/src/daemon.rs"]
-mod daemon;
-#[path = "../src/client.rs"]
-mod client;
-#[path = "../src/commands/init.rs"]
-mod init;
-#[path = "../src/commands/enroll.rs"]
-mod enroll;
-#[path = "../src/commands/secrets.rs"]
-mod secrets;
+#[allow(dead_code)] // each test binary uses only a subset of these shared source modules
 #[path = "../src/commands/audit.rs"]
 mod audit_cmd;
+#[allow(dead_code)] // each test binary uses only a subset of these shared source modules
+#[path = "../src/client.rs"]
+mod client;
+#[path = "../../mikvaultd/src/daemon.rs"]
+mod daemon;
+#[allow(dead_code)] // each test binary uses only a subset of these shared source modules
+#[path = "../src/commands/enroll.rs"]
+mod enroll;
+#[allow(dead_code)] // each test binary uses only a subset of these shared source modules
+#[path = "../src/commands/init.rs"]
+mod init;
+#[path = "../../mikvaultd/src/protocol.rs"]
+mod protocol;
+#[allow(dead_code)] // each test binary uses only a subset of these shared source modules
+#[path = "../src/commands/secrets.rs"]
+mod secrets;
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
@@ -283,7 +288,10 @@ fn fresh_host_lifecycle_init_enroll_set_get_deny_audit() {
             && e.path == "azmika/OPENAI_API_KEY"
             && e.result == "ok"
     });
-    assert!(has_allowed_set, "expected an allowed set entry, got {entries:?}");
+    assert!(
+        has_allowed_set,
+        "expected an allowed set entry, got {entries:?}"
+    );
 
     let has_allowed_get = entries.iter().any(|e| {
         e.service_id == "azmika"
@@ -291,7 +299,10 @@ fn fresh_host_lifecycle_init_enroll_set_get_deny_audit() {
             && e.path == "azmika/OPENAI_API_KEY"
             && e.result == "ok"
     });
-    assert!(has_allowed_get, "expected an allowed get entry, got {entries:?}");
+    assert!(
+        has_allowed_get,
+        "expected an allowed get entry, got {entries:?}"
+    );
 
     let has_denied_get = entries.iter().any(|e| {
         e.service_id == "azmika"
@@ -299,7 +310,10 @@ fn fresh_host_lifecycle_init_enroll_set_get_deny_audit() {
             && e.path == "other/SECRET"
             && e.result == "denied"
     });
-    assert!(has_denied_get, "expected a denied get entry, got {entries:?}");
+    assert!(
+        has_denied_get,
+        "expected a denied get entry, got {entries:?}"
+    );
 
     cleanup(&dir);
 }

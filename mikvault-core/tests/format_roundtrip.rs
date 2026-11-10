@@ -2,7 +2,9 @@
 //! exercised the same way downstream crates (daemon, CLI) will use it: via
 //! the public API only, reading/writing real files on disk.
 
-use mikvault_core::crypto::{encrypt_entry, generate_root_keypair, wrap_dek_for_host, wrap_dek_for_root};
+use mikvault_core::crypto::{
+    encrypt_entry, generate_root_keypair, wrap_dek_for_host, wrap_dek_for_root,
+};
 use mikvault_core::format::{FormatError, VaultEntry, VaultFile, VaultMeta};
 
 fn temp_path(name: &str) -> std::path::PathBuf {
@@ -74,13 +76,14 @@ fn vault_file_load_of_truncated_file_is_corrupt_not_panic() {
     vault
         .hosts
         .insert("laptop".to_string(), wrap_dek_for_host(&dek, &[0x22u8; 32]));
-    vault
-        .entries
-        .insert("secret".to_string(), VaultEntry {
+    vault.entries.insert(
+        "secret".to_string(),
+        VaultEntry {
             ciphertext: encrypt_entry(&dek, b"super secret value"),
             version: 1,
             updated_at: 1_700_000_000,
-        });
+        },
+    );
 
     let path = temp_path("truncated.mika");
     vault.save(&path).expect("save should succeed");

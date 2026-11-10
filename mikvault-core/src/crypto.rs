@@ -127,8 +127,8 @@ pub fn unwrap_dek_for_host(
     wrap: &DekWrapHost,
     host_key: &[u8; 32],
 ) -> Result<[u8; 32], CryptoError> {
-    let plaintext = aead_decrypt(host_key, &wrap.nonce, &wrap.ciphertext)
-        .map_err(|_| CryptoError::Unwrap)?;
+    let plaintext =
+        aead_decrypt(host_key, &wrap.nonce, &wrap.ciphertext).map_err(|_| CryptoError::Unwrap)?;
     plaintext.try_into().map_err(|_| CryptoError::Unwrap)
 }
 
@@ -169,8 +169,8 @@ pub fn unwrap_dek_for_root(
     let shared_secret = root_secret.diffie_hellman(&ephemeral_public);
     let key = KeyBytes::new(shared_secret.to_bytes());
 
-    let plaintext = aead_decrypt(&key, &wrap.nonce, &wrap.ciphertext)
-        .map_err(|_| CryptoError::Unwrap)?;
+    let plaintext =
+        aead_decrypt(&key, &wrap.nonce, &wrap.ciphertext).map_err(|_| CryptoError::Unwrap)?;
     plaintext.try_into().map_err(|_| CryptoError::Unwrap)
 }
 

@@ -8,10 +8,10 @@ use std::sync::{Arc, Mutex};
 use mikvault_core::format::{FormatError, VaultFile};
 use mikvault_core::seal::{HostSeal, SealedBlob};
 
-#[cfg(target_os = "linux")]
-use mikvault_core::seal::SystemdCredsSeal;
 #[cfg(target_os = "macos")]
 use mikvault_core::seal::KeychainSeal;
+#[cfg(target_os = "linux")]
+use mikvault_core::seal::SystemdCredsSeal;
 
 use mikvaultd::audit::AuditLog;
 use mikvaultd::daemon::Daemon;
@@ -112,12 +112,10 @@ fn main() {
         );
         std::process::exit(1);
     });
-    let dek = seal
-        .unseal(&SealedBlob(sealed_bytes))
-        .unwrap_or_else(|e| {
-            eprintln!("mikvaultd: failed to unseal host key: {e}");
-            std::process::exit(1);
-        });
+    let dek = seal.unseal(&SealedBlob(sealed_bytes)).unwrap_or_else(|e| {
+        eprintln!("mikvaultd: failed to unseal host key: {e}");
+        std::process::exit(1);
+    });
 
     let audit_path = data_dir.join("audit.jsonl");
     let audit = AuditLog::open(&audit_path).unwrap_or_else(|e| {
@@ -240,7 +238,10 @@ mod tests {
         vault.save(&path).expect("save fixture vault");
 
         let mut bytes = std::fs::read(&path).expect("read fixture vault");
-        assert!(bytes.len() > 10, "fixture must be larger than the truncation");
+        assert!(
+            bytes.len() > 10,
+            "fixture must be larger than the truncation"
+        );
         bytes.truncate(bytes.len() - 10);
         std::fs::write(&path, &bytes).expect("write truncated vault");
 

@@ -8,10 +8,12 @@
 //! internal `use super::init::...` resolves the same way it does in the
 //! real binary (where both live as siblings under `commands`).
 
-#[path = "../src/commands/init.rs"]
-mod init;
+#[allow(dead_code)] // each test binary uses only a subset of these shared source modules
 #[path = "../src/commands/enroll.rs"]
 mod enroll;
+#[allow(dead_code)] // each test binary uses only a subset of these shared source modules
+#[path = "../src/commands/init.rs"]
+mod init;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -130,7 +132,11 @@ fn run_enroll_host_with_seal_rejects_already_enrolled_new_host_id() {
     assert!(matches!(result, Err(CliError::HostAlreadyEnrolled)));
 
     let vault = VaultFile::load(&dir.join("vault.mika")).expect("vault.mika should be readable");
-    assert_eq!(vault.hosts.len(), 2, "rejected re-enrollment must not change host count");
+    assert_eq!(
+        vault.hosts.len(),
+        2,
+        "rejected re-enrollment must not change host count"
+    );
 
     cleanup(&dir);
 }
@@ -141,7 +147,8 @@ fn run_enroll_host_with_seal_unknown_this_host_id_returns_host_not_found() {
     let seal_b = FakeHostSeal { tag: 0x5B };
     let bogus_seal = FakeHostSeal { tag: 0x99 };
 
-    let result = run_enroll_host_with_seal(&dir, "host-does-not-exist", "host-b", &bogus_seal, &seal_b);
+    let result =
+        run_enroll_host_with_seal(&dir, "host-does-not-exist", "host-b", &bogus_seal, &seal_b);
     assert!(matches!(result, Err(CliError::HostNotFound)));
 
     cleanup(&dir);
@@ -178,8 +185,8 @@ fn run_enroll_service_with_seal_stores_retrievable_token() {
     let host_key_a = seal_a
         .unseal(&SealedBlob(sealed_a))
         .expect("unseal should succeed");
-    let dek = unwrap_dek_for_host(&vault.hosts["host-a"], &host_key_a)
-        .expect("unwrap should succeed");
+    let dek =
+        unwrap_dek_for_host(&vault.hosts["host-a"], &host_key_a).expect("unwrap should succeed");
 
     let plaintext = decrypt_entry(&dek, stored).expect("decrypt should succeed");
     let decoded: mikvault_core::acl::AccessToken =

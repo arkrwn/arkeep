@@ -11,10 +11,12 @@
 //! copy of `mikvaultd/src/audit.rs`), so this test builds its fixture log
 //! with the same real `mikvaultd::audit::{AuditLog, AuditEntry}` types.
 
-#[path = "../src/commands/init.rs"]
-mod init;
+#[allow(dead_code)] // each test binary uses only a subset of these shared source modules
 #[path = "../src/commands/audit.rs"]
 mod audit;
+#[allow(dead_code)] // each test binary uses only a subset of these shared source modules
+#[path = "../src/commands/init.rs"]
+mod init;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};

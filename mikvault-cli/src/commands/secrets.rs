@@ -166,8 +166,8 @@ pub fn run_rotate_dek(
     }
 
     for service in vault.services.values_mut() {
-        let plaintext = decrypt_entry(&old_dek, service)
-            .map_err(|e| CliError::Io(std::io::Error::other(e)))?;
+        let plaintext =
+            decrypt_entry(&old_dek, service).map_err(|e| CliError::Io(std::io::Error::other(e)))?;
         *service = encrypt_entry(&new_dek, &plaintext);
     }
 

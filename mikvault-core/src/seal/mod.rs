@@ -54,7 +54,10 @@ impl fmt::Display for SealError {
         match self {
             SealError::Unavailable => write!(f, "host seal backend is unavailable"),
             SealError::Invalid => {
-                write!(f, "host seal backend rejected input or produced invalid output")
+                write!(
+                    f,
+                    "host seal backend rejected input or produced invalid output"
+                )
             }
             SealError::Io(e) => write!(f, "I/O error talking to host seal backend: {e}"),
         }

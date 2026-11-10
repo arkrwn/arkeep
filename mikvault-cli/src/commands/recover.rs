@@ -90,9 +90,10 @@ pub fn run_recover(
     std::fs::create_dir_all(data_dir.join("hosts"))?;
     std::fs::write(host_seal_path(data_dir, new_host_id), &sealed.0)?;
 
-    vault
-        .hosts
-        .insert(new_host_id.to_string(), wrap_dek_for_host(&dek, &new_host_key));
+    vault.hosts.insert(
+        new_host_id.to_string(),
+        wrap_dek_for_host(&dek, &new_host_key),
+    );
 
     // Atomic rewrite: serialize to a temp file in the same directory as
     // `vault.mika`, then `rename` over the real path. See the module doc

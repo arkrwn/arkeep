@@ -479,7 +479,12 @@ fn main() {
             let data_dir = resolve_data_dir(args.data_dir);
             let new_host_seal = current_host_seal(&args.new_host_id);
 
-            match run_recover(&data_dir, &args.root_key, &args.new_host_id, new_host_seal.as_ref()) {
+            match run_recover(
+                &data_dir,
+                &args.root_key,
+                &args.new_host_id,
+                new_host_seal.as_ref(),
+            ) {
                 Ok(()) => {
                     println!("host '{}' recovered via offline root key", args.new_host_id);
                 }

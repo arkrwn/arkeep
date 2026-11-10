@@ -163,7 +163,9 @@ impl VaultMeta {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::{encrypt_entry, generate_root_keypair, wrap_dek_for_host, wrap_dek_for_root};
+    use crate::crypto::{
+        encrypt_entry, generate_root_keypair, wrap_dek_for_host, wrap_dek_for_root,
+    };
 
     /// Build a unique path under the OS temp dir for this test process, so
     /// parallel test runs don't collide.
@@ -259,7 +261,10 @@ mod tests {
 
         vault.save(&path).expect("save should succeed");
         let mut bytes = std::fs::read(&path).expect("read should succeed");
-        assert!(bytes.len() > 10, "fixture must be larger than the truncation");
+        assert!(
+            bytes.len() > 10,
+            "fixture must be larger than the truncation"
+        );
         bytes.truncate(bytes.len() - 10);
         std::fs::write(&path, &bytes).expect("write truncated file should succeed");
 
