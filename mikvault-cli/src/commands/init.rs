@@ -77,6 +77,10 @@ pub enum CliError {
     /// Task 13: the daemon reported `Response::Err(msg)`, or sent back a
     /// response shape the caller wasn't expecting for that request kind.
     Remote(String),
+    /// Task 14: `recover --root-key <path>` was given a key file that is
+    /// not exactly 32 bytes, or whose bytes do not unwrap
+    /// `VaultFile.root_wrap` (the wrong keypair, or random garbage).
+    BadRootKey,
 }
 
 impl fmt::Display for CliError {
@@ -97,6 +101,10 @@ impl fmt::Display for CliError {
             CliError::Denied => write!(f, "access denied"),
             CliError::NotFound => write!(f, "not found"),
             CliError::Remote(msg) => write!(f, "daemon error: {msg}"),
+            CliError::BadRootKey => write!(
+                f,
+                "root key file is not a valid 32-byte key, or does not match this vault's root public key"
+            ),
         }
     }
 }
@@ -113,7 +121,8 @@ impl std::error::Error for CliError {
             | CliError::HostNotFound
             | CliError::Denied
             | CliError::NotFound
-            | CliError::Remote(_) => None,
+            | CliError::Remote(_)
+            | CliError::BadRootKey => None,
         }
     }
 }
