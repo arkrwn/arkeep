@@ -62,8 +62,21 @@ pub enum CliError {
     /// Task 12's `run_enroll_host_with_seal` when `this_host_id` isn't
     /// actually enrolled, and by `run_enroll_service`'s internal lookup
     /// when no enrolled host's sealed blob can be unsealed with this
-    /// machine's real platform `HostSeal` backend.
+    /// machine's real platform `HostSeal` backend. Task 13's
+    /// `run_rotate_dek` reuses this same variant when none of its given
+    /// `(host_id, seal)` pairs are both unseal-able and actually enrolled.
     HostNotFound,
+    /// Task 13: the daemon denied a `Get`/`Set`/`Rm`/`List` request
+    /// (unknown token, wrong permission level, or a path outside the
+    /// token's granted prefixes). Never constructed from a silently-empty
+    /// value — every denial takes this explicit path.
+    Denied,
+    /// Task 13: the daemon reported `Response::NotFound` for a `Get` or
+    /// `Rm` whose path has no entry.
+    NotFound,
+    /// Task 13: the daemon reported `Response::Err(msg)`, or sent back a
+    /// response shape the caller wasn't expecting for that request kind.
+    Remote(String),
 }
 
 impl fmt::Display for CliError {
@@ -81,6 +94,9 @@ impl fmt::Display for CliError {
                 "vault already has a host enrolled; use `enroll` to add another host, not `init --host`"
             ),
             CliError::HostNotFound => write!(f, "no matching enrolled host found"),
+            CliError::Denied => write!(f, "access denied"),
+            CliError::NotFound => write!(f, "not found"),
+            CliError::Remote(msg) => write!(f, "daemon error: {msg}"),
         }
     }
 }
@@ -94,7 +110,10 @@ impl std::error::Error for CliError {
             | CliError::VaultMissing
             | CliError::HostAlreadyEnrolled
             | CliError::RootWrapAlreadySet
-            | CliError::HostNotFound => None,
+            | CliError::HostNotFound
+            | CliError::Denied
+            | CliError::NotFound
+            | CliError::Remote(_) => None,
         }
     }
 }
