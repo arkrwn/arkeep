@@ -1,7 +1,3 @@
-mod audit;
-mod daemon;
-mod protocol;
-
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
 use std::net::Shutdown;
@@ -17,9 +13,9 @@ use mikvault_core::seal::SystemdCredsSeal;
 #[cfg(target_os = "macos")]
 use mikvault_core::seal::KeychainSeal;
 
-use audit::AuditLog;
-use daemon::Daemon;
-use protocol::{decode_request, encode, Response};
+use mikvaultd::audit::AuditLog;
+use mikvaultd::daemon::Daemon;
+use mikvaultd::protocol::{decode_request, encode, Response};
 
 /// Default data directory on Linux, used unless `$MIKVAULT_DATA_DIR` is set.
 #[cfg(target_os = "linux")]
