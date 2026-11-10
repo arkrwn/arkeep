@@ -58,6 +58,12 @@ pub enum CliError {
     /// seal and the new host's seal), not `init --host` — see the module
     /// doc comment for why a single-seal signature can't do this safely.
     RootWrapAlreadySet,
+    /// A referenced `host_id` is not present in `vault.hosts` — used by
+    /// Task 12's `run_enroll_host_with_seal` when `this_host_id` isn't
+    /// actually enrolled, and by `run_enroll_service`'s internal lookup
+    /// when no enrolled host's sealed blob can be unsealed with this
+    /// machine's real platform `HostSeal` backend.
+    HostNotFound,
 }
 
 impl fmt::Display for CliError {
@@ -74,6 +80,7 @@ impl fmt::Display for CliError {
                 f,
                 "vault already has a host enrolled; use `enroll` to add another host, not `init --host`"
             ),
+            CliError::HostNotFound => write!(f, "no matching enrolled host found"),
         }
     }
 }
@@ -86,7 +93,8 @@ impl std::error::Error for CliError {
             CliError::VaultExists
             | CliError::VaultMissing
             | CliError::HostAlreadyEnrolled
-            | CliError::RootWrapAlreadySet => None,
+            | CliError::RootWrapAlreadySet
+            | CliError::HostNotFound => None,
         }
     }
 }
@@ -103,21 +111,25 @@ impl From<FormatError> for CliError {
     }
 }
 
-fn vault_path(data_dir: &Path) -> PathBuf {
+// These four helpers are `pub(crate)` (not just module-private) so Task
+// 12's `commands::enroll` can reuse them instead of duplicating the
+// path/key-generation conventions established here.
+
+pub(crate) fn vault_path(data_dir: &Path) -> PathBuf {
     data_dir.join("vault.mika")
 }
 
-fn meta_path(data_dir: &Path) -> PathBuf {
+pub(crate) fn meta_path(data_dir: &Path) -> PathBuf {
     data_dir.join("meta.json")
 }
 
-fn host_seal_path(data_dir: &Path, host_id: &str) -> PathBuf {
+pub(crate) fn host_seal_path(data_dir: &Path, host_id: &str) -> PathBuf {
     data_dir.join("hosts").join(format!("{host_id}.seal"))
 }
 
 /// Generate a fresh random 32-byte key (used for both the vault DEK and a
 /// host's unseal key) using the OS CSPRNG.
-fn random_key() -> [u8; 32] {
+pub(crate) fn random_key() -> [u8; 32] {
     use rand_core::{OsRng, RngCore};
     let mut buf = [0u8; 32];
     OsRng.fill_bytes(&mut buf);

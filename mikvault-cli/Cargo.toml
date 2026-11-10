@@ -10,3 +10,4 @@ description = "mikvault command-line interface"
 mikvault-core = { path = "../mikvault-core" }
 clap = { version = "4", features = ["derive"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
+bincode = "1"
