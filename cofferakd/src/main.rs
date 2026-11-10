@@ -1,7 +1,3 @@
-mod audit;
-mod daemon;
-mod protocol;
-
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
 use std::net::Shutdown;
@@ -17,9 +13,9 @@ use cofferak_core::seal::SystemdCredsSeal;
 #[cfg(target_os = "macos")]
 use cofferak_core::seal::KeychainSeal;
 
-use audit::AuditLog;
-use daemon::Daemon;
-use protocol::{decode_request, encode, Response};
+use cofferakd::audit::AuditLog;
+use cofferakd::daemon::Daemon;
+use cofferakd::protocol::{decode_request, encode, Response};
 
 /// Default data directory on Linux, used unless `$COFFERAK_DATA_DIR` is set.
 #[cfg(target_os = "linux")]
