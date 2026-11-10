@@ -328,6 +328,7 @@ dependencies = [
  "bincode",
  "clap",
  "cofferak-core",
+ "cofferakd",
  "rand_core",
  "serde",
  "serde_json",

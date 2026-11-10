@@ -8,11 +8,15 @@ description = "cofferak command-line interface"
 
 [dependencies]
 cofferak-core = { path = "../cofferak-core" }
+# `cofferakd` now has a library target (see `cofferakd/src/lib.rs`), so
+# `audit.rs`'s `run_audit_tail` depends on `cofferakd::audit::{AuditLog,
+# AuditEntry}` directly rather than pulling the source in via `#[path]`.
+cofferakd = { path = "../cofferakd" }
 clap = { version = "4", features = ["derive", "env"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
 bincode = "1"
-# Not a dependency on the `cofferakd` crate (it has no library target):
-# these back `src/client.rs`'s `#[path]`-included copy of
-# `cofferakd/src/protocol.rs`, which is itself `serde`/`serde_json`-based.
+# `src/client.rs` still pulls in its own copy of `cofferakd/src/protocol.rs`
+# via `#[path]` rather than `cofferakd::protocol` (pre-existing convention,
+# left as-is by Task 15); these back that `serde`/`serde_json`-based copy.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -15,6 +15,7 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use client::Client;
+use commands::audit::{format_audit_entry, run_audit_tail};
 use commands::enroll::{run_enroll_host_with_seal, run_enroll_service};
 use commands::init::{current_host_seal, run_init_host, run_init_root};
 use commands::recover::run_recover;
@@ -53,6 +54,9 @@ enum Command {
     /// Disaster recovery: enroll a new host using the offline root
     /// private key, bypassing every enrolled host's own sealed blob.
     Recover(RecoverArgs),
+    /// Inspect the daemon's audit log (local, offline — not a request over
+    /// the socket).
+    Audit(AuditArgs),
 }
 
 #[derive(Args)]
@@ -198,6 +202,31 @@ struct RecoverArgs {
 
     /// Vault data directory. Defaults to the platform data dir, or
     /// `$COFFERAK_DATA_DIR` if set.
+    #[arg(long, value_name = "DIR")]
+    data_dir: Option<PathBuf>,
+}
+
+#[derive(Args)]
+struct AuditArgs {
+    #[command(subcommand)]
+    command: AuditCommand,
+}
+
+#[derive(Subcommand)]
+enum AuditCommand {
+    /// Print the last `--count` (default 20) audit log entries, in order.
+    Tail(AuditTailArgs),
+}
+
+#[derive(Args)]
+struct AuditTailArgs {
+    /// Number of most-recent entries to print.
+    #[arg(long = "count", value_name = "N", default_value_t = 20)]
+    count: usize,
+
+    /// Vault data directory. Defaults to the platform data dir, or
+    /// `$COFFERAK_DATA_DIR` if set. The audit log is read from
+    /// `<data_dir>/audit.jsonl`.
     #[arg(long, value_name = "DIR")]
     data_dir: Option<PathBuf>,
 }
@@ -460,5 +489,23 @@ fn main() {
                 }
             }
         }
+        Command::Audit(args) => match args.command {
+            AuditCommand::Tail(tail_args) => {
+                let data_dir = resolve_data_dir(tail_args.data_dir);
+                let log_path = data_dir.join("audit.jsonl");
+
+                match run_audit_tail(&log_path, tail_args.count) {
+                    Ok(entries) => {
+                        for entry in &entries {
+                            println!("{}", format_audit_entry(entry));
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("cofferak-cli: audit tail failed: {e}");
+                        std::process::exit(1);
+                    }
+                }
+            }
+        },
     }
 }
