@@ -32,11 +32,14 @@ fn main() {
         .cloned()
         .unwrap_or_else(|| "other/denied".to_string());
 
+    // An empty-string env var (as opposed to an unset one — the smoke
+    // script always exports both, blank when not applicable) must be
+    // treated the same as "not set", not as a literal empty path.
     let client_cert_and_key = match (
-        std::env::var("COFFERAK_TLS_CLIENT_CERT"),
-        std::env::var("COFFERAK_TLS_CLIENT_KEY"),
+        std::env::var("COFFERAK_TLS_CLIENT_CERT").unwrap_or_default(),
+        std::env::var("COFFERAK_TLS_CLIENT_KEY").unwrap_or_default(),
     ) {
-        (Ok(cert), Ok(key)) => Some((cert.into(), key.into())),
+        (cert, key) if !cert.is_empty() && !key.is_empty() => Some((cert.into(), key.into())),
         _ => None,
     };
 

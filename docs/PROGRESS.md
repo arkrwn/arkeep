@@ -31,12 +31,14 @@ from a command or test that was actually run. States: `todo`, `doing`,
 | SDK: Python (`sdk/python/cofferak_sdk`) | done | Same, stdlib only |
 | SDK: TypeScript/JavaScript (`sdk/javascript/cofferak-sdk`) | done | Same; smoke test runs against the compiled `dist/` output, proving the JS consumption path too |
 | `sdk-smoke` CI job | done | Added to `.github/workflows/ci.yml`; `ubuntu-latest` runs "full" mode (real binaries + real `systemd-creds`), `macos-latest` runs "dev" mode (see ADR 0007) |
-| Server mode: TLS/TCP listener in `cofferakd` (ADR 0008) | done | `./scripts/server-mode-smoke.sh`: real self-signed CA/cert generated with `openssl`, real TLS handshake, real token auth over TLS, real denied-path check — all passing |
-| Server mode: mutual TLS (`$COFFERAK_TLS_CLIENT_CA`) | done | Same script: a client with no cert, and separately a client with a cert signed by a *different, untrusted* CA, are both rejected; only a cert signed by the configured CA is accepted — all three verified, not assumed |
-| Server mode: hostname verification | done | Same script: connecting with the wrong expected server name against the real server cert is rejected (defends against a MITM presenting a different, even CA-signed, cert) |
+| Server mode: TLS/TCP listener in `cofferakd` (ADR 0008) | done | `./scripts/server-mode-smoke.sh`: real self-signed CA/cert generated with `openssl`, real TLS handshake, real token auth over TLS, real denied-path check — all passing, for all four SDKs |
+| Server mode: mutual TLS (`$COFFERAK_TLS_CLIENT_CA`) | done | Same script, for all four SDKs: a client with no cert, and separately a client with a cert signed by a *different, untrusted* CA, are both rejected; only a cert signed by the configured CA is accepted — all verified, not assumed |
+| Server mode: hostname verification | done | Same script, for all four SDKs: connecting with the wrong expected server name against the real server cert is rejected (defends against a MITM presenting a different, even CA-signed, cert) |
 | Server mode: Rust SDK TLS client (`Client::connect_tls`) | done | `sdk/rust/cofferak-sdk/examples/smoke_tls.rs`, run for real by `scripts/server-mode-smoke.sh` |
-| Server mode security hardening (post-review) | done | TLS 1.3-only (no `tls12` feature — both ends are our own code); bounded request/response lines on every transport, not just the TLS listener (`protocol::read_line_bounded`, `MAX_LINE_BYTES`); 30s per-connection I/O timeout on the TLS listener and the Rust SDK's TLS client. See ADR 0008's "Security hardening applied" section |
-| Server mode: Go/Python/TypeScript/JavaScript SDK TLS clients | todo | Not started. Each still only supports the Unix socket. Follow ADR 0005's rule when added: real smoke test before claiming it works |
+| Server mode: Go SDK TLS client (`ConnectTLS`, `crypto/tls`) | done | `sdk/go/cofferak/examples/smoke_tls/main.go`; TLS 1.3 pinned via `MinVersion`/`MaxVersion`, fresh `x509.NewCertPool()` (never `SystemCertPool()`) |
+| Server mode: Python SDK TLS client (`Client.connect_tls`, `ssl`) | done | `sdk/python/cofferak_sdk/examples/smoke_tls.py`; `PROTOCOL_TLS_CLIENT`'s secure defaults kept, `load_default_certs()` never called |
+| Server mode: TypeScript/JavaScript SDK TLS client (`Client.connectTls`, `node:tls`) | done | `sdk/javascript/cofferak-sdk/examples/smoke_tls.js`, run against the compiled `dist/` output; `rejectUnauthorized` never disabled |
+| Server mode security hardening (post-review, both passes) | done | TLS 1.3-only in every SDK, not just the daemon; bounded request/response lines in the daemon *and* every SDK's own response reading (a hostile daemon could flood a client too); 30s per-connection I/O timeout on the daemon and every SDK's TLS client; no public-root-CA fallback in any SDK. See ADR 0008's "Security hardening applied" section |
 
 ## Known gaps / open items
 

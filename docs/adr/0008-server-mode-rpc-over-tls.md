@@ -52,11 +52,13 @@ faster than any network transport, no TLS handshake, OS-enforced file
 permissions). TLS/TCP is additive, opt-in via `$COFFERAK_TLS_ADDR`, for
 when a service genuinely isn't on the same host.
 
-**Follow-up, not yet done:** only the Rust SDK speaks TLS/TCP today
-(`Client::connect_tls`); the Go/Python/TypeScript SDKs are still
-Unix-socket-only. Extending each to the network transport is tracked in
-`docs/PROGRESS.md`, following the same ADR 0005 rule (real smoke test
-before claiming it works).
+**Update:** all four SDKs now speak TLS/TCP (Rust `rustls`, Go
+`crypto/tls`, Python `ssl`, TypeScript/JavaScript `node:tls` — every one
+a language standard library, no third-party TLS dependency added
+anywhere). Each went through the same adversarial battery in
+`scripts/server-mode-smoke.sh`: happy-path round trip, wrong-hostname
+rejection, mTLS no-client-cert rejection, mTLS rogue-CA-signed-cert
+rejection, mTLS correct-cert acceptance. See `docs/PROGRESS.md`.
 
 ## Security hardening applied (and what's intentionally not done yet)
 
@@ -66,22 +68,32 @@ Reviewed and fixed before this reached `main`:
   this protocol are cofferak's own code, so there's no legacy-client
   compatibility reason to allow the weaker, older protocol version.
 - **Bounded request/response lines** (`protocol::read_line_bounded`,
-  `MAX_LINE_BYTES` = 16 MiB). The daemon previously used `read_until`
-  with no cap on *every* transport, including the now-network-reachable
-  TLS listener — a client that never sends `\n` would otherwise grow
-  the read buffer without limit (memory-exhaustion DoS). Applied
-  uniformly to the Unix socket, the TLS listener, and the Rust SDK's
-  own response reading (a hostile/compromised daemon could do the same
-  thing back to a client), not just the new code path.
-- **Per-connection I/O timeout (30s)** on the TLS listener and the Rust
+  `MAX_LINE_BYTES` = 16 MiB on the daemon side, and the same cap
+  independently reimplemented by every SDK for its own response
+  reading). The daemon previously used `read_until` with no cap on
+  *every* transport, including the now-network-reachable TLS listener —
+  a client that never sends `\n` would otherwise grow the read buffer
+  without limit (memory-exhaustion DoS). A hostile/compromised daemon
+  could do the same thing back to a client, so every SDK's own read
+  path is bounded too, not just the daemon's.
+- **Per-connection I/O timeout (30s)** on the TLS listener and every
   SDK's TLS client — a stalled/slow connection is dropped rather than
-  parking a thread forever (mitigates, not eliminates, a
-  slowloris-style attack — see the limitation below).
-- **Verified, not assumed, by `scripts/server-mode-smoke.sh`:** server
-  cert validated against the configured CA; a wrong expected server
-  name is rejected (MITM-with-a-different-cert defense); mTLS rejects
-  both *no* client cert and a client cert signed by a *different,
-  untrusted* CA, and accepts only a cert signed by the configured one.
+  parking a thread/goroutine/event-loop callback forever (mitigates,
+  not eliminates, a slowloris-style attack — see the limitation below).
+- **No public-root fallback, in any SDK.** Every TLS client trusts
+  *only* the CA path it's given — Rust's `RootCertStore::empty()` before
+  adding just that CA, Go's fresh `x509.NewCertPool()` (never
+  `SystemCertPool()`), Python's `SSLContext` with `load_default_certs()`
+  never called, Node's `ca` option (which replaces, not adds to, the
+  bundled public root store). cofferak's TLS is for a self-managed
+  deployment; falling back to a public trust store would let any
+  public-CA-issued certificate impersonate the server.
+- **Verified, not assumed, by `scripts/server-mode-smoke.sh`, for every
+  SDK:** server cert validated against the configured CA; a wrong
+  expected server name is rejected (MITM-with-a-different-cert
+  defense); mTLS rejects both *no* client cert and a client cert signed
+  by a *different, untrusted* CA, and accepts only a cert signed by the
+  configured one.
 
 **Known, disclosed limitation — not fixed here:** there is no
 connection-count or rate limit on the TLS listener. The 30-second

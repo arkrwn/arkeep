@@ -121,10 +121,12 @@ Client SDKs implementing §6's wire protocol exist for Rust, Go, Python,
 and TypeScript/JavaScript (`sdk/<lang>/...`), each with a smoke test
 (`sdk/<lang>/.../examples/smoke.*`) proven against a real daemon by
 `scripts/sdk-smoke.sh`, wired into CI as the `sdk-smoke` job. See ADR
-0005 and `docs/sample-integration/` for usage. Of the four, only Rust
-currently supports the §6a TLS/mTLS transport (`Client::connect_tls`);
-the rest are Unix-socket-only (tracked in `docs/PROGRESS.md`). Planned:
-C, C++, Perl, Ruby (`docs/sample-integration/roadmap.md`).
+0005 and `docs/sample-integration/` for usage. All four also support
+the §6a TLS/mTLS transport, each via its own language's TLS standard
+library (no third-party TLS dependency anywhere) — proven, including
+the adversarial reject cases, by `scripts/server-mode-smoke.sh`. See
+ADR 0008. Planned: C, C++, Perl, Ruby
+(`docs/sample-integration/roadmap.md`).
 
 ## 9. What's deliberately out of scope
 
