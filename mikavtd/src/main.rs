@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufReader, Write};
 use std::net::Shutdown;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
@@ -264,8 +264,12 @@ fn handle_connection(stream: UnixStream, daemon: Arc<Mutex<Daemon>>) {
     let mut line = Vec::new();
 
     loop {
-        line.clear();
-        match reader.read_until(b'\n', &mut line) {
+        // Bounded, not `read_until`: an unbounded read lets a client
+        // that never sends `\n` grow this buffer without limit. Unix
+        // socket clients are local/trusted, but the daemon uses one
+        // consistent, audited cap (`protocol::MAX_LINE_BYTES`) across
+        // every transport rather than a per-transport exception.
+        match mikavtd::protocol::read_line_bounded(&mut reader, &mut line) {
             Ok(0) => break, // EOF
             Ok(_) => {}
             Err(_) => break,

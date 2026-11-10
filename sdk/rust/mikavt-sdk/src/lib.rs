@@ -19,7 +19,7 @@
 //! ```
 
 use serde::{Deserialize, Serialize};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufReader, Write};
 use std::net::TcpStream;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
@@ -145,6 +145,59 @@ pub struct Client {
     transport: Transport,
 }
 
+/// Hard ceiling on one response line — mirrors
+/// `mikavtd::protocol::MAX_LINE_BYTES` (duplicated, not shared: this
+/// crate deliberately has no dependency on `mikavtd`/`mikavt-core`, see
+/// the module doc comment). A malicious or compromised daemon that
+/// never terminates a response otherwise grows this buffer without
+/// limit.
+const MAX_LINE_BYTES: usize = 16 * 1024 * 1024;
+
+/// Read one newline-delimited line from `reader` into `buf` (cleared
+/// first), refusing to grow past [`MAX_LINE_BYTES`]. See
+/// `mikavtd::protocol::read_line_bounded` for the identical algorithm
+/// and rationale.
+fn read_line_bounded<R: std::io::BufRead>(
+    reader: &mut R,
+    buf: &mut Vec<u8>,
+) -> std::io::Result<usize> {
+    buf.clear();
+    let mut total = 0usize;
+    loop {
+        let available = match reader.fill_buf() {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        };
+        if available.is_empty() {
+            return Ok(total);
+        }
+        if let Some(newline_at) = available.iter().position(|&b| b == b'\n') {
+            if total + newline_at + 1 > MAX_LINE_BYTES {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "response line exceeded the maximum allowed size",
+                ));
+            }
+            buf.extend_from_slice(&available[..=newline_at]);
+            total += newline_at + 1;
+            reader.consume(newline_at + 1);
+            return Ok(total);
+        }
+        let chunk_len = available.len();
+        if total + chunk_len > MAX_LINE_BYTES {
+            reader.consume(chunk_len);
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "response line exceeded the maximum allowed size",
+            ));
+        }
+        buf.extend_from_slice(available);
+        total += chunk_len;
+        reader.consume(chunk_len);
+    }
+}
+
 fn load_certs(path: &Path) -> Result<Vec<CertificateDer<'static>>, SdkError> {
     let file = std::fs::File::open(path)
         .map_err(|e| SdkError::Tls(format!("reading {}: {e}", path.display())))?;
@@ -212,13 +265,13 @@ impl Client {
             .map_err(|e| SdkError::Protocol(format!("failed to encode request: {e}")))?;
         bytes.push(b'\n');
 
-        let mut line = String::new();
+        let mut line = Vec::new();
         match &self.transport {
             Transport::Unix(socket_path) => {
                 let mut stream = UnixStream::connect(socket_path)?;
                 stream.write_all(&bytes)?;
                 let mut reader = BufReader::new(stream);
-                reader.read_line(&mut line)?;
+                read_line_bounded(&mut reader, &mut line)?;
             }
             Transport::Tls {
                 addr,
@@ -226,14 +279,22 @@ impl Client {
                 config,
             } => {
                 let tcp = TcpStream::connect(addr)?;
+                // A malicious or hung server otherwise blocks the
+                // caller's thread indefinitely — bound it, matching the
+                // daemon's own stance on its listeners.
+                let timeout = Some(std::time::Duration::from_secs(30));
+                let _ = tcp.set_read_timeout(timeout);
+                let _ = tcp.set_write_timeout(timeout);
                 let conn = ClientConnection::new(Arc::clone(config), server_name.clone())
                     .map_err(|e| SdkError::Tls(format!("starting TLS handshake: {e}")))?;
                 let tls = StreamOwned::new(conn, tcp);
                 let mut reader = BufReader::new(tls);
                 reader.get_mut().write_all(&bytes)?;
-                reader.read_line(&mut line)?;
+                read_line_bounded(&mut reader, &mut line)?;
             }
         }
+        let line = String::from_utf8(line)
+            .map_err(|e| SdkError::Protocol(format!("response was not valid UTF-8: {e}")))?;
 
         serde_json::from_str(&line)
             .map_err(|e| SdkError::Protocol(format!("failed to decode response: {e}")))

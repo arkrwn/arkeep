@@ -79,6 +79,20 @@ MIKAVT_TLS_CA="$WORKDIR/ca.pem" \
 MIKAVT_TOKEN="$TOKEN" \
   cargo run --release --example smoke_tls -p mikavt-sdk -- "sdk-smoke/rust-tls" "other/denied"
 
+echo "== hostname verification: connecting with the WRONG expected server name must fail =="
+# Defends against a MITM presenting a different (even CA-signed) cert
+# for a different name. The real server cert's CN/SAN is $SERVER_NAME.
+if MIKAVT_TLS_ADDR="$TLS_ADDR" \
+   MIKAVT_TLS_SERVER_NAME="not-$SERVER_NAME" \
+   MIKAVT_TLS_CA="$WORKDIR/ca.pem" \
+   MIKAVT_TOKEN="$TOKEN" \
+   cargo run --release --example smoke_tls -p mikavt-sdk -- "sdk-smoke/rust-tls-wrongname" "other/denied" 2>/tmp/mikavt-wrong-hostname.log; then
+  echo "expected a hostname mismatch to be REJECTED, but the handshake succeeded" >&2
+  cat /tmp/mikavt-wrong-hostname.log >&2
+  exit 1
+fi
+echo "   (correctly rejected, as expected)"
+
 kill "$DAEMON_PID" 2>/dev/null || true
 wait "$DAEMON_PID" 2>/dev/null || true
 DAEMON_PID=""
@@ -119,7 +133,30 @@ if MIKAVT_TLS_ADDR="$TLS_ADDR" \
 fi
 echo "   (correctly rejected, as expected)"
 
-echo "== mTLS: connecting WITH the matching client cert must succeed =="
+echo "== mTLS: connecting WITH a cert from a DIFFERENT (rogue) CA must fail =="
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+  -subj "/CN=rogue-ca" \
+  -keyout "$WORKDIR/rogue-ca.key" -out "$WORKDIR/rogue-ca.pem" 2>/dev/null
+openssl req -newkey rsa:2048 -nodes \
+  -subj "/CN=rogue-client" \
+  -keyout "$WORKDIR/rogue-client.key" -out "$WORKDIR/rogue-client.csr" 2>/dev/null
+openssl x509 -req -in "$WORKDIR/rogue-client.csr" \
+  -CA "$WORKDIR/rogue-ca.pem" -CAkey "$WORKDIR/rogue-ca.key" -CAcreateserial \
+  -days 1 -out "$WORKDIR/rogue-client.pem" 2>/dev/null
+if MIKAVT_TLS_ADDR="$TLS_ADDR" \
+   MIKAVT_TLS_SERVER_NAME="$SERVER_NAME" \
+   MIKAVT_TLS_CA="$WORKDIR/ca.pem" \
+   MIKAVT_TLS_CLIENT_CERT="$WORKDIR/rogue-client.pem" \
+   MIKAVT_TLS_CLIENT_KEY="$WORKDIR/rogue-client.key" \
+   MIKAVT_TOKEN="$TOKEN" \
+   cargo run --release --example smoke_tls -p mikavt-sdk -- "sdk-smoke/rust-tls-rogue" "other/denied" 2>/tmp/mikavt-mtls-rogue.log; then
+  echo "expected a client cert signed by an untrusted CA to be REJECTED, but it was accepted" >&2
+  cat /tmp/mikavt-mtls-rogue.log >&2
+  exit 1
+fi
+echo "   (correctly rejected, as expected)"
+
+echo "== mTLS: connecting WITH the matching (trusted-CA-signed) client cert must succeed =="
 MIKAVT_TLS_ADDR="$TLS_ADDR" \
 MIKAVT_TLS_SERVER_NAME="$SERVER_NAME" \
 MIKAVT_TLS_CA="$WORKDIR/ca.pem" \

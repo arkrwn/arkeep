@@ -57,3 +57,38 @@ when a service genuinely isn't on the same host.
 Unix-socket-only. Extending each to the network transport is tracked in
 `docs/PROGRESS.md`, following the same ADR 0005 rule (real smoke test
 before claiming it works).
+
+## Security hardening applied (and what's intentionally not done yet)
+
+Reviewed and fixed before this reached `main`:
+
+- **TLS 1.3-only.** `tls12` is deliberately not enabled — both ends of
+  this protocol are mikavt's own code, so there's no legacy-client
+  compatibility reason to allow the weaker, older protocol version.
+- **Bounded request/response lines** (`protocol::read_line_bounded`,
+  `MAX_LINE_BYTES` = 16 MiB). The daemon previously used `read_until`
+  with no cap on *every* transport, including the now-network-reachable
+  TLS listener — a client that never sends `\n` would otherwise grow
+  the read buffer without limit (memory-exhaustion DoS). Applied
+  uniformly to the Unix socket, the TLS listener, and the Rust SDK's
+  own response reading (a hostile/compromised daemon could do the same
+  thing back to a client), not just the new code path.
+- **Per-connection I/O timeout (30s)** on the TLS listener and the Rust
+  SDK's TLS client — a stalled/slow connection is dropped rather than
+  parking a thread forever (mitigates, not eliminates, a
+  slowloris-style attack — see the limitation below).
+- **Verified, not assumed, by `scripts/server-mode-smoke.sh`:** server
+  cert validated against the configured CA; a wrong expected server
+  name is rejected (MITM-with-a-different-cert defense); mTLS rejects
+  both *no* client cert and a client cert signed by a *different,
+  untrusted* CA, and accepts only a cert signed by the configured one.
+
+**Known, disclosed limitation — not fixed here:** there is no
+connection-count or rate limit on the TLS listener. The 30-second
+timeout bounds how long any *one* connection can hold a thread, but an
+attacker opening many connections in parallel can still exhaust threads
+for that duration. For an internet-facing deployment, put a reverse
+proxy or load balancer with connection/rate limiting in front of
+`$MIKAVT_TLS_ADDR` rather than exposing it directly; a connection
+semaphore inside `mikavtd` itself is a reasonable future improvement,
+tracked in `docs/PROGRESS.md`, not implemented yet.
