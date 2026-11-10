@@ -11,7 +11,7 @@
 //! confidentiality/integrity (and optionally client identity), it is
 //! never a substitute for the token.
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 
@@ -140,6 +140,14 @@ fn handle_tls_connection(
     server_config: Arc<ServerConfig>,
     daemon: Arc<Mutex<Daemon>>,
 ) {
+    // Network-reachable, unlike the Unix socket — bound how long one
+    // stalled/slow client can hold a thread. A client that connects and
+    // never sends anything, or never reads the response, is dropped
+    // rather than parked forever (a cheap mitigation for a
+    // slowloris-style thread-exhaustion DoS against this listener).
+    let _ = tcp.set_read_timeout(Some(std::time::Duration::from_secs(30)));
+    let _ = tcp.set_write_timeout(Some(std::time::Duration::from_secs(30)));
+
     let conn = match ServerConnection::new(server_config) {
         Ok(conn) => conn,
         Err(_) => return,
@@ -149,15 +157,17 @@ fn handle_tls_connection(
     // `BufReader` takes ownership of `tls` so its internal buffer
     // persists across loop iterations (a per-iteration `BufReader` would
     // silently drop any bytes of the *next* request already read ahead
-    // into the buffer by `read_until`). Writes go through
+    // into the buffer by the bounded read below). Writes go through
     // `reader.get_mut()`, which hands back `&mut StreamOwned` without
     // touching the read buffer — both directions share the one
     // `ServerConnection`, as TLS record state requires.
     let mut reader = BufReader::new(tls);
     let mut line = Vec::new();
     loop {
-        line.clear();
-        match reader.read_until(b'\n', &mut line) {
+        // Bounded (`protocol::MAX_LINE_BYTES`), not `read_until`: this
+        // listener is network-reachable, so an unbounded read is a real
+        // memory-exhaustion DoS from a client that never sends `\n`.
+        match crate::protocol::read_line_bounded(&mut reader, &mut line) {
             Ok(0) => break,
             Ok(_) => {}
             Err(_) => break,

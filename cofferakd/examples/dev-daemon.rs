@@ -21,7 +21,7 @@
 //! reads, serving the same `daemon` over both transports at once.
 
 use std::collections::BTreeMap;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufReader, Write};
 use std::net::Shutdown;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::{Arc, Mutex};
@@ -122,8 +122,9 @@ fn handle_connection(stream: UnixStream, daemon: Arc<Mutex<Daemon>>) {
     let mut line = Vec::new();
 
     loop {
-        line.clear();
-        match reader.read_until(b'\n', &mut line) {
+        // Bounded, matching the real main.rs/tls_server.rs — see
+        // protocol::read_line_bounded's doc comment.
+        match cofferakd::protocol::read_line_bounded(&mut reader, &mut line) {
             Ok(0) => break,
             Ok(_) => {}
             Err(_) => break,

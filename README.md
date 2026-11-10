@@ -86,12 +86,20 @@ COFFERAK_TLS_KEY=./server.key \
 | `COFFERAK_TLS_CERT` / `COFFERAK_TLS_KEY` | Server certificate + private key (PEM). Required once `COFFERAK_TLS_ADDR` is set. |
 | `COFFERAK_TLS_CLIENT_CA` | Optional. CA (PEM) to verify client certificates against — turns on mutual TLS. |
 
-TLS is pure-Rust (`rustls`, no OpenSSL/C dependency) — see ADR 0008. The
-Rust SDK supports this transport today (`Client::connect_tls`,
+TLS is pure-Rust (`rustls`, no OpenSSL/C dependency), **TLS 1.3-only**
+(both ends are cofferak's own code, so there's no compatibility reason to
+allow the older, weaker protocol version), with bounded request/response
+lines and a 30-second per-connection timeout — see
+[ADR 0008](docs/adr/0008-server-mode-rpc-over-tls.md)'s "Security
+hardening applied" section, including the one disclosed limitation
+(no connection-rate limiting yet — put a reverse proxy in front for an
+internet-facing deployment). The Rust SDK supports this transport today
+(`Client::connect_tls`,
 [`docs/sample-integration/rust.md`](docs/sample-integration/rust.md));
 the Go/Python/TypeScript/JavaScript SDKs are still Unix-socket-only (see
-[`docs/PROGRESS.md`](docs/PROGRESS.md)). Proven for real, including the
-mutual-TLS reject/accept paths, by:
+[`docs/PROGRESS.md`](docs/PROGRESS.md)). Proven for real — server-cert
+validation, hostname-mismatch rejection, and mutual-TLS's reject/accept
+paths (including a cert signed by a different, untrusted CA) — by:
 
 ```bash
 ./scripts/server-mode-smoke.sh

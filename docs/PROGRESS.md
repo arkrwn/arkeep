@@ -32,12 +32,23 @@ from a command or test that was actually run. States: `todo`, `doing`,
 | SDK: TypeScript/JavaScript (`sdk/javascript/cofferak-sdk`) | done | Same; smoke test runs against the compiled `dist/` output, proving the JS consumption path too |
 | `sdk-smoke` CI job | done | Added to `.github/workflows/ci.yml`; `ubuntu-latest` runs "full" mode (real binaries + real `systemd-creds`), `macos-latest` runs "dev" mode (see ADR 0007) |
 | Server mode: TLS/TCP listener in `cofferakd` (ADR 0008) | done | `./scripts/server-mode-smoke.sh`: real self-signed CA/cert generated with `openssl`, real TLS handshake, real token auth over TLS, real denied-path check — all passing |
-| Server mode: mutual TLS (`$COFFERAK_TLS_CLIENT_CA`) | done | Same script's second phase: a client with no cert is rejected by the handshake, a client with a CA-signed cert succeeds — both verified, not assumed |
+| Server mode: mutual TLS (`$COFFERAK_TLS_CLIENT_CA`) | done | Same script: a client with no cert, and separately a client with a cert signed by a *different, untrusted* CA, are both rejected; only a cert signed by the configured CA is accepted — all three verified, not assumed |
+| Server mode: hostname verification | done | Same script: connecting with the wrong expected server name against the real server cert is rejected (defends against a MITM presenting a different, even CA-signed, cert) |
 | Server mode: Rust SDK TLS client (`Client::connect_tls`) | done | `sdk/rust/cofferak-sdk/examples/smoke_tls.rs`, run for real by `scripts/server-mode-smoke.sh` |
+| Server mode security hardening (post-review) | done | TLS 1.3-only (no `tls12` feature — both ends are our own code); bounded request/response lines on every transport, not just the TLS listener (`protocol::read_line_bounded`, `MAX_LINE_BYTES`); 30s per-connection I/O timeout on the TLS listener and the Rust SDK's TLS client. See ADR 0008's "Security hardening applied" section |
 | Server mode: Go/Python/TypeScript/JavaScript SDK TLS clients | todo | Not started. Each still only supports the Unix socket. Follow ADR 0005's rule when added: real smoke test before claiming it works |
 
 ## Known gaps / open items
 
+- **No connection-count/rate limiting on the server-mode TLS listener
+  (ADR 0008, disclosed, not fixed).** The 30s per-connection I/O
+  timeout bounds how long any one connection can hold a thread, but
+  doesn't stop many parallel connections from exhausting threads for
+  that duration. For an internet-facing deployment, put a reverse
+  proxy/load balancer with connection limiting in front of
+  `$COFFERAK_TLS_ADDR` rather than exposing it directly. A connection
+  semaphore inside `cofferakd` itself would close this properly; not
+  implemented yet.
 - **macOS Keychain cross-process access (ADR 0007, open, not yet fixed).**
   `cofferakd` reading a sealed key that `cofferak init --host` (a different
   binary) created hangs waiting on an authorization step that can't
