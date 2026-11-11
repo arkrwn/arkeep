@@ -3,16 +3,25 @@
 Status: accepted
 
 The Linux `HostSeal` backend (ADR 0002) seals each host's 32-byte key
-with `systemd-creds encrypt --name=cofferak-<id>`. The first time this ran
-on a real CI runner, both `seal_linux` and the full-mode SDK smoke test
-failed with `host seal backend rejected input`: systemd-creds' default
-**host scope** encrypts against `/var/lib/systemd/credential.secret`
-(and the TPM2 when present), and that file is readable only by root.
-The alternative user scope (`--uid=`) exists only in systemd ≥ 256;
-Ubuntu 24.04 ships 255. So an unprivileged `cofferakd` — which is how the
-unit always ran it (`User=cofferak`) — could never unseal its own key.
-Every earlier "works on Linux" claim had only been checked as root or
-in skip paths.
+with `systemd-creds encrypt --name=cofferak-<id> - -`. The first time this
+ran on a real CI runner, both `seal_linux` and the full-mode SDK smoke
+test failed with `host seal backend rejected input`. Capturing
+`systemd-creds`' stderr exposed two separate problems:
+
+1. The backend invoked `systemd-creds encrypt|decrypt --name=<n>` without
+   the mandatory input/output positional arguments (`- -`), so it exited
+   with "Too few arguments." — the Linux backend had never actually
+   worked. Fixed; the CI root run of `seal_linux` now proves the real
+   round trip.
+2. systemd-creds' default **host scope** encrypts against
+   `/var/lib/systemd/credential.secret` (and the TPM2 when present),
+   which is readable only by root. The alternative user scope (`--uid=`)
+   exists only in systemd ≥ 256; Ubuntu 24.04 ships 255. So an
+   unprivileged `cofferakd` — which is how the unit always ran it
+   (`User=cofferak`) — could never unseal its own key.
+
+Every earlier "works on Linux" claim had only been checked by
+cross-compiling or in skip paths. The rest of this ADR addresses (2).
 
 Options considered:
 

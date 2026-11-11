@@ -10,7 +10,7 @@ from a command or test that was actually run. States: `todo`, `doing`,
 | Core crypto (envelope wrap/unwrap, AEAD entries, `KeyBytes` zeroize) | done | `cargo test -p cofferak-core crypto::` green; wrong-key/tampered-ciphertext paths return `Err`, never panic |
 | On-disk format (`vault.cofferak`, `meta.json`) | done | `cargo test -p cofferak-core format::` + integration round-trip green; truncated-file load returns `Err`, never a fresh default vault |
 | ACL / access tokens | done | `cargo test -p cofferak-core acl::` green; path-traversal and empty-path inputs denied, never panic |
-| `HostSeal`: Linux (`systemd-creds`) | done | Real round trip + corrupted-blob rejection run **as root** in CI (fails if skipped). Host scope is root-only, so the daemon gets its key via `LoadCredentialEncrypted=` instead (ADR 0009) |
+| `HostSeal`: Linux (`systemd-creds`) | done | Real round trip + corrupted-blob rejection run **as root** in CI (fails if skipped) — this run caught that the backend was missing systemd-creds' mandatory `- -` arguments and had never worked (fixed). Host scope is root-only, so the daemon gets its key via `LoadCredentialEncrypted=` instead (ADR 0009) |
 | `HostSeal`: macOS (Keychain) | done | Real Keychain round-trip test on macOS, cleans up its own test item, verified via `security dump-keychain` |
 | `cofferakd` daemon core + ACL enforcement | done | `cargo test -p cofferakd` green, including an 8-thread concurrency test and a corrupted-vault-refuses-to-start test |
 | Audit log | done | Append-only, survives reopen, skips malformed lines without losing other entries, partial-write-doesn't-corrupt-next-append regression test |
