@@ -58,6 +58,12 @@ scoped access, audit log) without running a cluster, and you don't need
 dynamic secrets or a policy language.
 **Pick Vault if:** you need dynamic/leased credentials, many
 auth methods, or you're already running it at scale and it's working.
+**For Kubernetes clusters, Vault is the right choice today:** cofferak
+has no shared state across nodes, no ServiceAccount authentication, no
+pod injector/CSI driver and no HA yet. What it would take is laid out in
+[ADR 0014](adr/0014-kubernetes-and-fleet-roadmap.md). In the meantime,
+cofferak works well next to Vault on developer machines and CI, and can
+take secrets out of Vault KV with `import-env` ([migration.md](migration.md#5-move-secrets-from-hashicorp-vault)).
 
 ## cofferak vs. Infisical
 
