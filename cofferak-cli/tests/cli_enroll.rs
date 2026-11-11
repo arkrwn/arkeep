@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use cofferak_core::acl::Permission;
-use cofferak_core::crypto::{decrypt_entry, unwrap_dek_for_host};
+use cofferak_core::crypto::{decrypt_entry, unwrap_dek_for_host, Aad};
 use cofferak_core::format::VaultFile;
 use cofferak_core::seal::{HostSeal, SealError, SealedBlob};
 
@@ -103,14 +103,14 @@ fn run_enroll_host_with_seal_adds_second_host_with_identical_dek() {
     let host_key_a = seal_a
         .unseal(&SealedBlob(sealed_a))
         .expect("unsealing host-a's own blob with host-a's own seal must succeed");
-    let dek_via_a = unwrap_dek_for_host(&vault.hosts["host-a"], &host_key_a)
+    let dek_via_a = unwrap_dek_for_host(&vault.hosts["host-a"], "host-a", &host_key_a)
         .expect("unwrap via host-a should succeed");
 
     let sealed_b = std::fs::read(dir.join("hosts/host-b.seal")).expect("host-b seal file");
     let host_key_b = seal_b
         .unseal(&SealedBlob(sealed_b))
         .expect("unsealing host-b's own blob with host-b's own seal must succeed");
-    let dek_via_b = unwrap_dek_for_host(&vault.hosts["host-b"], &host_key_b)
+    let dek_via_b = unwrap_dek_for_host(&vault.hosts["host-b"], "host-b", &host_key_b)
         .expect("unwrap via host-b should succeed");
 
     assert_eq!(
@@ -190,10 +190,11 @@ fn run_enroll_service_with_seal_stores_retrievable_token() {
     let host_key_a = seal_a
         .unseal(&SealedBlob(sealed_a))
         .expect("unseal should succeed");
-    let dek =
-        unwrap_dek_for_host(&vault.hosts["host-a"], &host_key_a).expect("unwrap should succeed");
+    let dek = unwrap_dek_for_host(&vault.hosts["host-a"], "host-a", &host_key_a)
+        .expect("unwrap should succeed");
 
-    let plaintext = decrypt_entry(&dek, stored).expect("decrypt should succeed");
+    let plaintext = decrypt_entry(&dek, &Aad::service_token("service-x"), stored)
+        .expect("decrypt should succeed");
     let decoded: cofferak_core::acl::AccessToken =
         bincode::deserialize(&plaintext).expect("deserialize should succeed");
 

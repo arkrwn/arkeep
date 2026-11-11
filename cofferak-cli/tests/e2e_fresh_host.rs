@@ -227,7 +227,7 @@ fn fresh_host_lifecycle_init_enroll_set_get_deny_audit() {
     let host_key = seal_a
         .unseal(&SealedBlob(sealed_bytes))
         .expect("unseal host a's key");
-    let dek = unwrap_dek_for_host(&host_wrap, &host_key).expect("unwrap the vault DEK");
+    let dek = unwrap_dek_for_host(&host_wrap, "a", &host_key).expect("unwrap the vault DEK");
 
     let mut tokens = BTreeMap::new();
     tokens.insert(token_key(&token.secret), token.clone());

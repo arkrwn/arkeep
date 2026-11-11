@@ -1,6 +1,15 @@
 # ADR 0006: Real per-host DEK reconstruction and token loading in `cofferakd`
 
-Status: accepted
+Status: accepted, amended by ADR 0009
+
+> **Amended by [ADR 0009](0009-linux-host-key-via-systemd-credentials.md):**
+> on Linux the daemon now reads its host key from
+> `$CREDENTIALS_DIRECTORY/cofferak-<id>`, decrypted by systemd
+> (`LoadCredentialEncrypted=`), and only falls back to unsealing
+> `hosts/<id>.seal` through `HostSeal` itself when that directory is not
+> set. Host id resolution and token loading described here are unchanged.
+
+## Context
 
 Before this fix, `cofferakd`'s `main()` had two real bugs, both uncovered
 only when `scripts/sdk-smoke.sh` tried to run the actual compiled daemon
@@ -19,6 +28,16 @@ ever been exercised:
    from every enrolled service, always — a self-contained vault that
    could never actually serve a legitimate client.
 
+## Decision
+
+`main()` now unwraps the DEK from its host's entry in `vault.hosts` and
+loads every enrolled service token. Fixing this required introducing `$COFFERAK_HOST_ID` (resolved
+automatically when the vault has exactly one host) so the daemon knows
+which host's sealed key and `vault.hosts` entry to use, and a
+`load_tokens` step that decrypts and deserializes every `vault.services`
+entry into an `AccessToken`, keyed by `token_key(&secret)` for
+`Daemon`'s lookup.
+
 Also fixed in the same pass: the daemon's sealed-key path and
 `HostSeal` identity (`SystemdCredsSeal { name }` / `KeychainSeal
 { service, account }`) now match `cofferak-cli`'s `current_host_seal`
@@ -26,12 +45,7 @@ exactly — they were previously a fixed, daemon-wide identity unrelated
 to any specific enrolled host, which could never line up with what the
 CLI had sealed per-host.
 
-Fixing this required introducing `$COFFERAK_HOST_ID` (resolved
-automatically when the vault has exactly one host) so the daemon knows
-which host's sealed key and `vault.hosts` entry to use, and a
-`load_tokens` step that decrypts and deserializes every `vault.services`
-entry into an `AccessToken`, keyed by `token_key(&secret)` for
-`Daemon`'s lookup.
+## Consequences
 
 This was a real, user-facing correctness gap, not a style nit — recorded
 here rather than silently fixed because it changes `cofferakd`'s startup

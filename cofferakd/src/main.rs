@@ -5,7 +5,7 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use cofferak_core::crypto::{decrypt_entry, unwrap_dek_for_host, KeyBytes};
+use cofferak_core::crypto::{decrypt_entry, unwrap_dek_for_host, Aad, KeyBytes};
 use cofferak_core::format::{FormatError, VaultFile};
 use cofferak_core::seal::{HostSeal, SealedBlob};
 
@@ -73,6 +73,9 @@ pub fn load_vault_or_exit(data_dir: &Path) -> Result<VaultFile, String> {
             "vault file at {} is corrupt or truncated; refusing to start",
             path.display()
         ),
+        e @ FormatError::UnsupportedVersion(_) => {
+            format!("vault file at {}: {e}; refusing to start", path.display())
+        }
     })
 }
 
@@ -204,7 +207,7 @@ fn load_tokens(
 ) -> BTreeMap<String, cofferak_core::acl::AccessToken> {
     let mut tokens = BTreeMap::new();
     for (service_id, entry) in &vault.services {
-        let plaintext = match decrypt_entry(dek, entry) {
+        let plaintext = match decrypt_entry(dek, &Aad::service_token(service_id), entry) {
             Ok(bytes) => bytes,
             Err(e) => {
                 eprintln!(
@@ -256,7 +259,7 @@ fn main() {
             eprintln!("cofferakd: {msg}");
             std::process::exit(1);
         });
-        unwrap_dek_for_host(&host_wrap, &host_key).unwrap_or_else(|e| {
+        unwrap_dek_for_host(&host_wrap, &host_id, &host_key).unwrap_or_else(|e| {
             eprintln!("cofferakd: failed to unwrap this vault's DEK for host '{host_id}': {e}");
             std::process::exit(1);
         })
@@ -396,7 +399,7 @@ mod tests {
         let dir = temp_dir("truncated");
         std::fs::create_dir_all(&dir).expect("create temp dir");
 
-        let (root_pubkey, _root_privkey) = cofferak_core::crypto::generate_root_keypair();
+        let (root_pubkey, _root_privkey) = cofferak_core::crypto::generate_root_keypair().unwrap();
         let vault = VaultFile::new(root_pubkey);
         let path = dir.join("vault.cofferak");
         vault.save(&path).expect("save fixture vault");

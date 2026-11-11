@@ -105,7 +105,7 @@ impl fmt::Display for CliError {
             CliError::Remote(msg) => write!(f, "daemon error: {msg}"),
             CliError::BadRootKey => write!(
                 f,
-                "root key file is not a valid 32-byte key, or does not match this vault's root public key"
+                "root key file is not a valid cofferak root private key (armored block from `init --root`), or does not match this vault's root public key"
             ),
         }
     }
@@ -214,8 +214,8 @@ pub fn run_init_root(data_dir: &Path) -> Result<String, CliError> {
         return Err(CliError::VaultExists);
     }
 
-    let (root_pubkey, root_privkey) = generate_root_keypair();
-    let root_privkey = KeyBytes::new(root_privkey);
+    let (root_pubkey, root_privkey) =
+        generate_root_keypair().map_err(|e| CliError::Io(std::io::Error::other(e)))?;
 
     let vault = VaultFile::new(root_pubkey);
     let meta = VaultMeta::from_vault(&vault);
@@ -223,14 +223,12 @@ pub fn run_init_root(data_dir: &Path) -> Result<String, CliError> {
     vault.save(&vpath)?;
     meta.save(&meta_path(data_dir))?;
 
-    let hex_privkey: String = root_privkey.iter().map(|b| format!("{b:02x}")).collect();
-    println!(
-        "=== COFFERAK ROOT PRIVATE KEY — copy this offline now, it will not be shown again ==="
-    );
-    println!("{hex_privkey}");
-    println!(
-        "====================================================================================="
-    );
+    // The armored block is the whole recovery key (X25519 + ML-KEM-1024,
+    // with a checksum). Save it verbatim to a file kept offline; `recover
+    // --root-key <file>` reads exactly this format.
+    println!("=== COFFERAK ROOT PRIVATE KEY: save everything between the lines to a file and store it OFFLINE now; it will not be shown again ===");
+    print!("{}", *root_privkey.to_armored());
+    println!("=== END OF ROOT PRIVATE KEY ===");
 
     Ok(meta.root_pubkey_fingerprint)
 }
@@ -274,7 +272,10 @@ pub fn run_init_host_with_seal(
     }
 
     let dek = random_key();
-    vault.root_wrap = Some(wrap_dek_for_root(&dek, &vault.root_pubkey));
+    vault.root_wrap = Some(
+        wrap_dek_for_root(&dek, &vault.root_pubkey)
+            .map_err(|e| CliError::Io(std::io::Error::other(e)))?,
+    );
 
     let host_key = KeyBytes::new(random_key());
     let sealed = seal
@@ -284,9 +285,10 @@ pub fn run_init_host_with_seal(
     std::fs::create_dir_all(data_dir.join("hosts"))?;
     std::fs::write(host_seal_path(data_dir, host_id), &sealed.0)?;
 
-    vault
-        .hosts
-        .insert(host_id.to_string(), wrap_dek_for_host(&dek, &host_key));
+    vault.hosts.insert(
+        host_id.to_string(),
+        wrap_dek_for_host(&dek, host_id, &host_key),
+    );
 
     vault.save(&vpath)?;
     let meta = VaultMeta::from_vault(&vault);

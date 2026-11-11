@@ -24,16 +24,20 @@ adding a host and doesn't touch the root key at all.
 
 ## What you need before you start
 
-1. **The root private key**, as a 64-character hex string. This is
-   exactly what `init --root` printed between the `=== COFFERAK ROOT
-   PRIVATE KEY ===` banner lines when the vault was first created. It
-   looks like this (example, not a real key):
+1. **The root private key**: the armored block `init --root` printed
+   when the vault was created, saved as a text file. It looks like this
+   (shortened; the real block is about 70 lines of base64):
 
    ```
-   === COFFERAK ROOT PRIVATE KEY — copy this offline now, it will not be shown again ===
-   3a1f...   (64 hex characters)
-   ======================================================================================
+   -----BEGIN COFFERAK ROOT PRIVATE KEY-----
+   AgP1o1wQ...
+   ...
+   -----END COFFERAK ROOT PRIVATE KEY-----
    ```
+
+   The block holds both halves of the root key (X25519 and ML-KEM-1024,
+   ADR 0011) and a checksum, so a truncated or mistyped copy is rejected
+   before anything is decrypted.
 
 2. **The vault's data directory**, with `vault.cofferak` and `meta.json`
    still intact. This runbook does not help if `vault.cofferak` itself is
@@ -54,31 +58,17 @@ adding a host and doesn't touch the root key at all.
      an enrolled host in this vault (check with `cofferak audit tail`
      or by inspecting `meta.json`'s host list if unsure).
 
-## Step 1 — turn the hex key back into a 32-byte key file
+## Step 1 — put the key file on the recovery machine
 
-`recover` reads the root key as **32 raw bytes**, not as hex text. The
-value `init --root` printed is the hex *encoding* of those 32 bytes, so
-you must decode it before use — writing the hex characters straight into
-a file will not work (it's the wrong length and `recover` will reject it
-with "root key file is not a valid 32-byte key").
-
-On macOS or Linux, with the hex string in `$ROOT_KEY_HEX`:
+Copy the saved key file from your offline media to the recovery machine,
+for example to `/tmp/cofferak-root.key`. If you only have a printed copy,
+type the block back in exactly, including the `-----BEGIN` and `-----END`
+lines; line breaks and surrounding text don't matter, and `recover`
+checks the built-in checksum before using it.
 
 ```bash
-ROOT_KEY_HEX=3a1f...   # paste the 64 hex characters you copied offline
-echo -n "$ROOT_KEY_HEX" | xxd -r -p > /tmp/cofferak-root.key
-```
-
-Confirm the file is exactly 32 bytes:
-
-```bash
-wc -c /tmp/cofferak-root.key   # must print "32"
-```
-
-If `xxd` isn't available, `python3` works too:
-
-```bash
-python3 -c "import sys; sys.stdout.buffer.write(bytes.fromhex('$ROOT_KEY_HEX'))" > /tmp/cofferak-root.key
+chmod 600 /tmp/cofferak-root.key
+head -1 /tmp/cofferak-root.key   # -----BEGIN COFFERAK ROOT PRIVATE KEY-----
 ```
 
 Treat this file as sensitive for as long as it exists: it unwraps the
@@ -99,7 +89,7 @@ cofferak recover \
   --data-dir <path-to-vault-data-dir>
 ```
 
-- `--root-key <PATH>` — the 32-byte key file from Step 1.
+- `--root-key <PATH>` — the key file from Step 1.
 - `--new-host <ID>` — the id to give this newly-recovered host. Pick
   something that isn't already enrolled (see Prerequisites above);
   `recover` will refuse with "this host is already enrolled" if it is.
@@ -135,7 +125,7 @@ see [`docs/deployment.md`](deployment.md).
 
 | Message | Meaning | What to do |
 |---|---|---|
-| `root key file is not a valid 32-byte key, or does not match this vault's root public key` | Either the file isn't exactly 32 raw bytes (see Step 1), or it decoded fine but is the wrong keypair for this `vault.cofferak` (e.g. you pasted the wrong hex string, or you're pointed at a different vault's data directory than the one this key belongs to). | Re-check the file size (`wc -c`), re-copy the hex string carefully, and confirm `--data-dir` points at the vault this root key was generated for. |
+| `root key file is not a valid cofferak root private key (armored block from \`init --root\`), or does not match this vault's root public key` | Either the file isn't a complete, correctly copied armored block (missing BEGIN/END line, a typo caught by the checksum), or it is a valid key for a different vault. | Re-copy the block carefully from your offline copy, and confirm `--data-dir` points at the vault this root key was generated for. |
 | `this host is already enrolled` | `<new-host-id>` is already present in `vault.hosts`. | Pick a different `--new-host` id, or use `enroll-host` instead if you actually meant to work from an existing host. |
 | `no vault found in this data directory; run \`init --root\` first` | Either `vault.cofferak` is missing at `--data-dir`, or (same message, different cause) the vault exists but has never had a DEK generated (no host was ever enrolled — nothing to recover). | Double check `--data-dir`. If `vault.cofferak` is genuinely gone, there is no vault left to recover — this message is not something `recover` can fix. |
 
@@ -177,6 +167,6 @@ in Step 1 as soon as you're done with it:
 rm -f /tmp/cofferak-root.key
 ```
 
-The root private key itself (the hex string) is not single-use — keep it
-in the same offline location it came from for any future recovery. Only
-the temporary raw-bytes file on this machine's disk needs to go.
+The root private key itself is not single-use: keep the original in the
+same offline location it came from for any future recovery. Only the
+temporary copy on this machine's disk needs to go.

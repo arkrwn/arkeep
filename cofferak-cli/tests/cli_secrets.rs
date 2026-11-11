@@ -43,7 +43,7 @@ use std::sync::{Arc, Mutex};
 
 use cofferak_core::acl::{AccessToken, Permission};
 use cofferak_core::crypto::{
-    decrypt_entry, encrypt_entry, generate_root_keypair, unwrap_dek_for_host,
+    decrypt_entry, encrypt_entry, generate_root_keypair, unwrap_dek_for_host, Aad,
 };
 use cofferak_core::format::{VaultEntry, VaultFile};
 use cofferak_core::seal::{HostSeal, SealError, SealedBlob};
@@ -216,7 +216,7 @@ fn myapp_token() -> AccessToken {
 /// scoped to the "myapp" prefix, read+write), and the path of its audit
 /// log (for cleanup).
 fn build_test_daemon(tag: &str) -> (Daemon, PathBuf) {
-    let (root_pubkey, _root_privkey) = generate_root_keypair();
+    let (root_pubkey, _root_privkey) = generate_root_keypair().unwrap();
     let vault = VaultFile::new(root_pubkey);
     let mut tokens = BTreeMap::new();
     tokens.insert(token_key(&TOKEN_SECRET), myapp_token());
@@ -347,7 +347,7 @@ fn run_rotate_dek_reencrypts_entries_and_services_and_invalidates_old_dek() {
 
     let mut vault = VaultFile::load(&vault_path(&dir)).expect("load vault");
     let old_wrap_a = vault.hosts["host-a"].clone();
-    let old_dek = unwrap_dek_for_host(&old_wrap_a, &host_key_a).expect("unwrap old dek");
+    let old_dek = unwrap_dek_for_host(&old_wrap_a, "host-a", &host_key_a).expect("unwrap old dek");
 
     let plaintexts: [(&str, Vec<u8>); 3] = [
         ("myapp/ONE", b"secret-one".to_vec()),
@@ -358,7 +358,7 @@ fn run_rotate_dek_reencrypts_entries_and_services_and_invalidates_old_dek() {
         vault.entries.insert(
             path.to_string(),
             VaultEntry {
-                ciphertext: encrypt_entry(&old_dek, value),
+                ciphertext: encrypt_entry(&old_dek, &Aad::entry(path), value),
                 version: 1,
                 updated_at: 1_700_000_000,
             },
@@ -366,7 +366,11 @@ fn run_rotate_dek_reencrypts_entries_and_services_and_invalidates_old_dek() {
     }
     vault.services.insert(
         "svc-x".to_string(),
-        encrypt_entry(&old_dek, b"service-token-bytes"),
+        encrypt_entry(
+            &old_dek,
+            &Aad::service_token("svc-x"),
+            b"service-token-bytes",
+        ),
     );
     vault.save(&vault_path(&dir)).expect("save seeded vault");
 
@@ -381,11 +385,11 @@ fn run_rotate_dek_reencrypts_entries_and_services_and_invalidates_old_dek() {
 
     // The new DEK, recovered via either host's (updated) wrap, is the
     // same key, and differs from the old one.
-    let new_dek_via_a = unwrap_dek_for_host(&rotated.hosts["host-a"], &host_key_a)
+    let new_dek_via_a = unwrap_dek_for_host(&rotated.hosts["host-a"], "host-a", &host_key_a)
         .expect("unwrap new dek via host-a");
     let sealed_b = std::fs::read(dir.join("hosts/host-b.seal")).expect("read host-b seal");
     let host_key_b = seal_b.unseal(&SealedBlob(sealed_b)).expect("unseal host-b");
-    let new_dek_via_b = unwrap_dek_for_host(&rotated.hosts["host-b"], &host_key_b)
+    let new_dek_via_b = unwrap_dek_for_host(&rotated.hosts["host-b"], "host-b", &host_key_b)
         .expect("unwrap new dek via host-b");
     assert_eq!(
         new_dek_via_a, new_dek_via_b,
@@ -403,7 +407,7 @@ fn run_rotate_dek_reencrypts_entries_and_services_and_invalidates_old_dek() {
             .entries
             .get(*path)
             .expect("entry should survive rotation");
-        let decrypted = decrypt_entry(&new_dek_via_a, &entry.ciphertext)
+        let decrypted = decrypt_entry(&new_dek_via_a, &Aad::entry(path), &entry.ciphertext)
             .expect("entry should decrypt under the new DEK");
         assert_eq!(&decrypted, value);
     }
@@ -411,8 +415,12 @@ fn run_rotate_dek_reencrypts_entries_and_services_and_invalidates_old_dek() {
         .services
         .get("svc-x")
         .expect("service token should survive rotation");
-    let decrypted_service = decrypt_entry(&new_dek_via_a, service_ciphertext)
-        .expect("service token should decrypt under the new DEK");
+    let decrypted_service = decrypt_entry(
+        &new_dek_via_a,
+        &Aad::service_token("svc-x"),
+        service_ciphertext,
+    )
+    .expect("service token should decrypt under the new DEK");
     assert_eq!(decrypted_service, b"service-token-bytes".to_vec());
 
     // The OLD DekWrapHost bytes (kept from before rotation) still unwrap
@@ -420,11 +428,15 @@ fn run_rotate_dek_reencrypts_entries_and_services_and_invalidates_old_dek() {
     // the host key itself — but that old DEK can no longer decrypt
     // anything in the now-rotated vault, proving a genuine rotation
     // happened rather than a no-op.
-    let old_dek_via_old_wrap = unwrap_dek_for_host(&old_wrap_a, &host_key_a)
+    let old_dek_via_old_wrap = unwrap_dek_for_host(&old_wrap_a, "host-a", &host_key_a)
         .expect("the old wrap bytes still unwrap with the unchanged host key");
     assert_eq!(old_dek_via_old_wrap, old_dek);
     let first_entry = rotated.entries.get(plaintexts[0].0).expect("entry exists");
-    let old_dek_decrypt_result = decrypt_entry(&old_dek_via_old_wrap, &first_entry.ciphertext);
+    let old_dek_decrypt_result = decrypt_entry(
+        &old_dek_via_old_wrap,
+        &Aad::entry(plaintexts[0].0),
+        &first_entry.ciphertext,
+    );
     assert!(
         old_dek_decrypt_result.is_err(),
         "the old DEK must fail to decrypt the rotated vault's entries"

@@ -111,6 +111,17 @@ enum Response {
     Err(String),
 }
 
+/// What a TLS handshake negotiated, from [`Client::tls_session_info`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TlsSessionInfo {
+    /// e.g. `TLSv1_3`.
+    pub protocol_version: String,
+    /// e.g. `TLS13_AES_256_GCM_SHA384`.
+    pub cipher_suite: String,
+    /// e.g. `MLKEM1024`.
+    pub key_exchange_group: String,
+}
+
 /// Options for connecting over TLS/TCP (server mode, ADR 0008) instead
 /// of the Unix socket.
 pub struct TlsOptions {
@@ -122,9 +133,27 @@ pub struct TlsOptions {
     /// cofferak's TLS is for a self-managed deployment, not the public
     /// web — there is no built-in trust of public root CAs.
     pub ca_cert_path: PathBuf,
-    /// Client certificate + private key (PEM), required only if the
-    /// server was started with `$COFFERAK_TLS_CLIENT_CA` (mutual TLS).
+    /// Client certificate + private key (PEM). `cofferakd` server mode
+    /// always requires mutual TLS (ADR 0011), so a real connection needs
+    /// this; it is an `Option` only so a client can be built to prove that
+    /// a certificate-less connection is refused.
     pub client_cert_and_key: Option<(PathBuf, PathBuf)>,
+}
+
+/// The client TLS settings, identical to `cofferakd`'s server
+/// (ADR 0011): AWS-LC, TLS 1.3 only, AES-256-GCM-SHA384 only, key exchange
+/// ML-KEM-1024 > X25519MLKEM768 (post-quantum hybrid) > P-384.
+fn hardened_provider() -> rustls::crypto::CryptoProvider {
+    use rustls::crypto::aws_lc_rs::{cipher_suite, default_provider, kx_group};
+    rustls::crypto::CryptoProvider {
+        cipher_suites: vec![cipher_suite::TLS13_AES_256_GCM_SHA384],
+        kx_groups: vec![
+            kx_group::MLKEM1024,
+            kx_group::X25519MLKEM768,
+            kx_group::SECP384R1,
+        ],
+        ..default_provider()
+    }
 }
 
 enum Transport {
@@ -236,7 +265,10 @@ impl Client {
                 .map_err(|e| SdkError::Tls(format!("adding CA cert: {e}")))?;
         }
 
-        let builder = ClientConfig::builder().with_root_certificates(roots);
+        let builder = ClientConfig::builder_with_provider(Arc::new(hardened_provider()))
+            .with_protocol_versions(&[&rustls::version::TLS13])
+            .map_err(|e| SdkError::Tls(format!("TLS configuration: {e}")))?
+            .with_root_certificates(roots);
         let config = if let Some((cert_path, key_path)) = &options.client_cert_and_key {
             let certs = load_certs(cert_path)?;
             let key = load_private_key(key_path)?;
@@ -258,6 +290,49 @@ impl Client {
                 config: Arc::new(config),
             },
         })
+    }
+
+    /// For a TLS client: complete a handshake with the server and report
+    /// what was negotiated (protocol version, cipher suite, key-exchange
+    /// group), without sending a request. Useful to verify a deployment
+    /// actually uses post-quantum key exchange. Returns `None` for a
+    /// Unix-socket client.
+    pub fn tls_session_info(&self) -> Result<Option<TlsSessionInfo>, SdkError> {
+        let Transport::Tls {
+            addr,
+            server_name,
+            config,
+        } = &self.transport
+        else {
+            return Ok(None);
+        };
+        let mut tcp = TcpStream::connect(addr)?;
+        let timeout = Some(std::time::Duration::from_secs(30));
+        let _ = tcp.set_read_timeout(timeout);
+        let _ = tcp.set_write_timeout(timeout);
+        let mut conn = ClientConnection::new(Arc::clone(config), server_name.clone())
+            .map_err(|e| SdkError::Tls(format!("starting TLS handshake: {e}")))?;
+        while conn.is_handshaking() {
+            conn.complete_io(&mut tcp)
+                .map_err(|e| SdkError::Tls(format!("TLS handshake: {e}")))?;
+        }
+        let info = TlsSessionInfo {
+            protocol_version: conn
+                .protocol_version()
+                .map(|v| format!("{v:?}"))
+                .unwrap_or_default(),
+            cipher_suite: conn
+                .negotiated_cipher_suite()
+                .map(|c| format!("{:?}", c.suite()))
+                .unwrap_or_default(),
+            key_exchange_group: conn
+                .negotiated_key_exchange_group()
+                .map(|g| format!("{:?}", g.name()))
+                .unwrap_or_default(),
+        };
+        conn.send_close_notify();
+        let _ = conn.complete_io(&mut tcp);
+        Ok(Some(info))
     }
 
     fn send(&self, request: &Request) -> Result<Response, SdkError> {

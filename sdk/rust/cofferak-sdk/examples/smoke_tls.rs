@@ -51,6 +51,17 @@ fn main() {
     })
     .expect("TLS client config should be valid");
 
+    // Report what the handshake negotiated; server-mode-smoke.sh asserts
+    // on this line (TLS 1.3, AES-256-GCM-SHA384, post-quantum hybrid).
+    let info = client
+        .tls_session_info()
+        .expect("TLS handshake should succeed")
+        .expect("this is a TLS client");
+    println!(
+        "negotiated: {} {} {}",
+        info.protocol_version, info.cipher_suite, info.key_exchange_group
+    );
+
     let value = b"rust-sdk-tls-smoke-value";
     client
         .set(&token, &allowed_path, value)

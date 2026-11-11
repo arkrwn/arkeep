@@ -31,11 +31,12 @@
 use std::path::Path;
 
 use cofferak_core::crypto::{
-    decrypt_entry, encrypt_entry, unwrap_dek_for_host, wrap_dek_for_host, wrap_dek_for_root,
+    decrypt_entry, encrypt_entry, unwrap_dek_for_host, wrap_dek_for_host, wrap_dek_for_root, Aad,
     KeyBytes,
 };
 use cofferak_core::format::VaultFile;
 use cofferak_core::seal::{HostSeal, SealedBlob};
+use zeroize::Zeroizing;
 
 use super::init::{host_seal_path, random_key, vault_path, CliError};
 use crate::client::Client;
@@ -152,33 +153,43 @@ pub fn run_rotate_dek(
             vault
                 .hosts
                 .get(host_id)
-                .and_then(|wrap| unwrap_dek_for_host(wrap, host_key).ok())
+                .and_then(|wrap| unwrap_dek_for_host(wrap, host_id, host_key).ok())
         })
         .ok_or(CliError::HostNotFound)?;
     let old_dek = KeyBytes::new(old_dek);
 
     let new_dek = KeyBytes::new(random_key());
 
-    for entry in vault.entries.values_mut() {
-        let plaintext = decrypt_entry(&old_dek, &entry.ciphertext)
-            .map_err(|e| CliError::Io(std::io::Error::other(e)))?;
-        entry.ciphertext = encrypt_entry(&new_dek, &plaintext);
+    for (path, entry) in vault.entries.iter_mut() {
+        let aad = Aad::entry(path);
+        let plaintext = Zeroizing::new(
+            decrypt_entry(&old_dek, &aad, &entry.ciphertext)
+                .map_err(|e| CliError::Io(std::io::Error::other(e)))?,
+        );
+        entry.ciphertext = encrypt_entry(&new_dek, &aad, &plaintext);
     }
 
-    for service in vault.services.values_mut() {
-        let plaintext =
-            decrypt_entry(&old_dek, service).map_err(|e| CliError::Io(std::io::Error::other(e)))?;
-        *service = encrypt_entry(&new_dek, &plaintext);
+    for (service_id, service) in vault.services.iter_mut() {
+        let aad = Aad::service_token(service_id);
+        let plaintext = Zeroizing::new(
+            decrypt_entry(&old_dek, &aad, service)
+                .map_err(|e| CliError::Io(std::io::Error::other(e)))?,
+        );
+        *service = encrypt_entry(&new_dek, &aad, &plaintext);
     }
 
     if vault.root_wrap.is_some() {
-        vault.root_wrap = Some(wrap_dek_for_root(&new_dek, &vault.root_pubkey));
+        vault.root_wrap = Some(
+            wrap_dek_for_root(&new_dek, &vault.root_pubkey)
+                .map_err(|e| CliError::Io(std::io::Error::other(e)))?,
+        );
     }
 
     for (host_id, host_key) in &host_keys {
-        vault
-            .hosts
-            .insert(host_id.clone(), wrap_dek_for_host(&new_dek, host_key));
+        vault.hosts.insert(
+            host_id.clone(),
+            wrap_dek_for_host(&new_dek, host_id, host_key),
+        );
     }
 
     // Atomic rewrite: see module doc comment. Serialize to a temp file in

@@ -125,8 +125,11 @@ class Client:
         client_key_path: str | None = None,
     ) -> Client:
         """Build a client for the daemon's TLS/TCP listener (server
-        mode, ADR 0008). ``addr`` is ``"host:port"``. Loads and
-        validates the CA (and, if given, client cert/key) eagerly, so a
+        mode, ADR 0008). ``addr`` is ``"host:port"``. cofferakd's server
+        mode always requires a client certificate (mutual TLS, ADR 0011);
+        the cert/key arguments are optional only so a client can be built
+        to prove that a certificate-less connection is refused. Loads and
+        validates the CA (and client cert/key) eagerly, so a
         misconfiguration fails here rather than on the first call."""
         host, _, port_str = addr.rpartition(":")
         if not host or not port_str.isdigit():

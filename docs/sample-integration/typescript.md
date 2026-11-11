@@ -39,18 +39,20 @@ const client = Client.connectTls({
   addr: "cofferak.example.internal:8443",
   serverName: "cofferak.example.internal",
   caCertPath: "/path/to/ca.pem",
-  // clientCertPath/clientKeyPath: set both together only if the server
-  // requires mutual TLS ($COFFERAK_TLS_CLIENT_CA).
+  // Mutual TLS is mandatory in cofferakd server mode (ADR 0011):
+  clientCertPath: "/path/to/client.pem",
+  clientKeyPath: "/path/to/client.key",
 });
 ```
 
 Uses Node's own `tls`/`fs` modules — no third-party TLS library. TLS 1.3
-only (`minVersion`/`maxVersion` both `"TLSv1.3"`), `rejectUnauthorized`
+only (`minVersion`/`maxVersion` both `"TLSv1.3"`, cipher suite
+`TLS_AES_256_GCM_SHA384` only), `rejectUnauthorized`
 is never set to `false` anywhere in this SDK, and passing `ca` to
 `tls.connect` replaces Node's bundled public root store for this
 connection rather than adding to it — this client trusts only the CA
 you provide. Proven for real — including rejecting a wrong hostname,
-rejecting a connection with no client cert against an mTLS-only server,
+rejecting a connection with no client cert,
 and rejecting a client cert signed by a different, untrusted CA — by
 [`sdk/javascript/cofferak-sdk/examples/smoke_tls.js`](../../sdk/javascript/cofferak-sdk/examples/smoke_tls.js),
 run by `scripts/server-mode-smoke.sh`.

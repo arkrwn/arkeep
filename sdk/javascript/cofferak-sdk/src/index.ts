@@ -105,9 +105,10 @@ export interface TlsOptions {
    * store (passing `ca` to `tls.connect` replaces the default trust
    * store rather than adding to it). */
   caCertPath: string;
-  /** Client certificate + private key (PEM), both set together, enable
-   * mutual TLS — required only if the server was started with
-   * `$COFFERAK_TLS_CLIENT_CA`. */
+  /** Client certificate + private key (PEM), both set together, for
+   * mutual TLS. cofferakd's server mode always requires them (ADR 0011);
+   * they are optional here only so a client can be built to prove that a
+   * certificate-less connection is refused. */
   clientCertPath?: string;
   clientKeyPath?: string;
 }
@@ -184,6 +185,9 @@ export class Client {
               key: transport.key,
               minVersion: "TLSv1.3",
               maxVersion: "TLSv1.3",
+              // Only the AES-256-GCM-SHA384 suite, matching the server
+              // (ADR 0011).
+              ciphers: "TLS_AES_256_GCM_SHA384",
               // rejectUnauthorized defaults to true and is never set to
               // false anywhere in this SDK — that is the one setting
               // that would disable certificate verification.

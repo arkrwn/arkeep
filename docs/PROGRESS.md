@@ -45,6 +45,12 @@ from a command or test that was actually run. States: `todo`, `doing`,
 | Linux non-root daemon (ADR 0009) | done | Unit uses `LoadCredentialEncrypted=`; CLI chowns files back to the data-dir owner after root admin commands; proven by `sdk-smoke` full mode in CI |
 | Id validation (host/service) | done | `acl::validate_id` in CLI and daemon; traversal/separator/option-like ids rejected (unit tests) |
 | Server mode: connection limit | done | At most `$COFFERAK_TLS_MAX_CONNECTIONS` (default 256) concurrent TLS connections; extra connections are closed immediately (unit-tested limiter) |
+| Crypto format v2: hybrid post-quantum recovery wrap (ADR 0011) | done | X25519 + ML-KEM-1024 (AWS-LC), HKDF-SHA-384 key derivation; unit tests: round trip, unwrap fails if either KEM half or the ciphertext is altered, wrong key rejected |
+| Context-bound ciphertexts (ADR 0011) | done | Entries bound to their path, tokens to their service id, host wraps to their host id; `daemon_persistence.rs` proves a ciphertext moved to another path on disk is refused, not served |
+| Armored root private key with checksum | done | `init --root` prints a `-----BEGIN COFFERAK ROOT PRIVATE KEY-----` block; `recover` reads it; truncation/typos rejected by the checksum (unit test) |
+| Hardware-accelerated AES-256-GCM-SIV | done | AWS-LC AEAD; RFC 8452 interop test against RustCrypto in both directions; decrypt 64 B in 0.24 µs, ≈1.4 GB/s on 16 KB (docs/benchmarks.md) |
+| Server mode: mandatory mTLS, TLS 1.3 / AES-256-GCM-SHA384 only, ML-KEM-1024 preferred | done | `server-mode-smoke.sh`: no-client-CA startup refused; no cert / untrusted CA / wrong hostname rejected in all four SDKs; TLS 1.2 and AES-128 refused; Rust negotiates `TLSv1_3 TLS13_AES_256_GCM_SHA384 MLKEM1024` |
+| Benchmarks | done | `scripts/bench.sh`, run in CI on every build; results in `docs/benchmarks.md` |
 
 ## Known gaps / open items
 
@@ -52,7 +58,8 @@ from a command or test that was actually run. States: `todo`, `doing`,
   are capped (`$COFFERAK_TLS_MAX_CONNECTIONS`) and every connection has a
   30s I/O timeout, but one client may use all slots. For an
   internet-facing deployment, keep a firewall or a proxy with per-IP
-  limits in front of `$COFFERAK_TLS_ADDR`, and prefer mTLS.
+  limits in front of `$COFFERAK_TLS_ADDR` (mTLS already rejects
+  unauthenticated peers at the handshake).
 - **Token/DEK changes need a daemon restart.** `enroll-service`,
   `rotate-dek` and re-enrolling the daemon's own host take effect on
   restart; after `rotate-dek` the running daemon refuses writes (never
@@ -71,6 +78,13 @@ from a command or test that was actually run. States: `todo`, `doing`,
   `enroll-host` correctly re-wraps the DEK for additional hosts on disk;
   nothing starts one daemon that serves more than one of those hosts at
   once (not currently a goal — see `docs/SPEC.md` §9).
+- **TLS certificates are ECDSA P-384 (CNSA 1.0), not ML-DSA-87 (CNSA
+  2.0).** rustls/AWS-LC and the Go/Python/Node TLS stacks don't support
+  ML-DSA certificates yet. Key exchange and encryption are already at the
+  CNSA 2.0 level (ADR 0011).
+- **Python and Node SDKs fall back to P-384 key exchange** on systems
+  whose OpenSSL is older than 3.5 (no ML-KEM); Go negotiates the
+  X25519MLKEM768 hybrid; Rust negotiates ML-KEM-1024.
 - A handful of intermediate key buffers (recovered DEK bytes before
   copying into a `[u8;32]`, in both `HostSeal` backends) are not wrapped
   in the `zeroize`-on-drop `KeyBytes` type. Low risk (short-lived,

@@ -21,21 +21,29 @@ Does not protect against: root on an already-unsealed live host reading
 process memory, or loss/disclosure of the creator's offline root private
 key.
 
-## 2. Key hierarchy (envelope encryption — see ADR 0001)
+## 2. Key hierarchy (envelope encryption — ADR 0001, crypto v2 ADR 0011)
 
-- **Root keypair** (X25519): generated once (`cofferak init --root`), private
-  half exported offline by the operator, never retained on any host.
+- **Root keypair** (X25519 + ML-KEM-1024): generated once (`cofferak init
+  --root`); the private half is printed once as an armored block and kept
+  offline by the operator, never retained on any host.
 - **Per-host unseal key**: sealed via the platform `HostSeal` backend (ADR
   0002) — `systemd-creds` (Linux) or Keychain (macOS).
-- **DEK**: encrypts the vault's entries (AES-256-GCM-SIV). Stored wrapped
-  per-host (daily auto-unlock) and once under the root public key
-  (`VaultFile.root_wrap`, recovery/new-host-enrollment only).
+- **DEK** (256-bit): encrypts the vault's entries and service tokens with
+  AES-256-GCM-SIV; each ciphertext's associated data binds it to its
+  context (`cofferak/v2/entry\0<path>`, `.../service-token\0<id>`). Stored
+  wrapped per host (AES-256-GCM-SIV under the host key, bound to the host
+  id; daily auto-unlock) and once for the root key (`VaultFile.root_wrap`,
+  recovery only) with a hybrid KEM: ephemeral X25519 + ML-KEM-1024
+  encapsulation, wrapping key = HKDF-SHA-384 over both shared secrets and
+  the transcript.
 - **Service access token**: capability `{service_id, prefixes,
   permission}`, delivered to the consuming service the same sealed way.
 
 ## 3. On-disk format
 
-`vault.cofferak` (binary, `bincode`): header, `hosts: BTreeMap<host_id,
+`vault.cofferak` (binary, `bincode`, format version 2; other versions are
+rejected with `UnsupportedVersion`): header, `root_pubkey: {x25519,
+mlkem1024}`, `hosts: BTreeMap<host_id,
 DekWrapHost>`, `services: BTreeMap<service_id, EncryptedEntry>`,
 `entries: BTreeMap<path, VaultEntry>`, `root_wrap: Option<DekWrapRoot>`.
 `meta.json` (non-secret, informational): version, root pubkey fingerprint,
@@ -113,15 +121,18 @@ byte-array JSON encoding.
 
 ## 6a. Server mode (ADR 0008)
 
-Opt-in: `$COFFERAK_TLS_ADDR` (plus `$COFFERAK_TLS_CERT`/`$COFFERAK_TLS_KEY`,
-optionally `$COFFERAK_TLS_CLIENT_CA` for mutual TLS) starts a second
-listener, TLS-wrapped TCP, serving the *exact same* §6 wire protocol and
-the *exact same* `Daemon::handle_request` as the Unix socket — not a
-separate API. TLS is `rustls` (pure Rust, no OpenSSL/C dependency). The
-per-service access token (§2) is still checked unconditionally; a client
-certificate (mTLS) is an additional transport-level check, never a
-substitute for the token. Proven for real, including the mTLS
-reject/accept paths, by `scripts/server-mode-smoke.sh`.
+Opt-in: `$COFFERAK_TLS_ADDR` plus `$COFFERAK_TLS_CERT`/`$COFFERAK_TLS_KEY`
+and the **required** `$COFFERAK_TLS_CLIENT_CA` starts a second listener,
+TLS-wrapped TCP, serving the *exact same* §6 wire protocol and the *exact
+same* `Daemon::handle_request` as the Unix socket — not a separate API.
+Mutual TLS is mandatory: without a client CA the daemon refuses to start
+server mode. TLS is `rustls` on AWS-LC, locked to TLS 1.3,
+`TLS_AES_256_GCM_SHA384`, and key exchange ML-KEM-1024 > X25519MLKEM768 >
+P-384 (ADR 0011). The per-service access token (§2) is still checked on
+every request; the client certificate is an additional transport-level
+check, never a substitute for the token. Proven by
+`scripts/server-mode-smoke.sh`, including every reject path and the
+negotiated parameters.
 
 ## 7. CLI surface (current)
 

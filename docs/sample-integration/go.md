@@ -55,8 +55,9 @@ client, err := cofferak.ConnectTLS(cofferak.TLSOptions{
 	Addr:       "cofferak.example.internal:8443",
 	ServerName: "cofferak.example.internal",
 	CACertPath: "/path/to/ca.pem",
-	// ClientCertPath/ClientKeyPath: set both together only if the
-	// server requires mutual TLS ($COFFERAK_TLS_CLIENT_CA).
+	// Mutual TLS is mandatory in cofferakd server mode (ADR 0011):
+	ClientCertPath: "/path/to/client.pem",
+	ClientKeyPath:  "/path/to/client.key",
 })
 if err != nil {
 	panic(err)
@@ -64,12 +65,13 @@ if err != nil {
 ```
 
 Uses Go's own `crypto/tls` — no third-party TLS library. TLS 1.3 only
-(`MinVersion`/`MaxVersion` both set to `tls.VersionTLS13`), the server's
+(`MinVersion`/`MaxVersion` both set to `tls.VersionTLS13`), key exchange
+preferring the post-quantum `X25519MLKEM768` hybrid then P-384, the server's
 certificate is verified against exactly the CA you provide (this client
 never falls back to Go's system/public root store), and
 `InsecureSkipVerify` is never set anywhere in this SDK. Proven for real
 — including rejecting a wrong hostname, rejecting a connection with no
-client cert against an mTLS-only server, and rejecting a client cert
+client cert, and rejecting a client cert
 signed by a different, untrusted CA — by
 [`sdk/go/cofferak/examples/smoke_tls/main.go`](../../sdk/go/cofferak/examples/smoke_tls/main.go),
 run by `scripts/server-mode-smoke.sh`.

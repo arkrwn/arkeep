@@ -40,7 +40,7 @@ fn myapp_token_wire() -> String {
 }
 
 fn build_daemon(tag: &str) -> (Daemon, PathBuf) {
-    let (root_pubkey, _root_privkey) = generate_root_keypair();
+    let (root_pubkey, _root_privkey) = generate_root_keypair().unwrap();
     let vault = VaultFile::new(root_pubkey);
     let mut tokens = BTreeMap::new();
     tokens.insert(token_key(&MYAPP_SECRET), myapp_token());

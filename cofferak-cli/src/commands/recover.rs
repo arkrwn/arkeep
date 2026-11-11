@@ -23,7 +23,7 @@
 
 use std::path::Path;
 
-use cofferak_core::crypto::{unwrap_dek_for_root, wrap_dek_for_host, KeyBytes};
+use cofferak_core::crypto::{unwrap_dek_for_root, wrap_dek_for_host, KeyBytes, RootPrivateKey};
 use cofferak_core::format::{VaultFile, VaultMeta};
 use cofferak_core::seal::HostSeal;
 
@@ -72,14 +72,16 @@ pub fn run_recover(
     // fails before touching disk (`BadRootKey`) or commits via the atomic
     // rename at the bottom — no partial/in-place write of `vault.cofferak` is
     // possible.
-    let key_bytes = std::fs::read(root_privkey_path)?;
-    let root_privkey: [u8; 32] = key_bytes
-        .as_slice()
-        .try_into()
-        .map_err(|_| CliError::BadRootKey)?;
+    // The key file is the armored block `init --root` printed. Read it as
+    // bytes and require UTF-8, so a binary or garbage file is a clean
+    // BadRootKey rather than an I/O error.
+    let key_text = zeroize::Zeroizing::new(std::fs::read(root_privkey_path)?);
+    let key_text = std::str::from_utf8(&key_text).map_err(|_| CliError::BadRootKey)?;
+    let root_privkey = RootPrivateKey::from_armored(key_text).map_err(|_| CliError::BadRootKey)?;
 
     let dek = KeyBytes::new(
-        unwrap_dek_for_root(&root_wrap, &root_privkey).map_err(|_| CliError::BadRootKey)?,
+        unwrap_dek_for_root(&root_wrap, &vault.root_pubkey, &root_privkey)
+            .map_err(|_| CliError::BadRootKey)?,
     );
 
     let new_host_key = KeyBytes::new(random_key());
@@ -92,7 +94,7 @@ pub fn run_recover(
 
     vault.hosts.insert(
         new_host_id.to_string(),
-        wrap_dek_for_host(&dek, &new_host_key),
+        wrap_dek_for_host(&dek, new_host_id, &new_host_key),
     );
 
     // Atomic rewrite: serialize to a temp file in the same directory as

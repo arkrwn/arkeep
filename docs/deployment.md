@@ -24,7 +24,7 @@ exactly one enrolled host.
 | `COFFERAK_DATA_DIR` | Directory holding `vault.cofferak`, `hosts/<id>.seal` and `audit.jsonl` | `/var/lib/cofferak` | `~/Library/Application Support/cofferak` |
 | `COFFERAK_SOCKET` | Path of the Unix socket the daemon listens on | `/run/cofferak/cofferakd.sock` | `~/Library/Application Support/cofferak/cofferakd.sock` |
 | `COFFERAK_HOST_ID` | Which enrolled host this process runs as | — (required if more than one host is enrolled) | — (same) |
-| `COFFERAK_TLS_ADDR`, `COFFERAK_TLS_CERT`, `COFFERAK_TLS_KEY`, `COFFERAK_TLS_CLIENT_CA` | Server mode (ADR 0008); off unless `COFFERAK_TLS_ADDR` is set | — | — |
+| `COFFERAK_TLS_ADDR`, `COFFERAK_TLS_CERT`, `COFFERAK_TLS_KEY`, `COFFERAK_TLS_CLIENT_CA` | Server mode (ADR 0008/0011); off unless `COFFERAK_TLS_ADDR` is set, and then all four are required (mutual TLS is mandatory) | — | — |
 | `COFFERAK_TLS_MAX_CONNECTIONS` | Cap on concurrent TLS connections; extra connections are closed | `256` | `256` |
 
 The templates set `COFFERAK_DATA_DIR`/`COFFERAK_SOCKET` explicitly, using the
@@ -119,7 +119,7 @@ unsealing the file itself, which on Linux only works as root.)
    ```
 
 3. Bootstrap the vault and this host, **as root** (see above). Store the
-   root private key `init --root` prints offline, never on this host
+   root private key block `init --root` prints offline, never on this host
    ([key security](key-security.md)):
 
    ```sh

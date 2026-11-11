@@ -27,6 +27,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use cofferak_core::crypto::{
     generate_root_keypair, unwrap_dek_for_host, wrap_dek_for_host, wrap_dek_for_root,
+    RootPrivateKey,
 };
 use cofferak_core::format::{VaultFile, VaultMeta};
 use cofferak_core::seal::{HostSeal, SealError, SealedBlob};
@@ -87,20 +88,21 @@ fn cleanup(dir: &Path) {
 /// already-enrolled host ("host-a"). Returns the data dir, the matching
 /// root private key, and the DEK (so the test can independently confirm
 /// what a correctly-recovered host should unwrap to).
-fn setup_vault_with_root_wrap(tag: &str) -> (PathBuf, [u8; 32], [u8; 32]) {
+fn setup_vault_with_root_wrap(tag: &str) -> (PathBuf, RootPrivateKey, [u8; 32]) {
     let dir = temp_dir(tag);
     std::fs::create_dir_all(&dir).expect("create data dir");
 
-    let (root_pubkey, root_privkey) = generate_root_keypair();
+    let (root_pubkey, root_privkey) = generate_root_keypair().unwrap();
     let dek = [0x7Au8; 32];
 
-    let mut vault = VaultFile::new(root_pubkey);
-    vault.root_wrap = Some(wrap_dek_for_root(&dek, &root_pubkey));
+    let mut vault = VaultFile::new(root_pubkey.clone());
+    vault.root_wrap = Some(wrap_dek_for_root(&dek, &root_pubkey).unwrap());
 
     let host_key_a = [0x11u8; 32];
-    vault
-        .hosts
-        .insert("host-a".to_string(), wrap_dek_for_host(&dek, &host_key_a));
+    vault.hosts.insert(
+        "host-a".to_string(),
+        wrap_dek_for_host(&dek, "host-a", &host_key_a),
+    );
 
     vault.save(&vault_path(&dir)).expect("save vault");
     let meta = VaultMeta::from_vault(&vault);
@@ -118,7 +120,7 @@ fn write_root_key_file(dir: &Path, bytes: &[u8]) -> PathBuf {
 #[test]
 fn run_recover_with_matching_root_key_enrolls_new_host_with_recoverable_dek() {
     let (dir, root_privkey, dek) = setup_vault_with_root_wrap("recover-ok");
-    let key_path = write_root_key_file(&dir, &root_privkey);
+    let key_path = write_root_key_file(&dir, root_privkey.to_armored().as_bytes());
     let new_seal = FakeHostSeal { tag: 0xC3 };
 
     run_recover(&dir, &key_path, "host-recovered", &new_seal)
@@ -136,8 +138,9 @@ fn run_recover_with_matching_root_key_enrolls_new_host_with_recoverable_dek() {
     let host_key = new_seal
         .unseal(&SealedBlob(sealed))
         .expect("unsealing the new host's own blob with its own seal should succeed");
-    let recovered_dek = unwrap_dek_for_host(&vault.hosts["host-recovered"], &host_key)
-        .expect("unwrap via the recovered host should succeed");
+    let recovered_dek =
+        unwrap_dek_for_host(&vault.hosts["host-recovered"], "host-recovered", &host_key)
+            .expect("unwrap via the recovered host should succeed");
 
     assert_eq!(
         recovered_dek, dek,
@@ -153,8 +156,8 @@ fn run_recover_with_wrong_root_key_returns_bad_root_key_and_leaves_vault_unchang
 
     // A well-formed 32-byte key, but not the one that wraps this vault's
     // DEK — exercises "wrong valid keypair", not just "malformed input".
-    let (_other_pubkey, wrong_privkey) = generate_root_keypair();
-    let key_path = write_root_key_file(&dir, &wrong_privkey);
+    let (_other_pubkey, wrong_privkey) = generate_root_keypair().unwrap();
+    let key_path = write_root_key_file(&dir, wrong_privkey.to_armored().as_bytes());
     let new_seal = FakeHostSeal { tag: 0xC3 };
 
     let vault_bytes_before =
@@ -226,13 +229,13 @@ fn run_recover_against_vault_with_no_dek_yet_returns_vault_missing_and_leaves_va
     let dir = temp_dir("recover-no-dek");
     std::fs::create_dir_all(&dir).expect("create data dir");
 
-    let (root_pubkey, root_privkey) = generate_root_keypair();
+    let (root_pubkey, root_privkey) = generate_root_keypair().unwrap();
     let vault = VaultFile::new(root_pubkey);
     vault.save(&vault_path(&dir)).expect("save vault");
     let meta = VaultMeta::from_vault(&vault);
     meta.save(&meta_path(&dir)).expect("save meta");
 
-    let key_path = write_root_key_file(&dir, &root_privkey);
+    let key_path = write_root_key_file(&dir, root_privkey.to_armored().as_bytes());
     let seal = FakeHostSeal { tag: 0xC3 };
 
     let vault_bytes_before =
