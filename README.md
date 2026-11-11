@@ -444,7 +444,19 @@ permissions.
 ## Import, export and migrate
 
 cofferak has no database to migrate: the whole vault is one file. Moving
-secrets is a few commands ([docs/migration.md](docs/migration.md)):
+secrets is a few commands ([docs/migration.md](docs/migration.md), with
+step-by-step diagrams):
+
+```mermaid
+flowchart LR
+    ENV[".env file"] -- "import-env" --> V
+    V[("this coffer<br/>secrets encrypted<br/>under its master key")] -- "run -- ./app" --> APP["your app<br/>secrets as env vars,<br/>no file on disk"]
+    V -- "export-env" --> ENV2[".env file<br/>for tools that need one"]
+    V -- "export -o backup.cfk<br/>passphrase" --> B[["backup.cfk<br/>AES-256-GCM-SIV"]]
+    B -- "import + passphrase<br/>any machine / OS" --> V2[("new coffer<br/>re-encrypted under<br/>its own master key")]
+    V -- "export --to server<br/>no passphrase" --> T[["x.cfk<br/>only 'server' can open,<br/>signed by this coffer"]]
+    T -- "import<br/>sender verified" --> V3[("paired coffer<br/>re-encrypted under<br/>its own master key")]
+```
 
 ```bash
 cofferak import-env .env --prefix myapp/env            # from a .env file
