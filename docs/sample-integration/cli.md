@@ -12,7 +12,7 @@ sudo arkeep init --host my-server-01 --data-dir /var/lib/arkeep
 
 # Enroll a consuming service and capture its one-time token, then restart
 # the daemon so it loads the new token:
-sudo arkeep enroll-service azmika --paths azmika --perm rw --data-dir /var/lib/arkeep
+sudo arkeep enroll-service myapp --paths myapp --perm rw --data-dir /var/lib/arkeep
 sudo systemctl restart arkeepd
 # prints a hex token ONCE — deliver it to that service the same sealed
 # way you deliver the host unseal key (systemd LoadCredentialEncrypted /
@@ -27,17 +27,17 @@ If the vault has more than one enrolled host, `arkeepd` needs
 
 ```ini
 [Service]
-LoadCredentialEncrypted=azmika_arkeep_token:/etc/azmika/arkeep-token.cred
+LoadCredentialEncrypted=myapp_arkeep_token:/etc/myapp/arkeep-token.cred
 Environment=ARKEEP_SOCKET=/run/arkeep/arkeepd.sock
-ExecStart=/usr/local/bin/azmika-start-wrapper.sh
+ExecStart=/usr/local/bin/myapp-start-wrapper.sh
 ```
 
 ```bash
 #!/usr/bin/env bash
-# azmika-start-wrapper.sh
+# myapp-start-wrapper.sh
 set -euo pipefail
-export ARKEEP_TOKEN="$(cat "$CREDENTIALS_DIRECTORY/azmika_arkeep_token")"
-exec /usr/local/bin/azmika
+export ARKEEP_TOKEN="$(cat "$CREDENTIALS_DIRECTORY/myapp_arkeep_token")"
+exec /usr/local/bin/myapp
 ```
 
 ## 3. Reading a secret from a shell script
@@ -46,13 +46,13 @@ exec /usr/local/bin/azmika
 export ARKEEP_TOKEN="<the enrolled service's token>"
 export ARKEEP_SOCKET="/run/arkeep/arkeepd.sock"
 
-OPENAI_API_KEY="$(arkeep get azmika/OPENAI_API_KEY)"
+OPENAI_API_KEY="$(arkeep get myapp/OPENAI_API_KEY)"
 ```
 
 ## 4. Writing a secret
 
 ```bash
-arkeep set azmika/OPENAI_API_KEY "sk-..." --token "$ARKEEP_TOKEN"
+arkeep set myapp/OPENAI_API_KEY "sk-..." --token "$ARKEEP_TOKEN"
 ```
 
 A `--perm ro` token rejects `set`/`rm` with `Err(CliError::Denied)` —
@@ -61,7 +61,7 @@ grant `--perm rw` at enrollment time if the service needs to write.
 ## 5. Listing what a token can see
 
 ```bash
-arkeep list azmika --token "$ARKEEP_TOKEN"
+arkeep list myapp --token "$ARKEEP_TOKEN"
 ```
 
 ## 6. Disaster recovery

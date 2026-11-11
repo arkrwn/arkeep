@@ -16,7 +16,7 @@ use arkeep_sdk::{Client, SdkError};
 
 fn fetch_db_password() -> Result<Vec<u8>, SdkError> {
     let client = Client::connect("/run/arkeep/arkeepd.sock");
-    client.get("<token>", "azmika/DB_PASSWORD")
+    client.get("<token>", "myapp/DB_PASSWORD")
 }
 
 fn main() {

@@ -162,7 +162,7 @@ fn run_enroll_host_with_seal_unknown_this_host_id_returns_host_not_found() {
 fn run_enroll_service_with_seal_stores_retrievable_token() {
     let (dir, seal_a) = setup_single_host("service-fresh");
 
-    let prefixes = vec!["azmika".to_string(), "other/path".to_string()];
+    let prefixes = vec!["myapp".to_string(), "other/path".to_string()];
     let permission = Permission::ReadWrite;
 
     let token = run_enroll_service_with_seal(
@@ -215,7 +215,7 @@ fn run_enroll_service_with_seal_on_missing_vault_returns_vault_missing() {
         "host-a",
         &seal,
         "service-x",
-        vec!["azmika".to_string()],
+        vec!["myapp".to_string()],
         Permission::Read,
     );
 

@@ -1,19 +1,68 @@
-# arkeep
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/arkeep-logo-dark.svg">
+    <img src="docs/assets/arkeep-logo.svg" alt="arkeep" width="220">
+  </picture>
+</p>
 
-A small, dependency-free secrets vault for any service on Linux or macOS
-— no HashiCorp Vault, no cloud KMS. Clone it into a project as a
-`arkeep/` subdirectory, or run it standalone. By default it speaks only
-to clients on the same host, over a local Unix socket; opt in to
-**server mode** (`$ARKEEP_TLS_ADDR`, see [Server mode](#server-mode))
-and it's also reachable remotely, over TLS/mutual-TLS, with the exact
-same protocol and the exact same per-service access tokens.
+<p align="center">
+  <strong>A self-hosted secrets vault for Linux and macOS.</strong><br>
+  Envelope encryption, OS-sealed keys, scoped per-service tokens — no external server, cloud KMS, or account.
+</p>
 
-> **Status: feature-complete.** The crypto/format/ACL core, both
-> `HostSeal` backends, the daemon (`arkeepd`), server mode (TLS/mTLS
-> over TCP), the admin CLI (`arkeep-cli`), four client SDKs, deployment
-> templates, and an audit log are all implemented and tested. See
-> [Commands](#commands) for the full CLI surface and
-> [Quickstart](#quickstart) to stand up a vault end to end.
+<p align="center">
+  <a href="https://github.com/arkrwn/arkeep/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/arkrwn/arkeep/actions/workflows/ci.yml/badge.svg?branch=main"></a>
+  <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg"></a>
+  <img alt="Rust 1.89+" src="https://img.shields.io/badge/rust-1.89%2B-C95428.svg?logo=rust">
+  <img alt="Platforms: Linux | macOS" src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS-254434.svg">
+  <img alt="TLS 1.3 only" src="https://img.shields.io/badge/server%20mode-TLS%201.3%20%2B%20mTLS-254434.svg">
+  <img alt="SDKs: Rust, Go, Python, TypeScript" src="https://img.shields.io/badge/SDKs-Rust%20%7C%20Go%20%7C%20Python%20%7C%20TypeScript-C95428.svg">
+</p>
+
+<p align="center">
+  <a href="#quickstart">Quickstart</a> ·
+  <a href="#how-it-works-envelope-encryption-briefly">How it works</a> ·
+  <a href="#server-mode">Server mode</a> ·
+  <a href="#sdks">SDKs</a> ·
+  <a href="docs/deployment.md">Deployment</a> ·
+  <a href="docs/SPEC.md">Spec</a>
+</p>
+
+---
+
+**arkeep** keeps application secrets (API keys, database passwords,
+tokens) in a single encrypted file and serves them to your services
+through a small daemon, `arkeepd`. The key that decrypts the vault is
+sealed by the operating system itself — `systemd-creds` on Linux,
+Keychain on macOS — so there is never a plaintext master key on disk.
+Each service gets its own token, limited to the paths and permissions you
+grant it.
+
+By default `arkeepd` listens only on a local Unix socket. Turn on
+**[server mode](#server-mode)** and it is also reachable over the
+network through TLS 1.3, optionally with mutual TLS, using the same
+protocol and the same tokens.
+
+### Highlights
+
+- **Envelope encryption** — AES-256-GCM-SIV data key, wrapped per host
+  and once for an offline X25519 recovery key.
+- **OS-sealed host keys** — the unseal key never sits next to the vault
+  as a plain file; on Linux the daemon runs unprivileged and receives it
+  from systemd.
+- **Least-privilege tokens** — each service is scoped to path prefixes
+  with read, write or read-write access.
+- **Durable, crash-safe writes** — every acknowledged write is already on
+  disk, written atomically under a lock.
+- **Audit log** — every request, allowed or denied, is recorded.
+- **Disaster recovery** — rebuild access on a new machine with the
+  offline root key.
+- **Client SDKs** — Rust, Go, Python and TypeScript/JavaScript, each
+  tested against a real daemon in CI over the Unix socket and TLS/mTLS.
+
+> **Status:** feature-complete and tested on every commit (Linux and
+> macOS). See [`docs/PROGRESS.md`](docs/PROGRESS.md) for what is proven
+> and the known limitations.
 
 ## Why
 

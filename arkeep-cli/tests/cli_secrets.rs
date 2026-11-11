@@ -203,23 +203,23 @@ fn handle_connection(stream: UnixStream, daemon: Arc<Mutex<Daemon>>) {
 
 const TOKEN_SECRET: [u8; 32] = [0x42; 32];
 
-fn azmika_token() -> AccessToken {
+fn myapp_token() -> AccessToken {
     AccessToken {
-        service_id: "svc-azmika".to_string(),
-        prefixes: vec!["azmika".to_string()],
+        service_id: "svc-myapp".to_string(),
+        prefixes: vec!["myapp".to_string()],
         permission: Permission::ReadWrite,
         secret: TOKEN_SECRET,
     }
 }
 
-/// Build a `Daemon` seeded with one known token/prefix ("svc-azmika",
-/// scoped to the "azmika" prefix, read+write), and the path of its audit
+/// Build a `Daemon` seeded with one known token/prefix ("svc-myapp",
+/// scoped to the "myapp" prefix, read+write), and the path of its audit
 /// log (for cleanup).
 fn build_test_daemon(tag: &str) -> (Daemon, PathBuf) {
     let (root_pubkey, _root_privkey) = generate_root_keypair();
     let vault = VaultFile::new(root_pubkey);
     let mut tokens = BTreeMap::new();
-    tokens.insert(token_key(&TOKEN_SECRET), azmika_token());
+    tokens.insert(token_key(&TOKEN_SECRET), myapp_token());
     let audit_path = temp_audit_path(tag);
     let audit = AuditLog::open(&audit_path).expect("open audit log");
     let dek = [0x7A; 32];
@@ -235,17 +235,17 @@ fn set_get_list_rm_round_trip_over_real_socket() {
     let client = Client::connect(&socket_path).expect("connect to test daemon");
     let token = token_key(&TOKEN_SECRET);
 
-    run_set(&client, &token, "azmika/KEY", b"hello".to_vec()).expect("set should succeed");
+    run_set(&client, &token, "myapp/KEY", b"hello".to_vec()).expect("set should succeed");
 
-    let value = run_get(&client, &token, "azmika/KEY").expect("get should succeed");
+    let value = run_get(&client, &token, "myapp/KEY").expect("get should succeed");
     assert_eq!(value, b"hello".to_vec());
 
-    let listed = run_list(&client, &token, "azmika").expect("list should succeed");
-    assert_eq!(listed, vec!["azmika/KEY".to_string()]);
+    let listed = run_list(&client, &token, "myapp").expect("list should succeed");
+    assert_eq!(listed, vec!["myapp/KEY".to_string()]);
 
-    run_rm(&client, &token, "azmika/KEY").expect("rm should succeed");
+    run_rm(&client, &token, "myapp/KEY").expect("rm should succeed");
 
-    let after_rm = run_get(&client, &token, "azmika/KEY");
+    let after_rm = run_get(&client, &token, "myapp/KEY");
     assert!(
         matches!(after_rm, Err(CliError::NotFound)),
         "get after rm should be NotFound, got {after_rm:?}"
@@ -295,19 +295,19 @@ fn unknown_token_is_denied_for_every_operation() {
     let bogus_token = "f".repeat(64);
 
     assert!(matches!(
-        run_get(&client, &bogus_token, "azmika/KEY"),
+        run_get(&client, &bogus_token, "myapp/KEY"),
         Err(CliError::Denied)
     ));
     assert!(matches!(
-        run_set(&client, &bogus_token, "azmika/KEY", b"x".to_vec()),
+        run_set(&client, &bogus_token, "myapp/KEY", b"x".to_vec()),
         Err(CliError::Denied)
     ));
     assert!(matches!(
-        run_rm(&client, &bogus_token, "azmika/KEY"),
+        run_rm(&client, &bogus_token, "myapp/KEY"),
         Err(CliError::Denied)
     ));
     assert!(matches!(
-        run_list(&client, &bogus_token, "azmika"),
+        run_list(&client, &bogus_token, "myapp"),
         Err(CliError::Denied)
     ));
 
@@ -322,7 +322,7 @@ fn get_on_a_path_that_was_never_set_returns_not_found() {
     let client = Client::connect(&socket_path).expect("connect to test daemon");
     let token = token_key(&TOKEN_SECRET);
 
-    let result = run_get(&client, &token, "azmika/NEVER_SET");
+    let result = run_get(&client, &token, "myapp/NEVER_SET");
     assert!(matches!(result, Err(CliError::NotFound)), "{result:?}");
 
     let _ = std::fs::remove_file(&audit_path);
@@ -350,8 +350,8 @@ fn run_rotate_dek_reencrypts_entries_and_services_and_invalidates_old_dek() {
     let old_dek = unwrap_dek_for_host(&old_wrap_a, &host_key_a).expect("unwrap old dek");
 
     let plaintexts: [(&str, Vec<u8>); 3] = [
-        ("azmika/ONE", b"secret-one".to_vec()),
-        ("azmika/TWO", b"secret-two".to_vec()),
+        ("myapp/ONE", b"secret-one".to_vec()),
+        ("myapp/TWO", b"secret-two".to_vec()),
         ("other/THREE", b"secret-three".to_vec()),
     ];
     for (path, value) in &plaintexts {

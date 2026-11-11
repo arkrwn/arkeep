@@ -206,13 +206,13 @@ fn fresh_host_lifecycle_init_enroll_set_get_deny_audit() {
     let seal_a = FakeHostSeal { tag: 0xA1 };
     run_init_host_with_seal(&dir, "a", &seal_a).expect("init --host a should succeed");
 
-    // enroll-service (azmika, prefix azmika, ReadWrite)
+    // enroll-service (myapp, prefix myapp, ReadWrite)
     let token = run_enroll_service_with_seal(
         &dir,
         "a",
         &seal_a,
-        "azmika",
-        vec!["azmika".to_string()],
+        "myapp",
+        vec!["myapp".to_string()],
         Permission::ReadWrite,
     )
     .expect("enroll-service should succeed");
@@ -242,21 +242,21 @@ fn fresh_host_lifecycle_init_enroll_set_get_deny_audit() {
     let client = Client::connect(&socket_path).expect("connect to the real daemon socket");
     let token_str = token_key(&token.secret);
 
-    // set azmika/OPENAI_API_KEY, get it back, assert equality.
+    // set myapp/OPENAI_API_KEY, get it back, assert equality.
     secrets::run_set(
         &client,
         &token_str,
-        "azmika/OPENAI_API_KEY",
+        "myapp/OPENAI_API_KEY",
         b"sk-fresh-host-e2e".to_vec(),
     )
-    .expect("set azmika/OPENAI_API_KEY should succeed");
+    .expect("set myapp/OPENAI_API_KEY should succeed");
 
-    let got = secrets::run_get(&client, &token_str, "azmika/OPENAI_API_KEY")
-        .expect("get azmika/OPENAI_API_KEY should succeed");
+    let got = secrets::run_get(&client, &token_str, "myapp/OPENAI_API_KEY")
+        .expect("get myapp/OPENAI_API_KEY should succeed");
     assert_eq!(got, b"sk-fresh-host-e2e".to_vec());
 
     // get on other/SECRET with the same token must be denied: it is
-    // outside the token's "azmika" prefix.
+    // outside the token's "myapp" prefix.
     let denied = secrets::run_get(&client, &token_str, "other/SECRET");
     assert!(
         matches!(denied, Err(CliError::Denied)),
@@ -269,9 +269,9 @@ fn fresh_host_lifecycle_init_enroll_set_get_deny_audit() {
         audit_cmd::run_audit_tail(&audit_path, 20).expect("run_audit_tail should succeed");
 
     let has_allowed_set = entries.iter().any(|e| {
-        e.service_id == "azmika"
+        e.service_id == "myapp"
             && e.action == "set"
-            && e.path == "azmika/OPENAI_API_KEY"
+            && e.path == "myapp/OPENAI_API_KEY"
             && e.result == "ok"
     });
     assert!(
@@ -280,9 +280,9 @@ fn fresh_host_lifecycle_init_enroll_set_get_deny_audit() {
     );
 
     let has_allowed_get = entries.iter().any(|e| {
-        e.service_id == "azmika"
+        e.service_id == "myapp"
             && e.action == "get"
-            && e.path == "azmika/OPENAI_API_KEY"
+            && e.path == "myapp/OPENAI_API_KEY"
             && e.result == "ok"
     });
     assert!(
@@ -291,7 +291,7 @@ fn fresh_host_lifecycle_init_enroll_set_get_deny_audit() {
     );
 
     let has_denied_get = entries.iter().any(|e| {
-        e.service_id == "azmika"
+        e.service_id == "myapp"
             && e.action == "get"
             && e.path == "other/SECRET"
             && e.result == "denied"

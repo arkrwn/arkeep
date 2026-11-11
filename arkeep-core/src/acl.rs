@@ -115,40 +115,37 @@ mod tests {
 
     #[test]
     fn path_under_prefix_is_allowed() {
-        assert!(path_allowed(
-            &prefixes(&["azmika"]),
-            "azmika/OPENAI_API_KEY"
-        ));
+        assert!(path_allowed(&prefixes(&["myapp"]), "myapp/OPENAI_API_KEY"));
     }
 
     #[test]
     fn exact_prefix_match_is_allowed() {
-        assert!(path_allowed(&prefixes(&["azmika"]), "azmika"));
+        assert!(path_allowed(&prefixes(&["myapp"]), "myapp"));
     }
 
     #[test]
     fn other_prefix_is_rejected() {
-        assert!(!path_allowed(&prefixes(&["azmika"]), "other/KEY"));
+        assert!(!path_allowed(&prefixes(&["myapp"]), "other/KEY"));
     }
 
     #[test]
     fn sibling_sharing_text_prefix_is_rejected() {
-        assert!(!path_allowed(&prefixes(&["azmika"]), "azmikaX/KEY"));
+        assert!(!path_allowed(&prefixes(&["myapp"]), "myappX/KEY"));
     }
 
     #[test]
     fn empty_path_is_rejected() {
-        assert!(!path_allowed(&prefixes(&["azmika"]), ""));
+        assert!(!path_allowed(&prefixes(&["myapp"]), ""));
     }
 
     #[test]
     fn traversal_segment_is_rejected() {
-        assert!(!path_allowed(&prefixes(&["azmika"]), "azmika/../root/KEY"));
+        assert!(!path_allowed(&prefixes(&["myapp"]), "myapp/../root/KEY"));
     }
 
     #[test]
     fn trailing_traversal_segment_is_rejected() {
-        assert!(!path_allowed(&prefixes(&["azmika"]), "azmika/.."));
+        assert!(!path_allowed(&prefixes(&["myapp"]), "myapp/.."));
     }
 
     #[test]

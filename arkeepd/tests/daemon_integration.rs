@@ -24,26 +24,26 @@ fn temp_audit_path(tag: &str) -> PathBuf {
     ))
 }
 
-const AZMIKA_SECRET: [u8; 32] = [0x42; 32];
+const MYAPP_SECRET: [u8; 32] = [0x42; 32];
 
-fn azmika_token() -> AccessToken {
+fn myapp_token() -> AccessToken {
     AccessToken {
-        service_id: "azmika".to_string(),
-        prefixes: vec!["azmika".to_string()],
+        service_id: "myapp".to_string(),
+        prefixes: vec!["myapp".to_string()],
         permission: Permission::ReadWrite,
-        secret: AZMIKA_SECRET,
+        secret: MYAPP_SECRET,
     }
 }
 
-fn azmika_token_wire() -> String {
-    token_key(&AZMIKA_SECRET)
+fn myapp_token_wire() -> String {
+    token_key(&MYAPP_SECRET)
 }
 
 fn build_daemon(tag: &str) -> (Daemon, PathBuf) {
     let (root_pubkey, _root_privkey) = generate_root_keypair();
     let vault = VaultFile::new(root_pubkey);
     let mut tokens = BTreeMap::new();
-    tokens.insert(token_key(&AZMIKA_SECRET), azmika_token());
+    tokens.insert(token_key(&MYAPP_SECRET), myapp_token());
     let audit_path = temp_audit_path(tag);
     let audit = AuditLog::open(&audit_path).expect("open audit log");
     let dek = [0x7A; 32];
@@ -53,18 +53,18 @@ fn build_daemon(tag: &str) -> (Daemon, PathBuf) {
 #[test]
 fn known_token_can_set_and_get_under_its_prefix() {
     let (mut daemon, audit_path) = build_daemon("set-get");
-    let token = azmika_token_wire();
+    let token = myapp_token_wire();
 
     let set_resp = daemon.handle_request(Request::Set {
         token: token.clone(),
-        path: "azmika/KEY".to_string(),
+        path: "myapp/KEY".to_string(),
         value: b"super-secret".to_vec(),
     });
     assert_eq!(set_resp, Response::Ok);
 
     let get_resp = daemon.handle_request(Request::Get {
         token,
-        path: "azmika/KEY".to_string(),
+        path: "myapp/KEY".to_string(),
     });
     assert_eq!(get_resp, Response::Value(b"super-secret".to_vec()));
 
@@ -74,7 +74,7 @@ fn known_token_can_set_and_get_under_its_prefix() {
 #[test]
 fn known_token_outside_its_prefix_is_denied() {
     let (mut daemon, audit_path) = build_daemon("outside-prefix");
-    let token = azmika_token_wire();
+    let token = myapp_token_wire();
 
     let resp = daemon.handle_request(Request::Get {
         token,
@@ -93,14 +93,14 @@ fn unknown_token_is_denied_for_every_request_type() {
     assert_eq!(
         daemon.handle_request(Request::Get {
             token: bogus.clone(),
-            path: "azmika/KEY".to_string(),
+            path: "myapp/KEY".to_string(),
         }),
         Response::Denied
     );
     assert_eq!(
         daemon.handle_request(Request::Set {
             token: bogus.clone(),
-            path: "azmika/KEY".to_string(),
+            path: "myapp/KEY".to_string(),
             value: b"x".to_vec(),
         }),
         Response::Denied
@@ -108,14 +108,14 @@ fn unknown_token_is_denied_for_every_request_type() {
     assert_eq!(
         daemon.handle_request(Request::Rm {
             token: bogus.clone(),
-            path: "azmika/KEY".to_string(),
+            path: "myapp/KEY".to_string(),
         }),
         Response::Denied
     );
     assert_eq!(
         daemon.handle_request(Request::List {
             token: bogus,
-            prefix: "azmika".to_string(),
+            prefix: "myapp".to_string(),
         }),
         Response::Denied
     );
@@ -127,7 +127,7 @@ fn unknown_token_is_denied_for_every_request_type() {
 fn concurrent_requests_on_distinct_paths_never_panic_and_stay_consistent() {
     let (daemon, audit_path) = build_daemon("concurrent");
     let daemon = Arc::new(Mutex::new(daemon));
-    let token = azmika_token_wire();
+    let token = myapp_token_wire();
     let num_threads = 8;
     let barrier = Arc::new(Barrier::new(num_threads));
 
@@ -138,7 +138,7 @@ fn concurrent_requests_on_distinct_paths_never_panic_and_stay_consistent() {
         let token = token.clone();
         handles.push(thread::spawn(move || {
             barrier.wait();
-            let path = format!("azmika/thread-{i}");
+            let path = format!("myapp/thread-{i}");
             for iter in 0..25 {
                 let value = format!("v{i}-{iter}").into_bytes();
 
