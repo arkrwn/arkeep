@@ -4,7 +4,9 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Core library for cofferak: envelope encryption and vault storage"
+description = "Core library for cofferak: envelope encryption, vault file format, access control and OS key sealing"
+repository.workspace = true
+homepage.workspace = true
 
 [dependencies]
 aes-gcm-siv = "0.11.1"

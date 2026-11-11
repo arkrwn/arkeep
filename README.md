@@ -1,22 +1,24 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/cofferak-logo-dark.svg">
-    <img src="docs/assets/cofferak-logo.svg" alt="cofferak" width="220">
+    <img src="docs/assets/cofferak-logo.svg" alt="cofferak" width="260">
   </picture>
 </p>
 
 <p align="center">
-  <strong>A self-hosted secrets vault for Linux and macOS.</strong><br>
-  Envelope encryption, OS-sealed keys, scoped per-service tokens — no external server, cloud KMS, or account.
+  <strong>Self-hosted secrets vault for services on Linux and macOS.</strong><br>
+  Envelope encryption · OS-sealed keys · per-service tokens · local socket or TLS 1.3 server mode<br>
+  No external server, cloud KMS or account required.
 </p>
 
 <p align="center">
   <a href="https://github.com/arkrwn/cofferak/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/arkrwn/cofferak/actions/workflows/ci.yml/badge.svg?branch=main"></a>
+  <a href="Cargo.toml"><img alt="Version" src="https://img.shields.io/badge/version-0.1.0-264233.svg"></a>
   <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg"></a>
-  <img alt="Rust 1.89+" src="https://img.shields.io/badge/rust-1.89%2B-C95428.svg?logo=rust">
-  <img alt="Platforms: Linux | macOS" src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS-254434.svg">
-  <img alt="TLS 1.3 only" src="https://img.shields.io/badge/server%20mode-TLS%201.3%20%2B%20mTLS-254434.svg">
-  <img alt="SDKs: Rust, Go, Python, TypeScript" src="https://img.shields.io/badge/SDKs-Rust%20%7C%20Go%20%7C%20Python%20%7C%20TypeScript-C95428.svg">
+  <img alt="Rust 1.89+" src="https://img.shields.io/badge/rust-1.89%2B-C75126.svg?logo=rust">
+  <img alt="Platforms: Linux | macOS" src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS-264233.svg">
+  <img alt="TLS 1.3 only" src="https://img.shields.io/badge/server%20mode-TLS%201.3%20%2B%20mTLS-264233.svg">
+  <img alt="SDKs: Rust, Go, Python, TypeScript" src="https://img.shields.io/badge/SDKs-Rust%20%7C%20Go%20%7C%20Python%20%7C%20TypeScript-C75126.svg">
 </p>
 
 <p align="center">
@@ -60,11 +62,14 @@ protocol and the same tokens.
 - **Client SDKs** — Rust, Go, Python and TypeScript/JavaScript, each
   tested against a real daemon in CI over the Unix socket and TLS/mTLS.
 
-> **Status:** feature-complete and tested on every commit (Linux and
-> macOS). See [`docs/PROGRESS.md`](docs/PROGRESS.md) for what is proven
-> and the known limitations.
+> **Status: v0.1.0, pre-1.0.** Feature-complete and tested on every
+> commit on Linux and macOS, including real systemd-creds sealing, a
+> non-root systemd service, and TLS/mTLS for every SDK. The on-disk
+> format and wire protocol may still change before 1.0. See
+> [`docs/PROGRESS.md`](docs/PROGRESS.md) for what is proven and the
+> known limitations.
 
-## Why
+## Why cofferak
 
 Most secrets-management setups either hand you a server to operate
 (Vault, a cloud KMS) or a flat encrypted file with one shared passphrase.
@@ -83,6 +88,10 @@ so the unseal key is never a plaintext file sitting next to the vault.
   the same tests — run on both Linux and macOS.
 - **Per-service, least-privilege access.** Consumers get a scoped
   capability token (path prefix + read/write), not a master key.
+
+For an honest comparison with `.env` files, HashiCorp Vault, Infisical
+and AWS Secrets Manager — including when one of those fits better — see
+[`docs/comparison.md`](docs/comparison.md).
 
 ## How it works (envelope encryption, briefly)
 
@@ -163,14 +172,14 @@ hostname-mismatch rejection, and mutual-TLS's reject/accept paths
 ```
 cofferak/
   cofferak-core/   # lib: crypto, on-disk format, ACL, HostSeal — no process I/O beyond disk reads/writes
-  cofferakd/       # daemon: Unix-socket API, platform seal integration, audit log
+  cofferakd/       # daemon: Unix socket + TLS server mode, platform seal integration, audit log
   cofferak-cli/    # admin CLI: init/enroll-host/enroll-service/set/get/rm/list/rotate-dek/recover/audit tail
-  sdk/           # client SDKs: rust, go, python, javascript (TypeScript)
-  deployment/    # copy-and-edit systemd unit (Linux) and launchd plist (macOS)
-  scripts/       # sdk-smoke.sh, server-mode-smoke.sh — real, run-it-yourself proof
-  docs/          # SPEC.md, adr/, PROGRESS.md, deployment guide, recovery
-                 # runbook, sample-integration/
-SDD.md             # the design/documentation practice this repo follows
+  sdk/             # client SDKs: rust, go, python, javascript (TypeScript)
+  deployment/      # copy-and-edit systemd unit (Linux) and launchd plist (macOS)
+  scripts/         # sdk-smoke.sh, server-mode-smoke.sh — real, run-it-yourself proof
+  docs/            # SPEC.md, adr/, PROGRESS.md, deployment guide, recovery runbook,
+                   # sample-integration/, assets/ (logo and icons)
+  SDD.md           # the design/documentation practice this repo follows
 ```
 
 ## What's implemented
@@ -226,7 +235,8 @@ pinned in `rust-toolchain.toml`).
 
 This quickstart runs everything as your own user, which works on macOS.
 **On Linux, run the admin commands (`init`, `enroll-*`, `rotate-dek`,
-`recover`) with `sudo`**: `systemd-creds`' host scope is root-only. For a
+`recover`) and this foreground `cofferakd` with `sudo`**: `systemd-creds`'
+host scope is root-only. For a
 real Linux install — unprivileged daemon under systemd, host key delivered
 via `LoadCredentialEncrypted=` — follow
 [`docs/deployment.md`](docs/deployment.md) and
@@ -390,11 +400,15 @@ mTLS reject/accept paths:
 - [`docs/adr/`](docs/adr/) — numbered point decisions (why envelope
   encryption, why no external vault/KMS dependency, why the `HostSeal`
   abstraction, why `cofferakd` has a library target, why server mode is
-  RPC-over-TLS rather than REST/WebSocket).
+  RPC-over-TLS rather than REST/WebSocket, how the Linux daemon gets its
+  key without root, and why writes are durable before they are
+  acknowledged).
 - [`docs/PROGRESS.md`](docs/PROGRESS.md) — implementation status, one row
   per area, each backed by what was actually run.
 - [`SDD.md`](SDD.md) — the design/documentation practice this project
   follows; read it before making an architectural change.
+- [`docs/assets/`](docs/assets/) — logo, icons (SVG, PNG, ICO) and brand
+  colours.
 
 ## Contributing
 
