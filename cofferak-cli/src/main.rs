@@ -197,6 +197,13 @@ enum Command {
     /// now on disk (it must be an authentic copy of this vault). Restart
     /// the daemon afterwards.
     AcceptRestore(DataDirArgs),
+    /// Back up the vault into a directory, keeping the newest N copies.
+    /// By default copies the (already encrypted) vault file, which needs
+    /// no key, so it can run from a timer. See docs/backup.md.
+    Backup(BackupArgs),
+    /// Check the vault, this host, the daemon and backups. Exit code 0 =
+    /// healthy, 1 = warnings, 2 = a problem that needs attention.
+    Doctor(DoctorArgs),
 }
 
 #[derive(Args)]
@@ -457,6 +464,43 @@ struct ImportArgs {
     /// default in case it is a replay).
     #[arg(long)]
     allow_old: bool,
+    /// Vault data directory. Defaults to `$COFFERAK_DATA_DIR` / the platform data dir.
+    #[arg(long, value_name = "DIR")]
+    data_dir: Option<PathBuf>,
+}
+
+#[derive(Args)]
+struct BackupArgs {
+    /// Directory to write backups to (created with mode 0700).
+    #[arg(long, value_name = "DIR")]
+    dir: PathBuf,
+    /// How many backups of this kind to keep. Older ones are deleted.
+    #[arg(long, default_value_t = 14)]
+    keep: usize,
+    /// Make a portable passphrase-encrypted bundle instead of a vault copy
+    /// (needs this host's key: an admin command).
+    #[arg(long, value_name = "FILE", conflicts_with = "to")]
+    passphrase_file: Option<PathBuf>,
+    /// Make a bundle only peer coffer PEER can open, instead of a vault
+    /// copy (needs this host's key: an admin command).
+    #[arg(long, value_name = "PEER")]
+    to: Option<String>,
+    /// Vault data directory. Defaults to `$COFFERAK_DATA_DIR` / the platform data dir.
+    #[arg(long, value_name = "DIR")]
+    data_dir: Option<PathBuf>,
+}
+
+#[derive(Args)]
+struct DoctorArgs {
+    /// Also check that this directory has a recent backup.
+    #[arg(long, value_name = "DIR")]
+    backup_dir: Option<PathBuf>,
+    /// Warn when the newest backup is older than this many hours.
+    #[arg(long, default_value_t = 26)]
+    max_backup_age_hours: u64,
+    /// Daemon Unix socket path. Defaults to `$COFFERAK_SOCKET` / the platform path.
+    #[arg(long, value_name = "PATH")]
+    socket: Option<PathBuf>,
     /// Vault data directory. Defaults to `$COFFERAK_DATA_DIR` / the platform data dir.
     #[arg(long, value_name = "DIR")]
     data_dir: Option<PathBuf>,
@@ -937,6 +981,8 @@ fn main() {
         Command::Identity(args) => cmd_identity(args),
         Command::Peer(args) => cmd_peer(args),
         Command::AcceptRestore(args) => cmd_accept_restore(args),
+        Command::Backup(args) => cmd_backup(args),
+        Command::Doctor(args) => cmd_doctor(args),
         Command::Audit(args) => match args.command {
             AuditCommand::Tail(tail_args) => {
                 let data_dir = resolve_data_dir(tail_args.data_dir);
@@ -1552,4 +1598,87 @@ fn token_args(args: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsString> {
         out.push(a);
     }
     out
+}
+
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+fn cmd_backup(args: BackupArgs) {
+    use commands::backup::{backup_vault_file, store_backup, BUNDLE_PREFIX};
+    let data_dir = resolve_data_dir(args.data_dir);
+    let report = if args.passphrase_file.is_none() && args.to.is_none() {
+        backup_vault_file(&data_dir, &args.dir, args.keep, unix_now())
+    } else {
+        let sel = commands::transfer::Selection::everything();
+        let bundle = if let Some(peer) = &args.to {
+            with_admin_lock(&data_dir, || {
+                with_local_host(&data_dir, |id, seal| {
+                    commands::transfer::run_export_to_peer_with_seal(
+                        &data_dir, id, seal, peer, &sel,
+                    )
+                })
+            })
+        } else {
+            let pass = read_passphrase(args.passphrase_file.as_deref(), false);
+            with_admin_lock(&data_dir, || {
+                with_local_host(&data_dir, |id, seal| {
+                    commands::transfer::run_export_with_seal(
+                        &data_dir,
+                        id,
+                        seal,
+                        pass.as_bytes(),
+                        cofferak_core::bundle::DEFAULT_ITERATIONS,
+                        &sel,
+                    )
+                })
+            })
+        };
+        bundle.and_then(|(bytes, _)| {
+            store_backup(
+                &args.dir,
+                BUNDLE_PREFIX,
+                "cfk",
+                &bytes,
+                args.keep,
+                unix_now(),
+            )
+        })
+    }
+    .unwrap_or_else(|e| fail("backup", e));
+    println!("backup written to {} (mode 0600)", report.file.display());
+    for old in &report.removed {
+        println!("  removed old backup {}", old.display());
+    }
+}
+
+fn cmd_doctor(args: DoctorArgs) {
+    use commands::backup::{run_doctor, Status};
+    let data_dir = resolve_data_dir(args.data_dir);
+    let socket = resolve_socket_path(args.socket);
+    let checks = run_doctor(
+        &data_dir,
+        &socket,
+        args.backup_dir.as_deref(),
+        args.max_backup_age_hours,
+        std::time::SystemTime::now(),
+    );
+    let mut worst = Status::Ok;
+    for c in &checks {
+        let tag = match c.status {
+            Status::Ok => "ok  ",
+            Status::Warn => "WARN",
+            Status::Fail => "FAIL",
+        };
+        println!("{tag} {}", c.message);
+        worst = worst.max(c.status);
+    }
+    std::process::exit(match worst {
+        Status::Ok => 0,
+        Status::Warn => 1,
+        Status::Fail => 2,
+    });
 }

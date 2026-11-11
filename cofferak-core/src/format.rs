@@ -238,10 +238,14 @@ impl VaultFile {
     /// the previous complete file or the new complete file, never a
     /// truncated one.
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
-        let bytes = bincode_options()
+        write_atomic(path, &self.to_bytes()?)
+    }
+
+    /// The exact bytes [`VaultFile::save`] writes.
+    pub fn to_bytes(&self) -> std::io::Result<Vec<u8>> {
+        bincode_options()
             .serialize(self)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        write_atomic(path, &bytes)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
     }
 
     /// Read and deserialize a vault previously written by [`VaultFile::save`].
@@ -251,7 +255,11 @@ impl VaultFile {
     /// is size-limited ([`MAX_VAULT_BYTES`]), so a corrupted length prefix
     /// can't make the decoder try to allocate an absurd amount of memory.
     pub fn load(path: &Path) -> Result<Self, FormatError> {
-        let bytes = std::fs::read(path)?;
+        Self::from_bytes(&std::fs::read(path)?)
+    }
+
+    /// Decode a vault from the bytes of a `vault.cofferak` file.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, FormatError> {
         if bytes.len() as u64 > MAX_VAULT_BYTES {
             return Err(FormatError::Corrupt);
         }
@@ -264,11 +272,11 @@ impl VaultFile {
         };
         match version {
             VAULT_FORMAT_VERSION => bincode_options()
-                .deserialize(&bytes)
+                .deserialize(bytes)
                 .map_err(|_| FormatError::Corrupt),
             3 => {
                 let v3: VaultFileV3 = bincode_options()
-                    .deserialize(&bytes)
+                    .deserialize(bytes)
                     .map_err(|_| FormatError::Corrupt)?;
                 Ok(VaultFile {
                     version: VAULT_FORMAT_VERSION,
@@ -288,7 +296,7 @@ impl VaultFile {
             // upgrade it in memory; the next save writes format 3.
             2 => {
                 let v2: VaultFileV2 = bincode_options()
-                    .deserialize(&bytes)
+                    .deserialize(bytes)
                     .map_err(|_| FormatError::Corrupt)?;
                 Ok(VaultFile {
                     version: VAULT_FORMAT_VERSION,

@@ -1,0 +1,33 @@
+# systemd unit template: one encrypted backup of the vault (ADR 0018).
+#
+# Copies vault.cofferak, which is already encrypted, so it needs no key and
+# runs as the unprivileged cofferak user. Keeps the newest 30 copies.
+# Install together with cofferak-backup.timer:
+#   sudo cp cofferak-backup.service cofferak-backup.timer /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now cofferak-backup.timer
+# Put /var/backups/cofferak on another disk, or sync it off the machine.
+[Unit]
+Description=cofferak vault backup
+Documentation=https://github.com/arkrwn/cofferak/blob/main/docs/backup.md
+After=local-fs.target
+
+[Service]
+Type=oneshot
+User=cofferak
+Group=cofferak
+Environment=COFFERAK_DATA_DIR=/var/lib/cofferak
+ExecStart=/usr/local/bin/cofferak backup --dir /var/backups/cofferak --keep 30
+# Then check health, so a missing vault or a failed backup shows up in the
+# journal and in `systemctl --failed` (exit code 2 fails the unit).
+ExecStartPost=/usr/local/bin/cofferak doctor --backup-dir /var/backups/cofferak
+SuccessExitStatus=1
+
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ReadOnlyPaths=/var/lib/cofferak
+ReadWritePaths=/var/backups/cofferak
+LimitCORE=0

@@ -114,7 +114,19 @@ if $ADMIN_B import "$WORK/a2b.cfk" 2>/dev/null; then echo "B accepted the same t
 $ADMIN_B peer rm a >/dev/null
 if $ADMIN_B import "$WORK/a2b.cfk" 2>/dev/null; then echo "B accepted an untrusted sender" >&2; exit 1; fi
 
-step "9. an older copy of the vault put back is refused, accept-restore accepts it on purpose"
+step "9. back up the vault, check health, survive an accidental delete"
+for _ in 1 2 3; do cofferak backup --dir "$WORK/backups" --keep 2 >/dev/null; done
+[[ "$(ls "$WORK/backups" | grep -c '^cofferak-vault-')" == "2" ]]
+set +e
+DOCTOR_OUT="$(cofferak doctor --backup-dir "$WORK/backups")"; DOCTOR_RC=$?
+set -e
+[[ $DOCTOR_RC -le 1 ]] || { echo "doctor reported a failure:" >&2; echo "$DOCTOR_OUT" >&2; exit 1; }
+grep -q "daemon is listening" <<<"$DOCTOR_OUT"
+rm "$COFFERAK_DATA_DIR/vault.cofferak"                       # oops
+[[ "$(cofferak get myapp/DB_PASSWORD)" == "p@ss w0rd" ]]     # the daemon puts it back
+[[ -f "$COFFERAK_DATA_DIR/vault.cofferak" ]]
+
+step "10. an older copy of the vault put back is refused, accept-restore accepts it on purpose"
 cp "$COFFERAK_DATA_DIR/vault.cofferak" "$WORK/old.cofferak"
 printf 'newer' | cofferak set myapp/ROLLBACK --stdin
 cp "$WORK/old.cofferak" "$COFFERAK_DATA_DIR/vault.cofferak.restore"
