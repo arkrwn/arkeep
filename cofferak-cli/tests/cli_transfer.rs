@@ -119,7 +119,7 @@ fn short_socket_path(tag: &str) -> PathBuf {
 }
 
 /// Handle to a background thread serving one `Daemon` over a real
-/// `UnixListener`; removes the socket file on drop.
+/// `UnixListener`, removes the socket file on drop.
 struct TestServer {
     socket_path: PathBuf,
 }
@@ -132,7 +132,7 @@ impl Drop for TestServer {
 
 /// Bind `socket_path` and spawn a background thread that accepts
 /// connections and serves `daemon.handle_request` over the real wire
-/// protocol — a trimmed copy of `cofferakd/src/main.rs`'s own
+/// protocol - a trimmed copy of `cofferakd/src/main.rs`'s own
 /// accept-loop/`handle_connection` (private to that binary, so duplicated
 /// here rather than imported). Returns once the socket is bound, so a
 /// `Client::connect` issued right after this returns will not race the

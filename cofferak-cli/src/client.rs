@@ -11,7 +11,7 @@
 //! one request before the process exits, so there is no request volume to
 //! amortize a persistent connection over. Pooling would add
 //! reconnect-on-error and synchronization concerns for no benefit at this
-//! call pattern — revisit only if a future caller sends many requests per
+//! call pattern - revisit only if a future caller sends many requests per
 //! process lifetime.
 
 use std::io::{BufRead, BufReader, Write};
@@ -27,7 +27,7 @@ pub struct Client {
 
 impl Client {
     /// Record `socket_path` for later use by [`Client::send`], after
-    /// confirming the daemon is actually listening there — so a bad path
+    /// confirming the daemon is actually listening there - so a bad path
     /// or a daemon that isn't running is reported immediately here,
     /// rather than on the first real request.
     pub fn connect(socket_path: &Path) -> std::io::Result<Self> {
@@ -45,7 +45,7 @@ impl Client {
     ///
     /// Returns `Err` on any I/O failure, on a connection the daemon closes
     /// before writing a response line, or on a response line that fails
-    /// to decode — never panics, and never returns a default/empty
+    /// to decode - never panics, and never returns a default/empty
     /// `Response` to paper over a failure.
     pub fn send(&self, req: &Request) -> std::io::Result<Response> {
         let mut stream = UnixStream::connect(&self.socket_path)?;

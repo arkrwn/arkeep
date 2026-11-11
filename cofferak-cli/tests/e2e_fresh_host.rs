@@ -1,4 +1,4 @@
-//! End-to-end fresh-host test (Task 16): drives the full lifecycle —
+//! End-to-end fresh-host test (Task 16): drives the full lifecycle -
 //! `init --root` -> `init --host` -> `enroll-service` -> a real
 //! `Daemon`/`UnixListener` seeded from the resulting vault+token -> `set`/
 //! `get` over a real `Client` -> a denied `get` outside the token's
@@ -12,7 +12,7 @@
 //! `protocol`/`audit`/`daemon` modules come from the real `cofferakd`
 //! library crate and are re-exported at this test's crate root, so the
 //! CLI files' `crate::protocol` paths resolve to the very same types the
-//! `Daemon` uses — one definition of each, exactly as in the real binaries.
+//! `Daemon` uses - one definition of each, exactly as in the real binaries.
 //!
 //! The socket server itself (bind a `UnixListener`, spawn one thread per
 //! connection, decode/dispatch/encode each line through
@@ -67,7 +67,7 @@ use protocol::{decode_request, encode, Response};
 
 /// Same trivial, deterministic, in-memory `HostSeal` fake used across
 /// Tasks 11-13's own tests (`cli_init.rs`/`cli_enroll.rs`/
-/// `cli_secrets.rs`) — this is the fake `HostSeal` test double the task
+/// `cli_secrets.rs`) - this is the fake `HostSeal` test double the task
 /// brief calls for, keeping this test deterministic and independent of
 /// `systemd-creds`/Keychain being available in CI. The real platform
 /// backends are separately covered by Task 5/6's own tests.
@@ -132,7 +132,7 @@ fn short_socket_path(tag: &str) -> PathBuf {
 }
 
 /// Handle to a background thread serving one `Daemon` over a real
-/// `UnixListener`; removes the socket file on drop.
+/// `UnixListener`, removes the socket file on drop.
 struct TestServer {
     socket_path: PathBuf,
 }
@@ -145,9 +145,9 @@ impl Drop for TestServer {
 
 /// Bind `socket_path` and spawn a background thread that accepts
 /// connections and serves `daemon.handle_request` over the real wire
-/// protocol — a trimmed copy of `cofferakd/src/main.rs`'s own accept
+/// protocol - a trimmed copy of `cofferakd/src/main.rs`'s own accept
 /// loop/`handle_connection` (private to that binary, so duplicated here
-/// rather than imported; same as `cli_secrets.rs`). Returns once the
+/// rather than imported, same as `cli_secrets.rs`). Returns once the
 /// socket is bound, so a `Client::connect` issued right after this
 /// returns will not race the bind.
 fn spawn_daemon_server(daemon: Daemon, socket_path: PathBuf) -> TestServer {
@@ -224,7 +224,7 @@ fn fresh_host_lifecycle_init_enroll_set_get_deny_audit() {
     .expect("enroll-service should succeed");
 
     // Spin up a real Daemon behind a real UnixListener, seeded from the
-    // resulting VaultFile and the returned token — the same way a real
+    // resulting VaultFile and the returned token - the same way a real
     // `cofferakd` would be seeded by reading `vault.cofferak` and unsealing
     // this host's own blob.
     let vault = VaultFile::load(&vault_path(&dir)).expect("load freshly-enrolled vault");

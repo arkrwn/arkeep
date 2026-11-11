@@ -6,20 +6,20 @@
 # Once, by the creator, on the first host. On Linux these need root
 # (systemd-creds' host scope is root-only; see docs/adr/0009).
 sudo cofferak init --root --data-dir /var/lib/cofferak
-# prints the root private key ONCE — copy it offline now, it is never shown again
+# prints the root private key ONCE - copy it offline now, it is never shown again
 
 sudo cofferak init --host my-server-01 --data-dir /var/lib/cofferak
 
 # Enroll a consuming service and capture its one-time token (the running
 # daemon picks it up automatically):
 sudo cofferak enroll-service myapp --paths myapp --perm rw --data-dir /var/lib/cofferak
-# prints a hex token ONCE — deliver it to that service the same sealed
+# prints a hex token ONCE - deliver it to that service the same sealed
 # way you deliver the host unseal key (systemd LoadCredentialEncrypted /
 # launchd + Keychain), never as a plaintext env var in a committed file.
 ```
 
 If the vault has more than one enrolled host, `cofferakd` needs
-`$COFFERAK_HOST_ID` set to know which host's sealed key to use — see
+`$COFFERAK_HOST_ID` set to know which host's sealed key to use - see
 [`docs/deployment.md`](../deployment.md).
 
 ## 2. A consuming service's systemd unit
@@ -54,7 +54,7 @@ OPENAI_API_KEY="$(cofferak get myapp/OPENAI_API_KEY)"
 cofferak set myapp/OPENAI_API_KEY "sk-..." --token "$COFFERAK_TOKEN"
 ```
 
-A `--perm ro` token rejects `set`/`rm` with `Err(CliError::Denied)` —
+A `--perm ro` token rejects `set`/`rm` with `Err(CliError::Denied)` -
 grant `--perm rw` at enrollment time if the service needs to write.
 
 ## 5. Listing what a token can see
@@ -71,7 +71,7 @@ cofferak recover --root-key ./root.key --new-host my-server-02 --data-dir /var/l
 ```
 
 Any failure here (wrong key, missing vault) leaves `vault.cofferak`
-byte-for-byte unchanged — safe to retry. See
+byte-for-byte unchanged - safe to retry. See
 [`docs/recovery-runbook.md`](../recovery-runbook.md).
 
 ## 7. Audit

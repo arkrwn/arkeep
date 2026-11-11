@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs the README "Quickstart" commands end to end (non-interactively) so
 # the documented steps can't silently rot. Same commands, same order, same
-# Linux/macOS split as README.md; only the hidden `read -rs` prompt is
+# Linux/macOS split as README.md, only the hidden `read -rs` prompt is
 # replaced by a pipe, and names are suffixed so it never touches a real
 # vault. Used by CI on ubuntu-latest and macos-latest.
 set -euo pipefail

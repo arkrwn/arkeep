@@ -3,8 +3,8 @@
 // TLS-wrapped TCP, and speaks the same newline-delimited JSON protocol
 // documented in cofferakd/src/protocol.rs (Request/Response, serde's
 // default externally-tagged enum encoding). It has no dependency on the
-// Rust crates — just the standard library (including Go's own
-// crypto/tls for the TLS transport — no third-party TLS library).
+// Rust crates - just the standard library (including Go's own
+// crypto/tls for the TLS transport - no third-party TLS library).
 package cofferak
 
 import (
@@ -18,12 +18,12 @@ import (
 )
 
 // maxLineBytes mirrors cofferakd's protocol::MAX_LINE_BYTES (and the
-// Rust SDK's identical constant) — a hard ceiling on one response line,
+// Rust SDK's identical constant) - a hard ceiling on one response line,
 // so a malicious or compromised daemon that never terminates a response
 // can't grow this client's buffer without limit.
 const maxLineBytes = 16 * 1024 * 1024
 
-// ioTimeout bounds how long one call can block on the network — a
+// ioTimeout bounds how long one call can block on the network - a
 // stalled or malicious daemon otherwise ties up the caller's goroutine
 // indefinitely. Matches cofferakd's own per-connection timeout (ADR 0008).
 const ioTimeout = 30 * time.Second
@@ -35,7 +35,7 @@ const (
 	transportTLS
 )
 
-// Client talks to one cofferakd endpoint — a Unix socket, or (server
+// Client talks to one cofferakd endpoint - a Unix socket, or (server
 // mode) a TLS/TCP address. Each call opens a fresh connection, matching
 // the convention established by cofferakd's own CLI client (simplest
 // correct option, no connection-pooling complexity).
@@ -47,7 +47,7 @@ type Client struct {
 }
 
 // Connect builds a Client for the daemon's Unix socket at socketPath.
-// Does not connect yet — connection happens per call.
+// Does not connect yet - connection happens per call.
 func Connect(socketPath string) *Client {
 	return &Client{kind: transportUnix, socketPath: socketPath}
 }
@@ -58,17 +58,17 @@ type TLSOptions struct {
 	// $COFFERAK_TLS_ADDR).
 	Addr string
 	// ServerName is verified against the server's certificate (its
-	// subject/SAN) — this is NOT where you disable verification; there
+	// subject/SAN) - this is NOT where you disable verification, there
 	// is no option to do that in this SDK.
 	ServerName string
 	// CACertPath is a PEM file containing the CA that signed the
 	// server's certificate. cofferak's TLS is for a self-managed
-	// deployment, not the public web — this client trusts ONLY this CA,
+	// deployment, not the public web - this client trusts ONLY this CA,
 	// never the OS's default/system trust store.
 	CACertPath string
 	// ClientCertPath/ClientKeyPath (PEM), both set together: the client
 	// certificate for mutual TLS. cofferakd's server mode always requires
-	// one (ADR 0011); they are optional here only so a client can be built
+	// one (ADR 0011), they are optional here only so a client can be built
 	// to prove that a certificate-less connection is refused.
 	ClientCertPath string
 	ClientKeyPath  string
@@ -84,7 +84,7 @@ func ConnectTLS(opts TLSOptions) (*Client, error) {
 		return nil, fmt.Errorf("reading CA cert %s: %w", opts.CACertPath, err)
 	}
 	// A deliberately empty, fresh pool: this client trusts ONLY the CA
-	// given here. It must never fall back to x509.SystemCertPool() —
+	// given here. It must never fall back to x509.SystemCertPool() -
 	// doing so would let any public-CA-issued certificate impersonate
 	// the cofferak server.
 	pool := x509.NewCertPool()
@@ -99,12 +99,12 @@ func ConnectTLS(opts TLSOptions) (*Client, error) {
 		MaxVersion: tls.VersionTLS13,
 		// Key exchange, strongest first, matching the server (ADR 0011):
 		// post-quantum hybrid X25519MLKEM768, then classical P-384. (Go
-		// does not let callers restrict TLS 1.3 cipher suites; the server
+		// does not let callers restrict TLS 1.3 cipher suites, the server
 		// accepts only TLS_AES_256_GCM_SHA384.)
 		CurvePreferences: []tls.CurveID{tls.X25519MLKEM768, tls.CurveP384},
 		// InsecureSkipVerify is deliberately never set (defaults to
 		// false). Hostname verification against ServerName happens
-		// automatically; there is no code path in this SDK that can
+		// automatically, there is no code path in this SDK that can
 		// disable it.
 	}
 
@@ -171,7 +171,7 @@ func (c *Client) dial() (net.Conn, error) {
 }
 
 // readLineBounded reads from conn until it sees '\n' or hits
-// maxLineBytes, whichever comes first — never growing its buffer past
+// maxLineBytes, whichever comes first - never growing its buffer past
 // that limit. Each Client.send call makes exactly one request and
 // expects exactly one response line before the connection is closed, so
 // (unlike a long-lived server loop) there is no "next request" to
@@ -303,7 +303,7 @@ func (c *Client) Get(token, path string) ([]byte, error) {
 //
 // Go's encoding/json encodes []byte as a base64 string by default, but
 // the wire protocol (serde's default Vec<u8> encoding) expects a plain
-// JSON array of numbers — so value is explicitly converted to []int
+// JSON array of numbers - so value is explicitly converted to []int
 // before marshaling, matching cofferak-sdk's Rust/Python/TypeScript
 // counterparts.
 func (c *Client) Set(token, path string, value []byte) error {

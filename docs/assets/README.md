@@ -1,7 +1,7 @@
 # cofferak brand assets
 
 Every file here is generated from vector sources, so use the SVGs
-wherever possible; the PNGs are pre-rendered at fixed sizes for places
+wherever possible, the PNGs are pre-rendered at fixed sizes for places
 that need a bitmap.
 
 ## Files
@@ -14,7 +14,7 @@ that need a bitmap.
 | `cofferak-mark-dark.svg` | Mark only, for dark backgrounds |
 | `cofferak-icon.svg` | App icon: mark on a cream rounded square |
 | `cofferak-social.svg` | Social preview card (1280×640) |
-| `favicon.ico` | Favicon, 16–256 px in one file |
+| `favicon.ico` | Favicon, 16-256 px in one file |
 | `apple-touch-icon.png` | 180×180 home-screen icon |
 | `png/cofferak-logo-{512,1024,2048,4096}.png` | Logo, transparent |
 | `png/cofferak-logo-dark-{512,1024,2048,4096}.png` | Dark-background logo, transparent |

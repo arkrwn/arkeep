@@ -12,7 +12,7 @@ Status: accepted, amended by ADR 0009
 ## Context
 
 Linux (`systemd-creds`, TPM-bound when present) and macOS (Keychain, a
-generic-password item; not Secure Enclave-backed) have no common native
+generic-password item, not Secure Enclave-backed) have no common native
 sealing primitive.
 
 ## Decision

@@ -1,11 +1,11 @@
 # Trademark Policy
 
 Unregistered trademark: name and logo of each project owned by
-**Arie Kurniawan (arkrwn)** — contact: <hubungi.aja@gmail.com>
+**Arie Kurniawan (arkrwn)** - contact: <hubungi.aja@gmail.com>
 
 The name and logo of these projects (the "Marks") identify the original
 software published by the Copyright Holder. The software license
-(Apache License 2.0) governs the **code**; it deliberately does **not**
+(Apache License 2.0) governs the **code**, it deliberately does **not**
 grant trademark rights (see Section 6 of Apache-2.0). The Marks are
 protected by trademark law independently of the license.
 
@@ -39,14 +39,14 @@ You may **not**:
 Forking the **code** is fine under Apache-2.0. A fork **must rename** its
 distribution if it wishes to remove or alter attribution in NOTICE, and must
 under no circumstances present itself as the original project. For example:
-`<name>` is the original; a fork named `super-<name>` that claims to be
+`<name>` is the original, a fork named `super-<name>` that claims to be
 `<name>` violates this policy even though the code license permits the fork.
 
 ## Removal
 
 Do not strip the project name, the Copyright Holder's name, or NOTICE
 content from distributions or derived works. Attribution travels with the
-code — that is the whole deal of a permissive license.
+code - that is the whole deal of a permissive license.
 
 ## Contact
 

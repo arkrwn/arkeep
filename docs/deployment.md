@@ -15,7 +15,7 @@ location to match your machine before installing them.
 ## Environment variables
 
 `cofferakd` reads these at startup. `COFFERAK_DATA_DIR` and `COFFERAK_SOCKET`
-are optional; if unset, the daemon falls back to the per-OS default
+are optional, if unset, the daemon falls back to the per-OS default
 shown below. `COFFERAK_HOST_ID` is optional only when the vault has
 exactly one enrolled host.
 
@@ -23,8 +23,8 @@ exactly one enrolled host.
 |----------|---------|---------------|---------------|
 | `COFFERAK_DATA_DIR` | Directory holding `vault.cofferak`, `hosts/<id>.seal` and `audit.jsonl` | `/var/lib/cofferak` | `~/Library/Application Support/cofferak` |
 | `COFFERAK_SOCKET` | Path of the Unix socket the daemon listens on | `/run/cofferak/cofferakd.sock` | `~/Library/Application Support/cofferak/cofferakd.sock` |
-| `COFFERAK_HOST_ID` | Which enrolled host this process runs as | — (required if more than one host is enrolled) | — (same) |
-| `COFFERAK_TLS_ADDR`, `COFFERAK_TLS_CERT`, `COFFERAK_TLS_KEY`, `COFFERAK_TLS_CLIENT_CA` | Server mode (ADR 0008/0011); off unless `COFFERAK_TLS_ADDR` is set, and then all four are required (mutual TLS is mandatory) | — | — |
+| `COFFERAK_HOST_ID` | Which enrolled host this process runs as | - (required if more than one host is enrolled) | - (same) |
+| `COFFERAK_TLS_ADDR`, `COFFERAK_TLS_CERT`, `COFFERAK_TLS_KEY`, `COFFERAK_TLS_CLIENT_CA` | Server mode (ADR 0008/0011), off unless `COFFERAK_TLS_ADDR` is set, and then all four are required (mutual TLS is mandatory) | - | - |
 | `COFFERAK_TLS_MAX_CONNECTIONS` | Cap on concurrent TLS connections, extra connections are closed | `256` | `256` |
 | `COFFERAK_TLS_CRL` | PEM certificate revocation lists (comma separated). Revoked client certificates fail the handshake | none | none |
 | `COFFERAK_TLS_BIND_SERVICE` | `1`: a token is accepted only with a client certificate whose CN or DNS SAN is that token's service id. `0` turns this off | `1` | `1` |
@@ -34,14 +34,14 @@ The templates set `COFFERAK_DATA_DIR`/`COFFERAK_SOCKET` explicitly, using the
 same socket filename (`cofferakd.sock`) as the built-in fallback. When you
 change the socket path, change the matching client configuration too. The
 Linux unit always sets `COFFERAK_HOST_ID` (its credential name depends on
-it); on macOS add it to the plist if the vault has more than one host.
+it), on macOS add it to the plist if the vault has more than one host.
 
 The daemon will refuse to start if `vault.cofferak` is missing or corrupt, if
 this host's key cannot be obtained (see below) or does not unwrap the
 vault's DEK, if `COFFERAK_HOST_ID` is not a valid id, or if this host's id
 isn't actually enrolled in `vault.cofferak`. It never creates an empty vault.
 
-## Writes are durable; admin changes apply live
+## Writes are durable, admin changes apply live
 
 Every `set`/`rm` the daemon acknowledges is already on disk: it is
 written through to `vault.cofferak` atomically (temp file, fsync, rename,
@@ -60,7 +60,7 @@ is a change of the vault's key:
 
 | Command | Why a restart is needed |
 |---------|-------------------------|
-| `rotate-dek` | the daemon's in-memory DEK is stale; it keeps serving reads and **refuses writes** (clients get an error) until restarted, rather than writing entries under the old key |
+| `rotate-dek` | the daemon's in-memory DEK is stale, it keeps serving reads and **refuses writes** (clients get an error) until restarted, rather than writing entries under the old key |
 | `enroll-host`, `recover` | only if they re-enrolled *this* host, same as `rotate-dek` |
 
 ```sh
@@ -79,7 +79,7 @@ The unit template:
   and `StateDirectory=cofferak cofferak-anchor` (mode `0700`) for the data
   and the mirrored rollback anchors;
 - disables core dumps and applies systemd sandboxing (`ProtectSystem=strict`,
-  `NoNewPrivileges`, a system-call filter, and more — see the file).
+  `NoNewPrivileges`, a system-call filter, and more - see the file).
 
 ### How the daemon gets its host key (ADR 0009)
 
@@ -87,7 +87,7 @@ The unit template:
 `systemd-creds encrypt --name=cofferak-<id> - -` into
 `$COFFERAK_DATA_DIR/hosts/<id>.seal`. systemd-creds' host scope encrypts
 against `/var/lib/systemd/credential.secret` (and the TPM2 if present),
-which only root can use — so **admin commands that seal or unseal a host
+which only root can use - so **admin commands that seal or unseal a host
 key must run as root** (`sudo cofferak ...`). They hand any file they create
 back to the data directory's owner afterwards, so the daemon can still
 read and write the vault.
@@ -100,7 +100,7 @@ LoadCredentialEncrypted=cofferak-<id>:/var/lib/cofferak/hosts/<id>.seal
 ```
 
 has systemd decrypt the blob as root at service start and place the
-plaintext key in `$CREDENTIALS_DIRECTORY/cofferak-<id>` — a private,
+plaintext key in `$CREDENTIALS_DIRECTORY/cofferak-<id>` - a private,
 non-swappable mount visible only to this unit. `cofferakd` reads it, unwraps
 the DEK, and zeroizes the key. The credential name must be exactly
 `cofferak-<id>`: it is bound into the sealed blob, and systemd rejects a
@@ -161,9 +161,9 @@ Always provision hosts through `cofferak init --host` / `cofferak enroll-host`
 rather than running `systemd-creds encrypt` by hand: the CLI also adds the
 matching `vault.hosts` entry, and the daemon refuses to start without it.
 
-This exact layout — root admin commands, a non-root daemon under a real
+This exact layout - root admin commands, a non-root daemon under a real
 systemd service receiving its key via `LoadCredentialEncrypted=`, and a
-write surviving a daemon restart — is what `scripts/sdk-smoke.sh` runs on
+write surviving a daemon restart - is what `scripts/sdk-smoke.sh` runs on
 every CI build (Linux).
 
 ## macOS (launchd)
@@ -179,7 +179,7 @@ creates it from the `cofferak` binary, so the daemon must be that same
 binary to read the key without an authorization prompt. `cofferak daemon`
 runs exactly the same code as `cofferakd` ([ADR 0007](adr/0007-macos-keychain-cross-process-limitation.md)).
 After you install a **new build** of `cofferak`, macOS may ask once
-whether it may use the `cofferak` Keychain item; choose **Always Allow**.
+whether it may use the `cofferak` Keychain item, choose **Always Allow**.
 
 The template sets `RunAtLoad` so the daemon starts at login, `KeepAlive`
 so launchd restarts it if it exits, and logs errors to
@@ -236,7 +236,7 @@ launchctl bootout gui/$(id -u)/com.cofferak.cofferakd
 ```
 
 **Socket path length:** Unix socket paths are limited to about 104
-characters on macOS (108 on Linux). Keep `COFFERAK_SOCKET` short; the
+characters on macOS (108 on Linux). Keep `COFFERAK_SOCKET` short, the
 default above is fine for normal account names.
 
 ## Socket permissions

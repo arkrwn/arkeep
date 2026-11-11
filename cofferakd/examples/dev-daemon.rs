@@ -1,12 +1,12 @@
-//! **Dev/test-only daemon — not for production use.**
+//! **Dev/test-only daemon - not for production use.**
 //!
 //! Serves a real `Daemon` over a real Unix socket, with an in-memory
-//! vault and a single pre-provisioned token — no disk persistence, no
+//! vault and a single pre-provisioned token - no disk persistence, no
 //! `HostSeal`/Keychain/`systemd-creds` involved at all. Exists purely so
 //! `scripts/sdk-smoke.sh` can prove each language SDK's *wire-protocol
 //! client code* is correct against a real running daemon, independent
 //! of the real binary's platform-specific key-sealing step (which has
-//! its own, separately-tested, separately-proven path — see
+//! its own, separately-tested, separately-proven path - see
 //! `cofferak-core/tests/seal_{linux,macos}.rs` and `docs/PROGRESS.md`'s
 //! "Known gaps" entry on cross-process Keychain access).
 //!
@@ -17,7 +17,7 @@
 //!
 //! Also starts the server-mode TLS/TCP listener (ADR 0008) if
 //! `COFFERAK_TLS_ADDR` (+ `COFFERAK_TLS_CERT`/`COFFERAK_TLS_KEY`, optionally
-//! `COFFERAK_TLS_CLIENT_CA`) is set — the same opt-in env vars `main.rs`
+//! `COFFERAK_TLS_CLIENT_CA`) is set - the same opt-in env vars `main.rs`
 //! reads, serving the same `daemon` over both transports at once.
 
 use std::collections::BTreeMap;
@@ -56,7 +56,7 @@ fn main() {
         });
     }
 
-    let dek = [0x42u8; 32]; // fixed, arbitrary — no sealing/persistence in this harness
+    let dek = [0x42u8; 32]; // fixed, arbitrary - no sealing/persistence in this harness
     let (root_pubkey, _root_privkey) =
         cofferak_core::crypto::generate_root_keypair().expect("generate root keypair");
     let vault = VaultFile::new(root_pubkey);
@@ -123,7 +123,7 @@ fn handle_connection(stream: UnixStream, daemon: Arc<Mutex<Daemon>>) {
     let mut line = Vec::new();
 
     loop {
-        // Bounded, matching the real main.rs/tls_server.rs — see
+        // Bounded, matching the real main.rs/tls_server.rs - see
         // protocol::read_line_bounded's doc comment.
         match cofferakd::protocol::read_line_bounded(&mut reader, &mut line) {
             Ok(0) => break,

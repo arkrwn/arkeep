@@ -2,7 +2,7 @@
 
 cofferak is a standalone, dependency-free secrets vault for any service on
 Linux or macOS. No external vault/KMS dependency (no HashiCorp Vault, no
-cloud KMS) — it is self-contained and meant to be dropped into another
+cloud KMS) - it is self-contained and meant to be dropped into another
 project with `git clone` into a `cofferak/` subdirectory, or run standalone.
 
 The contracts are `cofferak-core/src/{crypto,format,acl,seal}.rs`,
@@ -32,21 +32,21 @@ anchor with an older matching pair is only caught by a running daemon.
 
 Not secret by design: secret *paths* (e.g. `myapp/DB_PASSWORD`), service
 and host ids, value sizes and timestamps. They are the vault's index and
-appear in `vault.cofferak`, `meta.json` and the audit log; only values
+appear in `vault.cofferak`, `meta.json` and the audit log, only values
 (and service tokens) are encrypted. Don't put secrets in path names.
 
-## 2. Key hierarchy (envelope encryption — ADR 0001, crypto v2 ADR 0011)
+## 2. Key hierarchy (envelope encryption - ADR 0001, crypto v2 ADR 0011)
 
 - **Root keypair** (X25519 + ML-KEM-1024): generated once (`cofferak init
-  --root`); the private half is printed once as an armored block and kept
+  --root`), the private half is printed once as an armored block and kept
   offline by the operator, never retained on any host.
 - **Per-host unseal key**: sealed via the platform `HostSeal` backend (ADR
-  0002) — `systemd-creds` (Linux) or Keychain (macOS).
+  0002) - `systemd-creds` (Linux) or Keychain (macOS).
 - **DEK** (256-bit): encrypts the vault's entries and service tokens with
-  AES-256-GCM-SIV; each ciphertext's associated data binds it to its
+  AES-256-GCM-SIV, each ciphertext's associated data binds it to its
   context (`cofferak/v2/entry\0<path>`, `.../service-token\0<id>`). Stored
   wrapped per host (AES-256-GCM-SIV under the host key, bound to the host
-  id; daily auto-unlock) and once for the root key (`VaultFile.root_wrap`,
+  id, daily auto-unlock) and once for the root key (`VaultFile.root_wrap`,
   recovery only) with a hybrid KEM: ephemeral X25519 + ML-KEM-1024
   encapsulation, wrapping key = HKDF-SHA-384 over both shared secrets and
   the transcript.
@@ -55,18 +55,18 @@ appear in `vault.cofferak`, `meta.json` and the audit log; only values
 
 ## 3. On-disk format
 
-`vault.cofferak` (binary, `bincode`, format version 2; other versions are
+`vault.cofferak` (binary, `bincode`, format version 2, other versions are
 rejected with `UnsupportedVersion`): header, `root_pubkey: {x25519,
 mlkem1024}`, `hosts: BTreeMap<host_id,
 DekWrapHost>`, `services: BTreeMap<service_id, EncryptedEntry>`,
 `entries: BTreeMap<path, VaultEntry>`, `root_wrap: Option<DekWrapRoot>`.
 `meta.json` (non-secret, informational): version, root pubkey fingerprint,
-host/service IDs — safe to read without unsealing.
+host/service IDs - safe to read without unsealing.
 
 Both are written atomically (unique `0600` temp file → fsync → rename →
 fsync directory), so a crash leaves the old or the new file, never a torn
-one. Every writer — the daemon persisting a `set`/`rm`, and every CLI
-admin command — holds an exclusive advisory lock on `vault.cofferak.lock`
+one. Every writer - the daemon persisting a `set`/`rm`, and every CLI
+admin command - holds an exclusive advisory lock on `vault.cofferak.lock`
 while it reads-modifies-writes. Loading rejects files over 256 MiB and
 decodes with a size limit. Host and service ids are restricted to
 `[A-Za-z0-9._-]{1,64}`, not starting with `.`/`-`, since they become file
@@ -88,11 +88,11 @@ cofferak-cli/    # `cofferak` binary: init, enroll-host, enroll-service, set,
 
 Boot → OS delivers the host's unseal key (on Linux: systemd decrypts it
 as root via `LoadCredentialEncrypted=` into `$CREDENTIALS_DIRECTORY`, so
-the unprivileged daemon never needs systemd-creds itself — ADR 0009) →
+the unprivileged daemon never needs systemd-creds itself - ADR 0009) →
 `cofferakd` unwraps the DEK → decrypts the entry table into memory → serves requests over a
 local Unix socket, and over TLS/TCP if server mode (§6a) is on,
 enforcing each token's path-prefix ACL, until shutdown (DEK zeroized).
-Every acknowledged `set`/`rm` is already durable in `vault.cofferak`; a write
+Every acknowledged `set`/`rm` is already durable in `vault.cofferak`, a write
 that cannot be persisted is answered with `Err` and not applied. If the
 vault on disk was re-keyed since startup (`rotate-dek`), writes are
 refused until restart (ADR 0010).
@@ -106,14 +106,14 @@ host, if there's only one). It reads that host's key from
 `hosts/<id>.seal` itself, unwraps the DEK from `vault.hosts[id]`, and decrypts
 every `vault.services` entry into an `AccessToken` keyed by the hex of
 its own `secret` (matching the wire `token` string clients send) before
-serving any request (see ADR 0006 — this token-loading step was
+serving any request (see ADR 0006 - this token-loading step was
 missing for a while and is now fixed and real).
 
 ## 6. Wire protocol
 
 Newline-delimited JSON over the Unix socket at `$COFFERAK_SOCKET`
 (`cofferakd/src/protocol.rs`'s `Request`/`Response`, serde's default
-externally-tagged enum encoding — every SDK in §8 implements this
+externally-tagged enum encoding - every SDK in §8 implements this
 exactly):
 
 ```
@@ -127,9 +127,9 @@ Response → {"Value":[1,2,3]} | {"Listed":["a/b","a/c"]}
 ```
 
 `value`/`Value` are plain JSON arrays of byte values (`Vec<u8>`'s
-default `serde_json` encoding) — **not** base64. This has bitten one SDK
-already (Go's `encoding/json` base64-encodes `[]byte` by default; see
-`sdk/go/cofferak/cofferak.go`'s explicit `[]int` conversion) — any future
+default `serde_json` encoding) - **not** base64. This has bitten one SDK
+already (Go's `encoding/json` base64-encodes `[]byte` by default, see
+`sdk/go/cofferak/cofferak.go`'s explicit `[]int` conversion) - any future
 SDK must convert explicitly too, not rely on its language's default
 byte-array JSON encoding.
 
@@ -138,12 +138,12 @@ byte-array JSON encoding.
 Opt-in: `$COFFERAK_TLS_ADDR` plus `$COFFERAK_TLS_CERT`/`$COFFERAK_TLS_KEY`
 and the **required** `$COFFERAK_TLS_CLIENT_CA` starts a second listener,
 TLS-wrapped TCP, serving the *exact same* §6 wire protocol and the *exact
-same* `Daemon::handle_request` as the Unix socket — not a separate API.
+same* `Daemon::handle_request` as the Unix socket - not a separate API.
 Mutual TLS is mandatory: without a client CA the daemon refuses to start
 server mode. TLS is `rustls` on AWS-LC, locked to TLS 1.3,
 `TLS_AES_256_GCM_SHA384`, and key exchange ML-KEM-1024 > X25519MLKEM768 >
 P-384 (ADR 0011). The per-service access token (§2) is still checked on
-every request; the client certificate is an additional transport-level
+every request, the client certificate is an additional transport-level
 check, never a substitute for the token. Proven by
 `scripts/server-mode-smoke.sh`, including every reject path and the
 negotiated parameters.
@@ -155,15 +155,15 @@ negotiated parameters.
 argument, `get -o` writes exact bytes to a `0600` file), `rotate-dek`
 (direct file, atomic write-temp-then-rename), `recover --root-key`
 (disaster recovery, zero-side-effect on failure), `audit tail`, and
-`daemon` (runs the daemon in the foreground; the same code as `cofferakd`,
+`daemon` (runs the daemon in the foreground, the same code as `cofferakd`,
 used on macOS so the Keychain serves the host key to the binary that sealed
 it, ADR 0007). Values are limited to 1 MiB, enforced by the daemon. The service token
 comes from `$COFFERAK_TOKEN` or `--token-file FILE`, never from the command
-line, where `ps` would show it (ADR 0017). Admin commands run under the vault lock; on Linux the ones
+line, where `ps` would show it (ADR 0017). Admin commands run under the vault lock, on Linux the ones
 that touch a host key need root, and they hand created files back to the
 data directory's owner. The daemon reloads secrets and tokens when
 `vault.cofferak` changes on disk (ADR 0012), so `enroll-service` and
-`import` apply live; restart it after `rotate-dek` or re-enrolling its own
+`import` apply live, restart it after `rotate-dek` or re-enrolling its own
 host (its DEK is loaded at startup). Moving data: `import-env` /
 `export-env` (`.env` files, via the daemon with a token), `run` (exec a
 command with secrets as environment variables; `COFFERAK_TOKEN` removed
@@ -171,9 +171,9 @@ from its environment), and `export` / `import` (admin): passphrase
 bundles (PBKDF2-HMAC-SHA384 + AES-256-GCM-SIV), or with `export --to PEER`
 transfers encrypted to a paired coffer's identity (X25519 + ML-KEM-1024)
 and signed (ECDSA P-384 + ML-DSA-87), accepted only from trusted peers
-(`identity`, `peer add|list|rm`; ADR 0013). `vault.cofferak` format 3
-stores the coffer identity and peers, encrypted under the DEK; format 2 is
-read and upgraded. See `cofferak-cli/src/main.rs` for exact flags — this spec
+(`identity`, `peer add|list|rm`, ADR 0013). `vault.cofferak` format 3
+stores the coffer identity and peers, encrypted under the DEK, format 2 is
+read and upgraded. See `cofferak-cli/src/main.rs` for exact flags - this spec
 does not restate flag syntax.
 
 ## 8. SDKs
@@ -184,14 +184,14 @@ and TypeScript/JavaScript (`sdk/<lang>/...`), each with a smoke test
 `scripts/sdk-smoke.sh`, wired into CI as the `sdk-smoke` job. See ADR
 0005 and `docs/sample-integration/` for usage. All four also support
 the §6a TLS/mTLS transport, each via its own language's TLS standard
-library (no third-party TLS dependency anywhere) — proven, including
+library (no third-party TLS dependency anywhere) - proven, including
 the adversarial reject cases, by `scripts/server-mode-smoke.sh`. See
 ADR 0008. Planned: C, C++, Perl, Ruby
 (`docs/sample-integration/roadmap.md`).
 
 ## 9. What's deliberately out of scope
 
-No multi-operator/quorum (no Shamir shares) — single creator, single root
+No multi-operator/quorum (no Shamir shares) - single creator, single root
 trust. No general config templating. No clustering/load-balancing across
-multiple `cofferakd` instances — one process serves exactly one host
+multiple `cofferakd` instances - one process serves exactly one host
 (`$COFFERAK_HOST_ID`), whether over the Unix socket, TLS, or both.

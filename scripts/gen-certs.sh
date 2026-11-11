@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Generate everything server mode needs, with ECDSA P-384 / SHA-384 keys
 # (CNSA): a private CA, a server certificate, and one client certificate
-# per name you pass. Good for a lab, a homelab or a small deployment; use
+# per name you pass. Good for a lab, a homelab or a small deployment, use
 # your organisation's PKI if you have one.
 #
 # Usage: scripts/gen-certs.sh <out-dir> <server-dns-name> [client-name...]
@@ -39,7 +39,7 @@ if [[ -e "$OUT/ca.key" ]]; then
     exit 1
   fi
   if [[ -L "$OUT/ca.key" || "$(stat -c %u "$OUT/ca.key" 2>/dev/null || stat -f %u "$OUT/ca.key")" != "$(id -u)" ]]; then
-    echo "$OUT/ca.key is a symlink or not owned by you; refusing to use it" >&2
+    echo "$OUT/ca.key is a symlink or not owned by you, refusing to use it" >&2
     exit 1
   fi
   echo "reusing the CA in $OUT (REUSE_CA=1)"

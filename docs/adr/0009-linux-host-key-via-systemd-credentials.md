@@ -12,15 +12,15 @@ test failed with `host seal backend rejected input`. Capturing
 
 1. The backend invoked `systemd-creds encrypt|decrypt --name=<n>` without
    the mandatory input/output positional arguments (`- -`), so it exited
-   with "Too few arguments." — the Linux backend had never actually
-   worked. Fixed; the CI root run of `seal_linux` now proves the real
+   with "Too few arguments." - the Linux backend had never actually
+   worked. Fixed, the CI root run of `seal_linux` now proves the real
    round trip.
 2. systemd-creds' default **host scope** encrypts against
    `/var/lib/systemd/credential.secret` (and the TPM2 when present),
    which is readable only by root. The alternative user scope (`--uid=`)
-   exists only in systemd ≥ 256; Ubuntu 24.04 ships 255. So an
-   unprivileged `cofferakd` — which is how the unit always ran it
-   (`User=cofferak`) — could never unseal its own key.
+   exists only in systemd ≥ 256, Ubuntu 24.04 ships 255. So an
+   unprivileged `cofferakd` - which is how the unit always ran it
+   (`User=cofferak`) - could never unseal its own key.
 
 Every earlier "works on Linux" claim had only been checked by
 cross-compiling or in skip paths. The rest of this ADR addresses (2).
@@ -63,7 +63,7 @@ cross-compiling or in skip paths. The rest of this ADR addresses (2).
 
 CI re-runs the real `seal_linux` round trip as
 root (and fails if it skips), and `scripts/sdk-smoke.sh` full mode runs
-the whole production layout on every Linux build — root admin commands,
+the whole production layout on every Linux build - root admin commands,
 a check that no vault file is left root-owned, and the real `cofferakd`
 running as the non-root runner user inside a transient systemd service
 with `LoadCredentialEncrypted=`, serving all four SDKs.
@@ -73,4 +73,4 @@ with `LoadCredentialEncrypted=`, serving all four SDKs.
 Linux operators need root for admin commands (they
 already needed it to install the unit). Normal secret reads/writes
 through the daemon need no privileges. A host with TPM2 gets TPM-bound
-sealing automatically from systemd-creds; nothing in cofferak changes.
+sealing automatically from systemd-creds, nothing in cofferak changes.

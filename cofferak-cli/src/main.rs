@@ -3,7 +3,7 @@ mod commands;
 mod presence;
 
 // The wire protocol `client` speaks, from `cofferakd`'s library target
-// (ADR 0004) — one shared definition, not a second copy.
+// (ADR 0004) - one shared definition, not a second copy.
 use cofferakd::protocol;
 
 use std::path::{Path, PathBuf};
@@ -30,8 +30,8 @@ fn require_valid_id(kind: &str, id: &str) {
 }
 
 /// Run a vault admin command (anything that reads-modifies-writes
-/// `vault.cofferak`) under the vault's exclusive lock — the same lock the
-/// daemon takes before persisting a `set`/`rm` (ADR 0010) — so the two can
+/// `vault.cofferak`) under the vault's exclusive lock - the same lock the
+/// daemon takes before persisting a `set`/`rm` (ADR 0010) - so the two can
 /// never interleave and drop each other's changes. Afterwards, hand any
 /// files the command created back to the data directory's owner (see
 /// [`match_data_dir_owner`]).
@@ -81,7 +81,7 @@ fn match_data_dir_owner(data_dir: &Path) {
     }
     let open_dir = |dirfd: libc::c_int, name: &[u8]| -> Option<libc::c_int> {
         let c = CString::new(name).ok()?;
-        // SAFETY: c is a valid NUL-terminated path; flags refuse symlinks.
+        // SAFETY: c is a valid NUL-terminated path, flags refuse symlinks.
         let fd = unsafe {
             libc::openat(
                 dirfd,
@@ -103,7 +103,7 @@ fn match_data_dir_owner(data_dir: &Path) {
     let (uid, gid) = (st.st_uid, st.st_gid);
     let chown_at = |dirfd: libc::c_int, name: &str| {
         if let Ok(c) = CString::new(name) {
-            // SAFETY: valid C string; AT_SYMLINK_NOFOLLOW never follows a link.
+            // SAFETY: valid C string, AT_SYMLINK_NOFOLLOW never follows a link.
             unsafe { libc::fchownat(dirfd, c.as_ptr(), uid, gid, libc::AT_SYMLINK_NOFOLLOW) };
         }
     };
@@ -165,7 +165,7 @@ enum Command {
     /// Disaster recovery: enroll a new host using the offline root
     /// private key, bypassing every enrolled host's own sealed blob.
     Recover(RecoverArgs),
-    /// Inspect the daemon's audit log (local, offline — not a request over
+    /// Inspect the daemon's audit log (local, offline - not a request over
     /// the socket).
     Audit(AuditArgs),
     /// Run the daemon in the foreground (same code as `cofferakd`).
@@ -328,7 +328,7 @@ struct RmArgs {
 struct ListArgs {
     /// Path prefix to list. Defaults to the empty string (which the
     /// daemon's ACL check rejects for every token, since a token's
-    /// granted prefixes are always non-empty) — pass an explicit prefix
+    /// granted prefixes are always non-empty) - pass an explicit prefix
     /// under your token's grant.
     #[arg(default_value = "")]
     prefix: String,
@@ -430,7 +430,7 @@ struct ExportArgs {
     #[arg(long)]
     force: bool,
     /// Read the passphrase from this file (first line) instead of
-    /// prompting. For automation; keep the file private.
+    /// prompting. For automation, keep the file private.
     #[arg(long, value_name = "FILE")]
     passphrase_file: Option<PathBuf>,
     /// Vault data directory. Defaults to `$COFFERAK_DATA_DIR` / the platform data dir.
@@ -456,7 +456,7 @@ struct ImportArgs {
     #[arg(long, value_name = "IDENTITY_FILE")]
     from: Option<PathBuf>,
     /// Also import the service tokens the bundle carries (each grants
-    /// access to this vault; review them with --dry-run first). Without
+    /// access to this vault, review them with --dry-run first). Without
     /// this flag only secrets are imported.
     #[arg(long)]
     with_tokens: bool,
@@ -685,7 +685,7 @@ fn read_set_value(args: &SetArgs) -> Result<zeroize::Zeroizing<Vec<u8>>, String>
         let meta = std::fs::metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
         if meta.len() > MAX_SECRET_BYTES as u64 {
             return Err(format!(
-                "{} is {} bytes; the maximum secret size is {MAX_SECRET_BYTES} bytes",
+                "{} is {} bytes, the maximum secret size is {MAX_SECRET_BYTES} bytes",
                 path.display(),
                 meta.len()
             ));
@@ -704,7 +704,7 @@ fn read_set_value(args: &SetArgs) -> Result<zeroize::Zeroizing<Vec<u8>>, String>
 
 /// Write a `get` result: to `output` (exact bytes, mode 0600) if given,
 /// otherwise to stdout. On a terminal a trailing newline is added for
-/// readability; when piped or redirected, the exact stored bytes are
+/// readability, when piped or redirected, the exact stored bytes are
 /// written (so `cofferak get k | ssh-add -` gets the key byte for byte).
 fn write_get_value(value: &[u8], output: Option<&Path>) -> std::io::Result<()> {
     use std::io::{IsTerminal, Write};
@@ -763,7 +763,7 @@ fn main() {
             match (args.root, args.host) {
                 (true, None) => match with_admin_lock(&data_dir, || run_init_root(&data_dir)) {
                     Ok(fingerprint) => {
-                        println!("vault initialized; root public key fingerprint: {fingerprint}");
+                        println!("vault initialized, root public key fingerprint: {fingerprint}");
                     }
                     Err(e) => {
                         eprintln!("cofferak: init --root failed: {e}");
@@ -859,7 +859,7 @@ fn main() {
                     let hex_secret: String =
                         token.secret.iter().map(|b| format!("{b:02x}")).collect();
                     println!(
-                        "=== COFFERAK SERVICE ACCESS TOKEN for '{}' — copy this to the service now, it will not be shown again ===",
+                        "=== COFFERAK SERVICE ACCESS TOKEN for '{}' - copy this to the service now, it will not be shown again ===",
                         token.service_id
                     );
                     println!("{hex_secret}");
@@ -1044,7 +1044,7 @@ fn cmd_import_env(args: ImportEnvArgs) {
         println!("  ~ {prefix}/{k} (replaced)");
     }
     for k in &r.skipped {
-        println!("  = {prefix}/{k} (exists, kept; use --overwrite to replace)");
+        println!("  = {prefix}/{k} (exists, kept, use --overwrite to replace)");
     }
     println!(
         "{verb} {} new, {} replaced, {} kept",
@@ -1084,7 +1084,7 @@ fn cmd_export_env(args: ExportEnvArgs) {
     write_private(&args.out, text.as_bytes(), args.force).unwrap_or_else(|e| fail("export-env", e));
     let n = text.lines().count();
     println!(
-        "wrote {n} variables to {} (mode 0600; it contains plaintext secrets)",
+        "wrote {n} variables to {} (mode 0600, it contains plaintext secrets)",
         args.out.display()
     );
 }
@@ -1160,11 +1160,11 @@ fn prompt_hidden(prompt: &str) -> zeroize::Zeroizing<String> {
         .unwrap_or_else(|e| {
             fail(
                 "passphrase",
-                format!("no terminal to prompt on ({e}); use --passphrase-file"),
+                format!("no terminal to prompt on ({e}), use --passphrase-file"),
             )
         });
     let fd = tty.as_raw_fd();
-    // SAFETY: plain termios calls on a file descriptor we own; the original
+    // SAFETY: plain termios calls on a file descriptor we own, the original
     // settings are restored before returning.
     let mut term: libc::termios = unsafe { std::mem::zeroed() };
     let have_term = unsafe { libc::tcgetattr(fd, &mut term) } == 0;
@@ -1191,7 +1191,7 @@ fn prompt_hidden(prompt: &str) -> zeroize::Zeroizing<String> {
 
 /// Run `f` with each enrolled host of the vault whose sealed key file is on
 /// this machine (preferring `$COFFERAK_HOST_ID`), returning the first
-/// success; used by `export` and `import` to unlock the vault.
+/// success, used by `export` and `import` to unlock the vault.
 fn with_local_host<T>(
     data_dir: &Path,
     mut f: impl FnMut(&str, &dyn HostSeal) -> Result<T, commands::init::CliError>,
@@ -1285,7 +1285,7 @@ fn cmd_export(args: ExportArgs) {
     give_to_sudo_user(&args.out);
     match &args.to {
         Some(peer) => println!(
-            "exported {} secrets and {} service tokens to {} for peer '{peer}' (only that coffer can open it; signed by this one)",
+            "exported {} secrets and {} service tokens to {} for peer '{peer}' (only that coffer can open it, signed by this one)",
             report.entries,
             report.services,
             args.out.display()
@@ -1297,7 +1297,7 @@ fn cmd_export(args: ExportArgs) {
                 report.services,
                 args.out.display()
             );
-            println!("keep the passphrase separately from the file; `cofferak import` needs both");
+            println!("keep the passphrase separately from the file, `cofferak import` needs both");
         }
     }
 }
@@ -1353,7 +1353,7 @@ fn cmd_import(args: ImportArgs) {
         ),
     };
     println!(
-        "{verb} from {source}: secrets {} new, {} replaced, {} kept; service tokens {} new, {} replaced, {} kept",
+        "{verb} from {source}: secrets {} new, {} replaced, {} kept, service tokens {} new, {} replaced, {} kept",
         r.entries_added,
         r.entries_replaced,
         r.entries_skipped.len(),
@@ -1362,7 +1362,7 @@ fn cmd_import(args: ImportArgs) {
         r.services_skipped.len()
     );
     for p in r.entries_skipped.iter().take(20) {
-        println!("  = {p} (exists, kept; use --overwrite to replace)");
+        println!("  = {p} (exists, kept, use --overwrite to replace)");
     }
     for s in &r.services_skipped {
         println!("  = service {s} (exists, kept)");
@@ -1377,12 +1377,12 @@ fn cmd_import(args: ImportArgs) {
     }
     if r.tokens_withheld {
         println!(
-            "{} service token(s) in the bundle were NOT imported: each would grant access to this vault; re-run with --with-tokens to import them",
+            "{} service token(s) in the bundle were NOT imported: each would grant access to this vault, re-run with --with-tokens to import them",
             r.tokens_offered.len()
         );
     }
     if !args.dry_run {
-        println!("re-encrypted under this coffer's own key; a running daemon picks the changes up automatically");
+        println!("re-encrypted under this coffer's own key, a running daemon picks the changes up automatically");
     }
 }
 
@@ -1409,7 +1409,7 @@ fn cmd_identity(args: IdentityArgs) {
     })
     .unwrap_or_else(|e| fail("identity", e));
     let text = format!(
-        "# cofferak identity — fingerprint {}\n{}\n",
+        "# cofferak identity - fingerprint {}\n{}\n",
         id.short_fingerprint(),
         id.to_text()
     );

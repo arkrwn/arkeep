@@ -17,7 +17,7 @@
 //!   who stores the vault today and has a quantum computer tomorrow.
 //!
 //! Algorithm choices match the NSA CNSA 2.0 suite where it specifies one
-//! (AES-256, ML-KEM-1024, SHA-384); X25519 is an additional classical layer.
+//! (AES-256, ML-KEM-1024, SHA-384), X25519 is an additional classical layer.
 
 use std::fmt;
 use std::ops::Deref;
@@ -164,7 +164,7 @@ pub struct RootPublicKey {
 }
 
 impl RootPublicKey {
-    /// Lowercase hex SHA-256 over both public keys — what `init --root`
+    /// Lowercase hex SHA-256 over both public keys - what `init --root`
     /// prints and `meta.json` records.
     pub fn fingerprint(&self) -> String {
         let mut h = Sha256::new();
@@ -258,7 +258,7 @@ impl RootPrivateKey {
 /// AES-256-GCM-SIV (RFC 8452) through AWS-LC, which uses the CPU's AES
 /// and carry-less-multiply instructions (AES-NI/PCLMUL on x86-64, the
 /// ARMv8 crypto extensions on arm64). Output is the standard RFC 8452
-/// ciphertext || tag; a test cross-checks it against an independent
+/// ciphertext || tag, a test cross-checks it against an independent
 /// implementation.
 fn aead_key(key: &[u8; 32]) -> LessSafeKey {
     LessSafeKey::new(

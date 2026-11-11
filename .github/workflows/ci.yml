@@ -20,7 +20,7 @@ jobs:
 
       # Explicit version, not @stable: rust-toolchain.toml pins this
       # workspace to an exact toolchain, and cargo silently re-resolves
-      # to that pin for every command regardless of what's "active" —
+      # to that pin for every command regardless of what's "active" -
       # @stable only installs clippy/rustfmt for whatever current stable
       # is, which then has neither component when the pinned version
       # differs (exactly what broke CI before this fix: "cargo-fmt is

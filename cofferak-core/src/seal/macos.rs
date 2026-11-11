@@ -7,7 +7,7 @@
 //! named by `service`/`account`, and [`KeychainSeal::unseal`] reads it back
 //! out by that same name. The [`SealedBlob`] returned by `seal` therefore
 //! carries no key material of its own (unlike the Linux backend's, which
-//! is the `systemd-creds`-encrypted bytes) — it's just a marker that lets
+//! is the `systemd-creds`-encrypted bytes) - it's just a marker that lets
 //! `unseal` reject a blob that obviously didn't come from this backend,
 //! while the real secret lives in the Keychain under this backend's
 //! `service`/`account`.
@@ -30,7 +30,7 @@ const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
 
 /// `errSecInteractionNotAllowed` from `SecBase.h`: the keychain exists but
 /// can't be used right now (e.g. locked, or no session to prompt the
-/// user) — the macOS analogue of the Linux backend's "binary not
+/// user) - the macOS analogue of the Linux backend's "binary not
 /// spawnable".
 const ERR_SEC_INTERACTION_NOT_ALLOWED: i32 = -25308;
 
@@ -39,7 +39,7 @@ const ERR_SEC_NOT_AVAILABLE: i32 = -25291;
 
 /// Marker bytes placed in the [`SealedBlob`] returned by
 /// [`KeychainSeal::seal`]. The real key material lives in the Keychain,
-/// keyed by `service`/`account`; this marker lets
+/// keyed by `service`/`account`, this marker lets
 /// [`KeychainSeal::unseal`] reject a blob that obviously didn't come from
 /// this backend without needing to decode anything else out of it.
 const SEALED_MARKER: &[u8] = b"cofferak-keychain-seal-v1";

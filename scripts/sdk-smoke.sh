@@ -23,7 +23,7 @@
 #           pre-provisioned token and no persistence or sealing. Proves the
 #           SDKs' protocol code, not the bootstrap/sealing path.
 #
-# Used both locally and by .github/workflows/ci.yml's sdk-smoke job —
+# Used both locally and by .github/workflows/ci.yml's sdk-smoke job -
 # this script is the single source of truth for "the SDKs actually
 # work," not a claim in a doc.
 set -euo pipefail
@@ -84,7 +84,7 @@ wait_for_socket() {
 }
 
 # Full mode only: run the real cofferakd exactly as production does on Linux
-# (ADR 0009) — as an unprivileged user, in a systemd service whose
+# (ADR 0009) - as an unprivileged user, in a systemd service whose
 # LoadCredentialEncrypted= has systemd (as root) decrypt the sealed host key
 # into $CREDENTIALS_DIRECTORY. The daemon never touches systemd-creds itself.
 start_real_daemon() {
@@ -106,7 +106,7 @@ echo "== building workspace (release) =="
 cargo build --workspace --release
 
 # macOS full mode: the real Keychain-sealed host key and `cofferak daemon`
-# (the same binary that sealed the key, so no Keychain prompt; ADR 0007).
+# (the same binary that sealed the key, so no Keychain prompt, ADR 0007).
 start_mac_daemon() {
   rm -f "$SOCKET"
   COFFERAK_DATA_DIR="$DATA_DIR" COFFERAK_SOCKET="$SOCKET" COFFERAK_HOST_ID="$HOST_ID" \
@@ -138,7 +138,7 @@ elif [[ "$MODE" == "full" ]]; then
   UNIT="cofferak-sdk-smoke-$$"
 
   # Admin commands seal/unseal the host key, which on Linux needs root
-  # (systemd-creds' host secret is root-only; ADR 0009). They hand the
+  # (systemd-creds' host secret is root-only, ADR 0009). They hand the
   # files they create back to the data directory's owner afterwards.
   echo "== bootstrapping a real throwaway vault in $DATA_DIR (admin commands as root) =="
   mkdir -p "$DATA_DIR"

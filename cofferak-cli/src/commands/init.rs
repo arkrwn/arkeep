@@ -1,7 +1,7 @@
 //! `cofferak-cli init --root` / `init --host <id>`.
 //!
 //! `init --root` creates a brand-new vault: a fresh root X25519 keypair,
-//! an empty `VaultFile` (no DEK yet — `root_wrap: None`, `hosts: {}`), and
+//! an empty `VaultFile` (no DEK yet - `root_wrap: None`, `hosts: {}`), and
 //! prints the root private key to stdout exactly once so the operator can
 //! copy it offline. That key is never written to disk and never logged.
 //!
@@ -16,7 +16,7 @@
 //! deliberately out of scope here and returns
 //! `Err(CliError::RootWrapAlreadySet)`: doing that correctly requires
 //! unsealing the already-enrolled host's own key with *that host's* seal
-//! backend and sealing the new host's key with the *new* host's backend —
+//! backend and sealing the new host's key with the *new* host's backend -
 //! two distinct `HostSeal`s. This function's signature only accepts one
 //! `seal`, which is structurally the wrong shape for that operation (on
 //! name-bound backends like `systemd-creds`, unsealing an existing host's
@@ -57,10 +57,10 @@ pub enum CliError {
     /// *different* `host_id` than any already enrolled. Adding an
     /// additional host to an already-initialized vault is Task 12's
     /// `run_enroll_host_with_seal` (which takes both the existing host's
-    /// seal and the new host's seal), not `init --host` — see the module
+    /// seal and the new host's seal), not `init --host` - see the module
     /// doc comment for why a single-seal signature can't do this safely.
     RootWrapAlreadySet,
-    /// A referenced `host_id` is not present in `vault.hosts` — used by
+    /// A referenced `host_id` is not present in `vault.hosts` - used by
     /// Task 12's `run_enroll_host_with_seal` when `this_host_id` isn't
     /// actually enrolled, and by `run_enroll_service`'s internal lookup
     /// when no enrolled host's sealed blob can be unsealed with this
@@ -71,7 +71,7 @@ pub enum CliError {
     /// Task 13: the daemon denied a `Get`/`Set`/`Rm`/`List` request
     /// (unknown token, wrong permission level, or a path outside the
     /// token's granted prefixes). Never constructed from a silently-empty
-    /// value — every denial takes this explicit path.
+    /// value - every denial takes this explicit path.
     Denied,
     /// Task 13: the daemon reported `Response::NotFound` for a `Get` or
     /// `Rm` whose path has no entry.
@@ -95,12 +95,12 @@ impl fmt::Display for CliError {
             CliError::Format(e) => write!(f, "vault format error: {e}"),
             CliError::VaultExists => write!(f, "a vault already exists in this data directory"),
             CliError::VaultMissing => {
-                write!(f, "no vault found in this data directory; run `init --root` first")
+                write!(f, "no vault found in this data directory, run `init --root` first")
             }
             CliError::HostAlreadyEnrolled => write!(f, "this host is already enrolled"),
             CliError::RootWrapAlreadySet => write!(
                 f,
-                "vault already has a host enrolled; use `enroll` to add another host, not `init --host`"
+                "vault already has a host enrolled, use `enroll` to add another host, not `init --host`"
             ),
             CliError::HostNotFound => write!(f, "no matching enrolled host found"),
             CliError::Denied => write!(f, "access denied"),
@@ -198,7 +198,7 @@ pub(crate) fn random_key() -> [u8; 32] {
 // `#[allow(dead_code)]`: this file is also included directly (via
 // `#[path]`) into the `cli_init` integration test binary, which only
 // exercises `run_init_root`/`run_init_host_with_seal`/`CliError` and
-// never references `current_host_seal`/`run_init_host` — those two are
+// never references `current_host_seal`/`run_init_host` - those two are
 // used by the real `cofferak-cli` binary's `main.rs`.
 #[cfg(target_os = "linux")]
 #[allow(dead_code)]
@@ -224,7 +224,7 @@ pub fn current_host_seal(host_id: &str) -> Box<dyn HostSeal> {
 /// `meta.json`.
 ///
 /// The root *private* key is printed to stdout exactly once, clearly
-/// labeled for the operator to copy offline — it is never written to any
+/// labeled for the operator to copy offline - it is never written to any
 /// file and never logged anywhere else. On success, returns the root
 /// public key's fingerprint (matching `VaultMeta::root_pubkey_fingerprint`)
 /// so callers/tests can confirm it without re-deriving it themselves.
@@ -249,9 +249,9 @@ pub fn run_init_root(data_dir: &Path) -> Result<String, CliError> {
     meta.save(&meta_path(data_dir))?;
 
     // The armored block is the whole recovery key (X25519 + ML-KEM-1024,
-    // with a checksum). Save it verbatim to a file kept offline; `recover
+    // with a checksum). Save it verbatim to a file kept offline, `recover
     // --root-key <file>` reads exactly this format.
-    println!("=== COFFERAK ROOT PRIVATE KEY: save everything between the lines to a file and store it OFFLINE now; it will not be shown again ===");
+    println!("=== COFFERAK ROOT PRIVATE KEY: save everything between the lines to a file and store it OFFLINE now, it will not be shown again ===");
     print!("{}", *root_privkey.to_armored());
     println!("=== END OF ROOT PRIVATE KEY ===");
 
@@ -267,7 +267,7 @@ pub fn run_init_root(data_dir: &Path) -> Result<String, CliError> {
 /// - Returns `Err(CliError::HostAlreadyEnrolled)` if `host_id` is already
 ///   in `vault.hosts`.
 /// - Returns `Err(CliError::RootWrapAlreadySet)` if the vault already has
-///   `root_wrap: Some(_)` (i.e. some other host is already enrolled) —
+///   `root_wrap: Some(_)` (i.e. some other host is already enrolled) -
 ///   see the module doc comment for why adding an *additional* host is
 ///   deliberately not handled here.
 /// - Otherwise (the vault has zero hosts and `root_wrap: None`): generates

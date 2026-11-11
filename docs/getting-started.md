@@ -31,7 +31,7 @@ These `export`s live only in this terminal. Nothing secret goes in
 `COFFERAK_SOCKET` are just paths.
 
 Admin commands (`init`, `enroll-*`, `rotate-dek`, `recover`) seal or
-unseal the host key. On Linux that needs root (`systemd-creds`); the
+unseal the host key. On Linux that needs root (`systemd-creds`), the
 files they create are handed back to you automatically. `sudo` drops your
 environment and `PATH` (and newer `sudo` versions ignore `-E`), so the
 Linux form passes the data directory and the binary's full path
@@ -50,7 +50,7 @@ $ADMIN init --root
 
 This prints a block starting with `-----BEGIN COFFERAK ROOT PRIVATE KEY-----`.
 It is the **recovery key** for this vault, shown once. For a demo you can
-ignore it; for a real vault save the whole block to offline media
+ignore it, for a real vault save the whole block to offline media
 ([key-security.md](key-security.md)).
 
 ```bash
@@ -81,7 +81,7 @@ journalctl -u cofferak-demo -n 5     # check it started
 ```
 
 Later admin changes (`enroll-service`, `import`) are picked up by the
-running daemon automatically; only `rotate-dek` needs a restart.
+running daemon automatically, only `rotate-dek` needs a restart.
 
 ## 4. Store and read secrets from the shell
 
@@ -119,10 +119,10 @@ cofferak list myapp                                 # list paths, never values
 cofferak rm myapp/LOG_LEVEL
 ```
 
-When stdout is a terminal, `get` adds a newline for readability; when
+When stdout is a terminal, `get` adds a newline for readability, when
 piped or redirected it writes the stored bytes exactly.
 
-Values are encrypted; **path names are not** (they're the vault's index
+Values are encrypted, **path names are not** (they're the vault's index
 and appear in the audit log), so never put a secret in a path. Values can
 be up to 1 MiB.
 
@@ -163,7 +163,7 @@ ssh -T git@github.com
 
 ## 6. Read secrets from code (SDKs)
 
-The SDKs aren't published to package registries yet; use them from the
+The SDKs aren't published to package registries yet, use them from the
 cloned repo as shown. Each sample reads `COFFERAK_SOCKET` and
 `COFFERAK_TOKEN` from the environment, writes a value, reads it back, and
 shows that a path outside the token's prefix is denied.
@@ -171,7 +171,7 @@ shows that a path outside the token's prefix is denied.
 ### Python
 
 ```python
-# app.py — run: PYTHONPATH="$REPO/sdk/python/cofferak_sdk/src" python3 app.py
+# app.py - run: PYTHONPATH="$REPO/sdk/python/cofferak_sdk/src" python3 app.py
 import os
 from cofferak_sdk import Client, DeniedError
 
@@ -203,7 +203,7 @@ EOF
 ```
 
 ```go
-// main.go — run: go run .
+// main.go - run: go run .
 package main
 
 import (
@@ -242,7 +242,7 @@ func main() {
 ```
 
 ```js
-// app.js — run: node app.js
+// app.js - run: node app.js
 const { Client, DeniedError } = require(process.env.REPO + "/sdk/javascript/cofferak-sdk/dist");
 
 (async () => {
@@ -273,7 +273,7 @@ cofferak-sdk = { path = "/path/to/cofferak/sdk/rust/cofferak-sdk" }
 ```
 
 ```rust
-// src/main.rs — run: cargo run
+// src/main.rs - run: cargo run
 use cofferak_sdk::{Client, SdkError};
 
 fn main() {
@@ -292,13 +292,13 @@ fn main() {
 
 Expected output for each: `<lang> got: <lang>-secret-123` and
 `<lang>: other/SECRET correctly denied`. For remote access over mutual
-TLS, see each SDK's page under [sample-integration/](sample-integration/).
+TLS, see each SDK's page under [sample-integration](sample-integration/README.md).
 
 ## 7. Move everything to another machine
 
 ```bash
 $ADMIN export -o backup.cfk       # asks for a passphrase (14+ characters), twice
-# on the new machine, after steps 1–3 there:
+# on the new machine, after steps 1-3 there:
 $ADMIN import backup.cfk          # secrets and app tokens restored; the daemon picks them up live
 ```
 
@@ -339,8 +339,8 @@ security delete-generic-password -s cofferak -a demo   # macOS only
 | Symptom | Cause and fix |
 |---|---|
 | `could not connect to daemon at ...` | The daemon isn't running, or `COFFERAK_SOCKET` differs between the two terminals. |
-| `path must be shorter than SUN_LEN` | Unix socket paths are limited to ~104 characters on macOS; use a shorter `COFFERAK_SOCKET`. |
+| `path must be shorter than SUN_LEN` | Unix socket paths are limited to ~104 characters on macOS, use a shorter `COFFERAK_SOCKET`. |
 | `access denied` | Wrong token, path outside the token's prefixes, or a write with a read-only token. |
-| Daemon hangs at startup on macOS | You ran `cofferakd` instead of `cofferak daemon`; the Keychain only serves the key silently to the binary that created it ([ADR 0007](adr/0007-macos-keychain-cross-process-limitation.md)). After installing a new build, macOS may ask once: choose Always Allow. |
-| `host seal backend rejected input` on Linux | Admin command run without root; use `$ADMIN` as set in step 1. |
-| `write could not be persisted` after `rotate-dek` | The daemon still holds the old key; restart it. |
+| Daemon hangs at startup on macOS | You ran `cofferakd` instead of `cofferak daemon`, the Keychain only serves the key silently to the binary that created it ([ADR 0007](adr/0007-macos-keychain-cross-process-limitation.md)). After installing a new build, macOS may ask once: choose Always Allow. |
+| `host seal backend rejected input` on Linux | Admin command run without root, use `$ADMIN` as set in step 1. |
+| `write could not be persisted` after `rotate-dek` | The daemon still holds the old key, restart it. |

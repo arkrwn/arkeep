@@ -17,7 +17,7 @@ flowchart LR
 
 - **The daemon is running:** it notices on the next request (or the next
   write) and writes back the newest copy it verified, so nothing is lost.
-  It logs `cofferakd: ALERT: ... was deleted; restored it ...`. Stop the
+  It logs `cofferakd: ALERT: ... was deleted, restored it ...`. Stop the
   daemon first if you ever remove a vault on purpose.
 - **The daemon is stopped:** restore from a backup.
 

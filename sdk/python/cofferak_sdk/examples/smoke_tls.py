@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Smoke test for the TLS/TCP transport (server mode, ADR 0008): set a
 secret, read it back, confirm it round-trips, then confirm a denied path
-fails cleanly — over TLS, not the Unix socket. Run against a real daemon
+fails cleanly - over TLS, not the Unix socket. Run against a real daemon
 serving $COFFERAK_TLS_ADDR (see scripts/server-mode-smoke.sh, which
 generates a real self-signed CA + server cert and runs this for real).
 

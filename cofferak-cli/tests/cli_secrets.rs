@@ -12,9 +12,9 @@
 //! The socket server itself (bind a `UnixListener`, spawn one thread per
 //! connection, decode/dispatch/encode each line through
 //! `Daemon::handle_request`) is a deliberately-duplicated, trimmed copy
-//! of `cofferakd/src/main.rs`'s own `handle_connection`/accept-loop — that
+//! of `cofferakd/src/main.rs`'s own `handle_connection`/accept-loop - that
 //! function is private to the `cofferakd` binary, so there is nothing to
-//! import; this is the "real `UnixListener` thread serving
+//! import, this is the "real `UnixListener` thread serving
 //! `Daemon::handle_request`" the task brief calls for, not a mock.
 
 use cofferakd::audit;
@@ -138,7 +138,7 @@ fn short_socket_path(tag: &str) -> PathBuf {
 }
 
 /// Handle to a background thread serving one `Daemon` over a real
-/// `UnixListener`; removes the socket file on drop.
+/// `UnixListener`, removes the socket file on drop.
 struct TestServer {
     socket_path: PathBuf,
 }
@@ -151,7 +151,7 @@ impl Drop for TestServer {
 
 /// Bind `socket_path` and spawn a background thread that accepts
 /// connections and serves `daemon.handle_request` over the real wire
-/// protocol — a trimmed copy of `cofferakd/src/main.rs`'s own
+/// protocol - a trimmed copy of `cofferakd/src/main.rs`'s own
 /// accept-loop/`handle_connection` (private to that binary, so duplicated
 /// here rather than imported). Returns once the socket is bound, so a
 /// `Client::connect` issued right after this returns will not race the
@@ -431,8 +431,8 @@ fn run_rotate_dek_reencrypts_entries_and_services_and_invalidates_old_dek() {
     assert_eq!(decrypted_service, b"service-token-bytes".to_vec());
 
     // The OLD DekWrapHost bytes (kept from before rotation) still unwrap
-    // to the old DEK via the unchanged host key — rotation never touches
-    // the host key itself — but that old DEK can no longer decrypt
+    // to the old DEK via the unchanged host key - rotation never touches
+    // the host key itself - but that old DEK can no longer decrypt
     // anything in the now-rotated vault, proving a genuine rotation
     // happened rather than a no-op.
     let old_dek_via_old_wrap = unwrap_dek_for_host(&old_wrap_a, "host-a", &host_key_a)

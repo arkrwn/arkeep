@@ -146,7 +146,7 @@ pub fn backup_vault_file(
     };
     VaultFile::from_bytes(&bytes).map_err(|e| {
         CliError::Invalid(format!(
-            "{} does not decode ({e}); refusing to back up a damaged file over good backups",
+            "{} does not decode ({e}), refusing to back up a damaged file over good backups",
             path.display()
         ))
     })?;

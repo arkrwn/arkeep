@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Smoke test: set a secret, read it back, confirm it round-trips, then
 confirm a denied path fails cleanly. Run against a real cofferakd (see
-scripts/sdk-smoke.sh, which bootstraps one and runs this for real — this
+scripts/sdk-smoke.sh, which bootstraps one and runs this for real - this
 is not a mocked test).
 
 Usage: COFFERAK_SOCKET=/path/to.sock COFFERAK_TOKEN=<token> \

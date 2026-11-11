@@ -13,7 +13,7 @@ Status: accepted, amended by ADR 0009
 
 Before this fix, `cofferakd`'s `main()` had two real bugs, both uncovered
 only when `scripts/sdk-smoke.sh` tried to run the actual compiled daemon
-binary against a vault the real CLI had bootstrapped — every prior test
+binary against a vault the real CLI had bootstrapped - every prior test
 (including the Task 16-era end-to-end test) constructed `Daemon`
 directly in-process rather than running `main()`, so neither bug had
 ever been exercised:
@@ -25,7 +25,7 @@ ever been exercised:
    a vault the real CLI had written.
 2. **Service tokens were never loaded.** `main()` started with a
    hardcoded empty token map, so the real daemon denied every request
-   from every enrolled service, always — a self-contained vault that
+   from every enrolled service, always - a self-contained vault that
    could never actually serve a legitimate client.
 
 ## Decision
@@ -41,13 +41,13 @@ entry into an `AccessToken`, keyed by `token_key(&secret)` for
 Also fixed in the same pass: the daemon's sealed-key path and
 `HostSeal` identity (`SystemdCredsSeal { name }` / `KeychainSeal
 { service, account }`) now match `cofferak-cli`'s `current_host_seal`
-exactly — they were previously a fixed, daemon-wide identity unrelated
+exactly - they were previously a fixed, daemon-wide identity unrelated
 to any specific enrolled host, which could never line up with what the
 CLI had sealed per-host.
 
 ## Consequences
 
-This was a real, user-facing correctness gap, not a style nit — recorded
+This was a real, user-facing correctness gap, not a style nit - recorded
 here rather than silently fixed because it changes `cofferakd`'s startup
 contract (a new required/inferred env var) and because any fork or
 in-progress deployment of this daemon before this fix was non-functional
