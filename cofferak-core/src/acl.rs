@@ -57,8 +57,8 @@ pub fn path_allowed(prefixes: &[String], path: &str) -> bool {
 
 /// Validate a host or service id. Ids end up in file paths
 /// (`hosts/<id>.seal`), OS credential names (`cofferak-<id>`), and Keychain
-/// account names, so they are restricted to `[A-Za-z0-9._-]`, 1–64
-/// characters, not starting with `.` or `-` — which rules out path
+/// account names, so they are restricted to `[A-Za-z0-9._-]`, 1-64
+/// characters, not starting with `.` or `-` - which rules out path
 /// separators, `..`, hidden files, and option-like values by
 /// construction. `kind` is only used in the error message.
 pub fn validate_id(kind: &str, id: &str) -> Result<(), String> {

@@ -133,7 +133,7 @@ fn set_is_on_disk_before_it_is_acknowledged_and_survives_a_restart() {
     let mut d = persistent_daemon(&f);
     assert_eq!(set(&mut d, "app/DB_PASSWORD", b"s3cr3t"), Response::Ok);
 
-    // Straight off disk, decrypted with the DEK — not via the daemon.
+    // Straight off disk, decrypted with the DEK - not via the daemon.
     let on_disk = VaultFile::load(&f.vault_path).unwrap();
     let entry = &on_disk.entries["app/DB_PASSWORD"];
     assert_eq!(
@@ -273,7 +273,7 @@ fn ciphertext_moved_to_another_path_on_disk_is_rejected_not_served() {
 
 #[test]
 fn changes_written_by_another_process_are_served_without_a_restart() {
-    // `cofferak import` / `enroll-service` edit vault.cofferak directly; the
+    // `cofferak import` / `enroll-service` edit vault.cofferak directly, the
     // daemon notices the file changed and reloads before the next request.
     let f = fixture("reload");
     let mut d = persistent_daemon(&f);
@@ -365,7 +365,7 @@ fn a_tampered_vault_is_not_loaded_and_blocks_writes() {
     );
     disk.save(&f.vault_path).unwrap();
 
-    // Reads keep the last verified state; the injected entry never appears.
+    // Reads keep the last verified state, the injected entry never appears.
     assert_eq!(get(&mut d, "app/A"), Response::Value(b"original".to_vec()));
     assert_eq!(get(&mut d, "app/INJECTED"), Response::NotFound);
     assert!(matches!(set(&mut d, "app/B", b"x"), Response::Err(_)));

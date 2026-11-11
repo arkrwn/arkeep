@@ -1,10 +1,10 @@
 //! Minimal Rust client SDK for cofferak.
 //!
 //! Connects to a running `cofferakd` over either its Unix socket or,
-//! since ADR 0008 (server mode), TLS-wrapped TCP — and speaks the same
+//! since ADR 0008 (server mode), TLS-wrapped TCP - and speaks the same
 //! newline-delimited JSON protocol documented in
 //! `cofferakd/src/protocol.rs` (`Request`/`Response`). This crate does not
-//! depend on `cofferakd` or `cofferak-core` — it reimplements just the wire
+//! depend on `cofferakd` or `cofferak-core` - it reimplements just the wire
 //! format, so it stays usable as a standalone dependency for any Rust
 //! service that wants to read/write secrets without shelling out to the
 //! `cofferak` CLI binary.
@@ -131,11 +131,11 @@ pub struct TlsOptions {
     pub server_name: String,
     /// PEM file containing the CA that signed the server's certificate.
     /// cofferak's TLS is for a self-managed deployment, not the public
-    /// web — there is no built-in trust of public root CAs.
+    /// web - there is no built-in trust of public root CAs.
     pub ca_cert_path: PathBuf,
     /// Client certificate + private key (PEM). `cofferakd` server mode
     /// always requires mutual TLS (ADR 0011), so a real connection needs
-    /// this; it is an `Option` only so a client can be built to prove that
+    /// this, it is an `Option` only so a client can be built to prove that
     /// a certificate-less connection is refused.
     pub client_cert_and_key: Option<(PathBuf, PathBuf)>,
 }
@@ -165,7 +165,7 @@ enum Transport {
     },
 }
 
-/// A client connected to one cofferakd endpoint — a Unix socket or, since
+/// A client connected to one cofferakd endpoint - a Unix socket or, since
 /// ADR 0008, a TLS/TCP address. Cheap to construct for the Unix case;
 /// each call opens a fresh connection either way (matching `cofferakd`'s
 /// own CLI client convention: simplest correct option, no
@@ -174,7 +174,7 @@ pub struct Client {
     transport: Transport,
 }
 
-/// Hard ceiling on one response line — mirrors
+/// Hard ceiling on one response line - mirrors
 /// `cofferakd::protocol::MAX_LINE_BYTES` (duplicated, not shared: this
 /// crate deliberately has no dependency on `cofferakd`/`cofferak-core`, see
 /// the module doc comment). A malicious or compromised daemon that
@@ -245,7 +245,7 @@ fn load_private_key(path: &Path) -> Result<PrivateKeyDer<'static>, SdkError> {
 
 impl Client {
     /// Build a client for the daemon's socket at `socket_path`. Does not
-    /// connect yet — connection happens per call.
+    /// connect yet - connection happens per call.
     pub fn connect(socket_path: impl AsRef<Path>) -> Self {
         Client {
             transport: Transport::Unix(socket_path.as_ref().to_path_buf()),
@@ -355,7 +355,7 @@ impl Client {
             } => {
                 let tcp = TcpStream::connect(addr)?;
                 // A malicious or hung server otherwise blocks the
-                // caller's thread indefinitely — bound it, matching the
+                // caller's thread indefinitely - bound it, matching the
                 // daemon's own stance on its listeners.
                 let timeout = Some(std::time::Duration::from_secs(30));
                 let _ = tcp.set_read_timeout(timeout);

@@ -17,7 +17,7 @@ sudo cofferak init --root --data-dir /var/lib/cofferak | tee /dev/tty | \
 medium). Everything in this
 vault's security model (`docs/SPEC.md` §1) rests on what happens to
 that printed value in the seconds after it appears. This page is about
-that, specifically — not the per-host unseal keys or service tokens
+that, specifically - not the per-host unseal keys or service tokens
 (those are machine-sealed automatically by `HostSeal`/ADR 0002 and need
 no manual handling).
 
@@ -26,10 +26,10 @@ no manual handling).
 It's the one thing that can recover this vault if **every** enrolled
 host is lost (`cofferak recover --root-key`, `docs/recovery-runbook.md`).
 It is not needed for, and should never be used for, day-to-day
-operation — `init --host`/`enroll-host`/`enroll-service` never touch it.
+operation - `init --host`/`enroll-host`/`enroll-service` never touch it.
 If you find yourself reaching for the root key more than once in a
 vault's lifetime (initial bootstrap, then maybe one disaster recovery,
-ever), something upstream of this key went wrong — treat a second use
+ever), something upstream of this key went wrong - treat a second use
 as a signal to review what happened.
 
 ## Do this
@@ -49,7 +49,7 @@ as a signal to review what happened.
    - An encrypted USB drive (e.g. LUKS/FileVault-encrypted volume) kept
      physically secured (a safe, a locked drawer with controlled
      access), with the key written as one unlabeled text file.
-   - A paper backup: print the armored block (about 70 lines; a single
+   - A paper backup: print the armored block (about 70 lines, a single
      page in a small monospace font) and store it like a legal document
      or a hardware-wallet seed phrase, in a safe or safety-deposit box,
      not a desk drawer. The built-in checksum catches a typo when it is
@@ -57,12 +57,12 @@ as a signal to review what happened.
 3. **Verify the backup before you consider the key "stored."** Read it
    back from the offline medium and compare against what was printed
    (or, better, run it through `cofferak recover --root-key` in a throwaway
-   test vault to confirm it actually unwraps — see
+   test vault to confirm it actually unwraps - see
    `docs/recovery-runbook.md`). A backup you haven't verified is a hope,
    not a backup.
 4. **Decide who else needs it, in writing, before you need them to have
    it.** A single-person project can stop at step 3. A team should
-   decide now — not during an actual disaster — who is authorized to
+   decide now - not during an actual disaster - who is authorized to
    hold a copy and what justifies using it, and should prefer splitting
    custody (below) over simply handing a second person the whole key.
 5. **Treat it like you'd treat an SSH CA root key or a code-signing
@@ -85,9 +85,9 @@ age -p -o cofferak-root.key.age cofferak-root.key      # enter $PASS when prompt
 echo "$PASS" | ssss-split -t 3 -n 5 -q                  # 3-of-5 shares
 ```
 
-Give each custodian one share; store copies of the encrypted
+Give each custodian one share, store copies of the encrypted
 `cofferak-root.key.age` anywhere offline (it is useless without three
-shares); destroy the unencrypted key file and the passphrase once the
+shares), destroy the unencrypted key file and the passphrase once the
 shares are distributed and a test recovery has succeeded. cofferak does
 not implement secret sharing itself (ADR 0001 deliberately rejected
 building this in), so this is an operational practice layered on top.
@@ -96,7 +96,7 @@ building this in), so this is an operational practice layered on top.
 
 - **Never put it in a password manager that syncs to the cloud**,
   even "zero-knowledge" ones, unless you've independently verified that
-  product's encryption model meets your threat model — this defeats
+  product's encryption model meets your threat model - this defeats
   the entire point of "never retained on any host running the daemon."
 - **Never send it over chat, email, or a ticketing system**, even
   "temporarily" or "just to this one trusted person." Those systems log
@@ -116,21 +116,21 @@ building this in), so this is an operational practice layered on top.
 ## Rotation
 
 The root key itself has no `cofferak` CLI rotation path today (`rotate-dek`
-rotates the DEK, not the root keypair — see `docs/SPEC.md` §7) — this is
-a deliberate current limitation, not an oversight; if you need to
+rotates the DEK, not the root keypair - see `docs/SPEC.md` §7) - this is
+a deliberate current limitation, not an oversight, if you need to
 rotate the root keypair itself (e.g. after a suspected exposure), that
 requires `cofferak init --root` into a fresh vault and re-enrolling every
 host/service, tracked as a gap in `docs/PROGRESS.md` if it isn't
 already. Rotating the *DEK* (`rotate-dek --hosts <csv>`) does not help
-if the root key itself is what's suspected compromised — the root
+if the root key itself is what's suspected compromised - the root
 public key stored in `vault.cofferak` doesn't change, so a leaked root
 private key remains valid for that vault until a full re-bootstrap.
 
 ## Periodic drills
 
 Run `cofferak recover --root-key` against a copy of a real (or disposable
-test) vault on a schedule — quarterly is a reasonable default for most
-teams — to confirm the stored key still works and whoever is supposed to
+test) vault on a schedule - quarterly is a reasonable default for most
+teams - to confirm the stored key still works and whoever is supposed to
 be able to execute recovery actually can, before an actual disaster
 forces you to find out live. `docs/recovery-runbook.md` is written for
 exactly this: hand it to the person who'd run the drill, unmodified.

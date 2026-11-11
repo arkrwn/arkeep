@@ -32,7 +32,7 @@ DAEMON_PID=""
 # Languages whose SDK supports the TLS/TCP transport today (ADR 0008 /
 # docs/PROGRESS.md). Add a language here only once its SDK has a real
 # `connect_tls`-equivalent AND an `examples/smoke_tls.*` this script can
-# run — never add one "to be implemented," per ADR 0005.
+# run - never add one "to be implemented," per ADR 0005.
 TLS_LANGS=(rust go python javascript)
 
 cleanup() {
@@ -47,7 +47,7 @@ trap cleanup EXIT
 # Runs one language's TLS smoke example with the given TLS parameters.
 # Every SDK reads the same env var names (COFFERAK_TLS_ADDR,
 # COFFERAK_TLS_SERVER_NAME, COFFERAK_TLS_CA, COFFERAK_TLS_CLIENT_CERT,
-# COFFERAK_TLS_CLIENT_KEY, COFFERAK_TOKEN) — that consistency is what lets
+# COFFERAK_TLS_CLIENT_KEY, COFFERAK_TOKEN) - that consistency is what lets
 # this one function drive all four without per-language special-casing
 # beyond which binary/interpreter actually runs.
 run_tls_smoke() {
@@ -68,7 +68,7 @@ run_tls_smoke() {
 }
 
 # Runs run_tls_smoke and requires it to FAIL (used for every adversarial
-# case below) — fails this script loudly, with the captured output, if
+# case below) - fails this script loudly, with the captured output, if
 # the smoke test unexpectedly succeeded.
 expect_tls_rejected() {
   local description="$1"; shift
@@ -245,7 +245,7 @@ for lang in "${TLS_LANGS[@]}"; do
     "$WORKDIR/rogue-client.pem" "$WORKDIR/rogue-client.key"
 done
 
-# Protocol/cipher downgrade checks need OpenSSL's s_client flags; macOS
+# Protocol/cipher downgrade checks need OpenSSL's s_client flags, macOS
 # ships LibreSSL, so these run on Linux (CI) and skip elsewhere.
 if openssl version | grep -q '^OpenSSL'; then
   s_client() {

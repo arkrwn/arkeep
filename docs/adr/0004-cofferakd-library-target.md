@@ -22,7 +22,7 @@ library crate.
 `cofferakd`'s own `audit_integration.rs`/`daemon_integration.rs` tests
 were simplified to `use cofferakd::...` instead of `#[path]`, which also
 removed duplicate test execution (each module's own unit tests had
-previously been compiled and run twice — once via the lib, once via each
+previously been compiled and run twice - once via the lib, once via each
 `#[path]`-including integration test binary).
 
 When this ADR was written, `cofferak-cli/src/main.rs` and a few of its
@@ -34,5 +34,5 @@ modules via `#[path]`, a leftover scoped out of the original task.
 `cofferakd::protocol`, `cofferakd::daemon` and `cofferakd::audit` from
 it directly. The only remaining
 `#[path]` use is in `cofferak-cli/tests/`, which includes the CLI's own
-`src/` files because `cofferak-cli` has no library target; no module is
+`src/` files because `cofferak-cli` has no library target, no module is
 shared across crates that way any more.

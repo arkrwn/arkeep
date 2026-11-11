@@ -19,7 +19,7 @@ for a Kubernetes cluster. Compared with Vault, cofferak lacks:
    other than holding a static service token.
 3. **Delivery into pods.** No injector, CSI driver or External Secrets
    integration.
-4. **High availability.** One daemon per host; no failover.
+4. **High availability.** One daemon per host, no failover.
 5. **Dynamic secrets and leases** (e.g. per-pod database credentials that
    expire), **identity-based policies** (OIDC, groups) and a UI.
 6. **An independent security audit.** Vault has been audited repeatedly;
@@ -61,7 +61,7 @@ updated docs, as every feature so far has.
 
 ### Phase 4: high availability and replication
 
-- Multiple replicas with leader election; writes go through the leader,
+- Multiple replicas with leader election, writes go through the leader,
   replicated to followers over mTLS, each follower storing secrets under
   its own sealed key (extending the peer-transfer model of ADR 0013 to
   continuous replication).

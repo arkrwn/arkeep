@@ -4,7 +4,7 @@ Connects to a running ``cofferakd`` over its Unix socket, or (server
 mode, ADR 0008) over TLS-wrapped TCP, and speaks the same
 newline-delimited JSON protocol documented in
 ``cofferakd/src/protocol.rs`` (``Request``/``Response``, serde's default
-externally-tagged enum encoding). Standard library only — including
+externally-tagged enum encoding). Standard library only - including
 Python's own ``ssl`` module for the TLS transport, no third-party TLS
 library.
 
@@ -34,12 +34,12 @@ import ssl as _ssl
 from typing import Any
 
 # Mirrors cofferakd's protocol::MAX_LINE_BYTES (and the Rust/Go SDKs'
-# identical constant) — a hard ceiling on one response line, so a
+# identical constant) - a hard ceiling on one response line, so a
 # malicious or compromised daemon that never terminates a response
 # can't grow this client's buffer without limit.
 _MAX_LINE_BYTES = 16 * 1024 * 1024
 
-# Bounds how long one call can block on the network — a stalled or
+# Bounds how long one call can block on the network - a stalled or
 # malicious daemon otherwise ties up the caller indefinitely. Matches
 # cofferakd's own per-connection timeout (ADR 0008).
 _IO_TIMEOUT_SECONDS = 30.0
@@ -84,14 +84,14 @@ def _build_tls_context(
 ) -> _ssl.SSLContext:
     # PROTOCOL_TLS_CLIENT pre-configures check_hostname=True and
     # verify_mode=CERT_REQUIRED (Python's own secure default for a
-    # client context) — neither is weakened anywhere in this function.
+    # client context) - neither is weakened anywhere in this function.
     context = _ssl.SSLContext(_ssl.PROTOCOL_TLS_CLIENT)
     context.minimum_version = _ssl.TLSVersion.TLSv1_3
     context.maximum_version = _ssl.TLSVersion.TLSv1_3
     # Deliberately NOT calling load_default_certs(): this context's
     # trust store starts empty, and load_verify_locations below adds
     # ONLY the given CA. cofferak's TLS is for a self-managed deployment,
-    # not the public web — this client must never also trust the OS's
+    # not the public web - this client must never also trust the OS's
     # public root store (that would let any public-CA-issued cert
     # impersonate the cofferak server).
     context.load_verify_locations(cafile=ca_cert_path)
@@ -105,7 +105,7 @@ def _build_tls_context(
 
 
 class Client:
-    """A client connected to one cofferakd endpoint — a Unix socket, or
+    """A client connected to one cofferakd endpoint - a Unix socket, or
     (server mode) a TLS/TCP address. Each call opens a fresh connection,
     matching the convention established by cofferakd's own CLI client."""
 
@@ -170,7 +170,7 @@ class Client:
     @staticmethod
     def _read_line_bounded(sock: Any) -> bytes:
         """Read until ``\\n`` or ``_MAX_LINE_BYTES``, whichever comes
-        first — never growing the buffer past that limit. Each call
+        first - never growing the buffer past that limit. Each call
         makes exactly one request and expects exactly one response line
         before the connection closes, so there's no "next request" to
         preserve across calls."""

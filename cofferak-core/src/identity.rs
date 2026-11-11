@@ -5,7 +5,7 @@
 //! receive and send transfers.
 //!
 //! - encryption: X25519 + ML-KEM-1024 (hybrid, like the recovery wrap);
-//! - signatures: ECDSA P-384 + ML-DSA-87 (hybrid; both must verify).
+//! - signatures: ECDSA P-384 + ML-DSA-87 (hybrid, both must verify).
 //!
 //! The private half lives inside `vault.cofferak`, encrypted under the
 //! coffer's DEK, so a coffer still has exactly one master key and nothing
@@ -96,7 +96,7 @@ pub struct IdentityPublic {
     pub mldsa87: Vec<u8>,
 }
 
-/// The private half of a coffer identity. Zeroized on drop; never printed.
+/// The private half of a coffer identity. Zeroized on drop, never printed.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct IdentitySecret {
     x25519: [u8; 32],
@@ -158,7 +158,7 @@ impl IdentityPublic {
         )
     }
 
-    /// Parse [`to_text`](Self::to_text) output; surrounding whitespace and
+    /// Parse [`to_text`](Self::to_text) output, surrounding whitespace and
     /// other lines (comments) are ignored.
     pub fn from_text(text: &str) -> Result<Self, IdentityError> {
         let line = text

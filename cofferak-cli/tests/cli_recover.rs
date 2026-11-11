@@ -161,7 +161,7 @@ fn run_recover_with_wrong_root_key_returns_bad_root_key_and_leaves_vault_unchang
     let (dir, _root_privkey, _dek) = setup_vault_with_root_wrap("recover-bad-key");
 
     // A well-formed 32-byte key, but not the one that wraps this vault's
-    // DEK — exercises "wrong valid keypair", not just "malformed input".
+    // DEK - exercises "wrong valid keypair", not just "malformed input".
     let (_other_pubkey, wrong_privkey) = generate_root_keypair().unwrap();
     let key_path = write_root_key_file(&dir, wrong_privkey.to_armored().as_bytes());
     let new_seal = FakeHostSeal { tag: 0xC3 };
@@ -192,7 +192,7 @@ fn run_recover_with_random_garbage_key_bytes_returns_bad_root_key_and_leaves_vau
     let (dir, _root_privkey, _dek) = setup_vault_with_root_wrap("recover-garbage");
 
     // Random bytes that are not even a 32-byte buffer (nor any particular
-    // X25519 scalar) — the "random bytes, not a valid private key" case.
+    // X25519 scalar) - the "random bytes, not a valid private key" case.
     let garbage_bytes: Vec<u8> = vec![0x01, 0x02, 0x03, 0x04, 0x05];
     let key_path = write_root_key_file(&dir, &garbage_bytes);
     let new_seal = FakeHostSeal { tag: 0xC3 };
@@ -229,7 +229,7 @@ fn run_recover_against_missing_vault_returns_vault_missing() {
 #[test]
 fn run_recover_against_vault_with_no_dek_yet_returns_vault_missing_and_leaves_vault_unchanged() {
     // A vault produced by `init --root` alone (no host enrolled yet) has
-    // `root_wrap: None` — there is no DEK to recover, so the brief has
+    // `root_wrap: None` - there is no DEK to recover, so the brief has
     // this reuse `VaultMissing` rather than a dedicated variant ("a vault
     // with zero hosts has no DEK to recover").
     let dir = temp_dir("recover-no-dek");

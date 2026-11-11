@@ -29,7 +29,7 @@ pub use macos::{KeychainAnchorMirror, KeychainSeal};
 /// An opaque, host-sealed blob produced by a [`HostSeal`] implementation.
 ///
 /// The bytes are only meaningful to the backend (and host) that produced
-/// them; callers must treat this as opaque and persist it verbatim.
+/// them, callers must treat this as opaque and persist it verbatim.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SealedBlob(pub Vec<u8>);
 
@@ -37,14 +37,14 @@ pub struct SealedBlob(pub Vec<u8>);
 #[derive(Debug)]
 pub enum SealError {
     /// The host sealing facility (e.g. the `systemd-creds` binary) could not
-    /// be invoked at all on this system — typically because it is not
+    /// be invoked at all on this system - typically because it is not
     /// installed or not on `PATH`.
     Unavailable,
     /// The sealing facility ran but its output cannot be trusted: a
     /// non-zero exit status, empty output, or output that otherwise fails
     /// to decrypt/validate. Carries whatever diagnostic detail the backend
-    /// captured (e.g. the subprocess's stderr) — never secret key material,
-    /// only the backend's own operational error text — so a caller isn't
+    /// captured (e.g. the subprocess's stderr) - never secret key material,
+    /// only the backend's own operational error text - so a caller isn't
     /// left guessing between, say, "wrong name" and "permission denied."
     Invalid(String),
     /// An I/O error occurred while talking to the sealing facility (e.g.

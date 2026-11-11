@@ -30,7 +30,7 @@ visibly.
 
 On macOS, `scripts/sdk-smoke.sh` cannot currently prove the full real
 `cofferak init --host` → `cofferakd` → real Keychain path end to end
-from a non-interactive shell; it falls back to
+from a non-interactive shell, it falls back to
 `cofferakd/examples/dev-daemon.rs` (an in-memory daemon with no sealing
 involved) to still prove every SDK's wire-protocol client code for real.
 The Linux path (`systemd-creds`, host/TPM-bound rather than
@@ -52,7 +52,7 @@ Candidates for the real fix, for whoever picks this up:
 3. Accept the limitation and document that the very first read after
    `init --host` needs an interactive session where the user approves
    the one-time Keychain prompt, with every subsequent `cofferakd`
-   restart then working headlessly (untested — would need to be
+   restart then working headlessly (untested - would need to be
    verified, not assumed).
 
 4. **Run the daemon from the same binary that seals the key.** No ACL

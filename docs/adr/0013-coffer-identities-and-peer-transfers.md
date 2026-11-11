@@ -25,8 +25,8 @@ Each coffer can have one identity, created on first use (`cofferak
 identity`):
 
 - encryption keys: X25519 + ML-KEM-1024 (hybrid);
-- signing keys: ECDSA P-384 + ML-DSA-87 (hybrid; both signatures must
-  verify; ML-DSA-87 is the CNSA 2.0 signature algorithm).
+- signing keys: ECDSA P-384 + ML-DSA-87 (hybrid, both signatures must
+  verify, ML-DSA-87 is the CNSA 2.0 signature algorithm).
 
 All from AWS-LC (stable APIs). The private half is stored in
 `vault.cofferak` as `identity`, encrypted under the coffer's DEK with
@@ -59,7 +59,7 @@ signatures over every preceding byte:
 - key = HKDF-SHA-384(X25519 secret ‖ ML-KEM secret, info = label ‖
   recipient fingerprint ‖ sender fingerprint ‖ ephemeral key ‖ ML-KEM
   ciphertext);
-- payload encrypted with AES-256-GCM-SIV; the header (everything up to
+- payload encrypted with AES-256-GCM-SIV, the header (everything up to
   the nonce) is its associated data.
 
 `cofferak import FILE` recognizes the magic and:
@@ -82,17 +82,17 @@ tokens by surprise. Passphrase bundles (`CFKEXPT1`) keep working, and
 ### Vault format 3
 
 `identity` and `peers` are new fields, so `vault.cofferak` is now format
-version 3. Format 2 files are read and upgraded in memory; the next save
+version 3. Format 2 files are read and upgraded in memory, the next save
 writes format 3. Format 1 is still rejected.
 
 ## Alternatives considered
 
 - **Sharing one coffer's master key with another:** violates "one master
-  key per coffer"; a compromise of either would expose both.
+  key per coffer", a compromise of either would expose both.
 - **Using the root key for transfers:** the root key is offline by design
   (recovery only) and must not be needed for routine moves.
 - **Encryption without signatures:** anyone with the receiver's public
-  identity could inject secrets; signatures plus the peer list prevent
+  identity could inject secrets, signatures plus the peer list prevent
   that.
 - **Classical-only signatures:** ML-DSA-87 is available in AWS-LC's
   stable API, so the transfer is post-quantum for both confidentiality
@@ -100,14 +100,14 @@ writes format 3. Format 1 is still rejected.
 
 ## Proof
 
-- `cofferak-core/src/identity.rs` tests: round trip; only the recipient
-  can open; any byte flip or truncation is rejected; a forger gets only
+- `cofferak-core/src/identity.rs` tests: round trip, only the recipient
+  can open, any byte flip or truncation is rejected, a forger gets only
   their own identity verified, and swapping in a trusted sender's public
-  key breaks the signature; identity text and secret encoding round trip.
+  key breaks the signature, identity text and secret encoding round trip.
 - `cofferak-cli/tests/cli_transfer.rs`: Mac ↔ server both ways with
-  `--prefix`, values readable only under the receiver's key; untrusted
-  sender and wrong recipient refused with the vault unchanged; identity
-  and peers survive `rotate-dek`; peer-name validation and duplicate/self
+  `--prefix`, values readable only under the receiver's key, untrusted
+  sender and wrong recipient refused with the vault unchanged, identity
+  and peers survive `rotate-dek`, peer-name validation and duplicate/self
   trust refused.
 - `cofferak-core/src/format.rs`: format 2 vaults load and upgrade.
 - `scripts/quickstart-check.sh` (CI, Linux and macOS): two coffers paired,

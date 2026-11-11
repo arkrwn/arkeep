@@ -34,10 +34,15 @@ plus the Go, Python and TypeScript/JavaScript SDKs under `sdk/`.
   maintainer designates, including themself) changes a verdict: an agent
   proposes a row's content, the lead marks it `done`.
 
-Operator and user documentation (`README.md`, `docs/deployment.md`,
-`docs/key-security.md`, `docs/recovery-runbook.md`,
-`docs/sample-integration/`) is kept in step with the code but is not
-part of the design record.
+Operator and user documentation (`README.md` and the pages under
+`docs/`, such as `docs/getting-started.md`, `docs/commands.md`,
+`docs/deployment.md`, `docs/backup.md` and `docs/sample-integration/`) is
+kept in step with the code but is not part of the design record. The
+README stays short (what cofferak is, the Quickstart, links). Everything
+else lives under `docs/`, which `mkdocs.yml` builds into the documentation
+site: add a new page to its `nav`, and keep `mkdocs build --strict`
+passing (the `docs` workflow checks it). Put diagrams in the page as
+mermaid blocks, so they render both on GitHub and on the site.
 
 A new subsystem or a fork that needs its own design docs uses the same
 shape (`SPEC.md` + `adr/` + `PROGRESS.md`) rather than a new structure.
@@ -52,7 +57,7 @@ shape (`SPEC.md` + `adr/` + `PROGRESS.md`) rather than a new structure.
   `accepted, amended by ADR NNNN` when a later ADR replaces part of it.
 - ADRs are history. When a later decision changes an earlier one, write
   a new ADR and add a short `> Amended by ADR NNNN: ...` note under the
-  older ADR's Status line; don't rewrite the older decision or its
+  older ADR's Status line, don't rewrite the older decision or its
   reasoning.
 - Write one when a decision has real trade-offs someone could ask "why
   not X instead?" about. Keep it short: what was decided, why, what was
@@ -96,7 +101,7 @@ getting it wrong), write the plan as an ADR. If the work spans several
 sessions or agents, also create `docs/PLAN.md` (it does not exist today)
 in memoryos's `PLAN.md` shape: goal, rules, and a table of
 task/owner/paths/dependencies. Use a dedicated multi-agent review only
-when the maintainer asks for one; it is not this repo's default.
+when the maintainer asks for one, it is not this repo's default.
 
 ## Adding an SDK or sample integration
 
@@ -127,5 +132,5 @@ MSRV (`rust-version` in `Cargo.toml`) is 1.89.
   (informational).
 
 A PR is not mergeable with a red or skipped CI run. Run the fmt, clippy
-and test commands locally first; CI should confirm what you already
+and test commands locally first, CI should confirm what you already
 know.

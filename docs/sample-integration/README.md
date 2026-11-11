@@ -2,8 +2,8 @@
 
 Worked, **proven-to-run** examples of consuming cofferak from a service.
 Every code sample on this page set is the same source the automated
-smoke test actually executes — see
-[`scripts/sdk-smoke.sh`](../../scripts/sdk-smoke.sh), which CI's
+smoke test actually executes - see
+[`scripts/sdk-smoke.sh`](https://github.com/arkrwn/cofferak/blob/main/scripts/sdk-smoke.sh), which CI's
 `sdk-smoke` job runs on every push and pull request, on both
 `ubuntu-latest` and `macos-latest`, against the real `cofferak` binary and
 daemon end to end (real host-key sealing, a real enrolled token, and a

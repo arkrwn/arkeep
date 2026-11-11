@@ -1,7 +1,7 @@
 # Sample integration: Rust
 
-Crate: [`sdk/rust/cofferak-sdk`](../../sdk/rust/cofferak-sdk). No dependency
-on `cofferakd`/`cofferak-core` — just the wire protocol, so it's usable as a
+Crate: [`sdk/rust/cofferak-sdk`](https://github.com/arkrwn/cofferak/tree/main/sdk/rust/cofferak-sdk). No dependency
+on `cofferakd`/`cofferak-core` - just the wire protocol, so it's usable as a
 standalone dependency.
 
 ```toml
@@ -35,7 +35,7 @@ fn main() {
 ```
 
 This exact flow is what
-[`sdk/rust/cofferak-sdk/examples/smoke.rs`](../../sdk/rust/cofferak-sdk/examples/smoke.rs)
+[`sdk/rust/cofferak-sdk/examples/smoke.rs`](https://github.com/arkrwn/cofferak/blob/main/sdk/rust/cofferak-sdk/examples/smoke.rs)
 runs for real in CI (`scripts/sdk-smoke.sh`).
 
 ## Server mode (TLS 1.3 + mutual TLS)
@@ -63,6 +63,6 @@ Uses `rustls` on AWS-LC with the same locked-down settings as the
 daemon: TLS 1.3 only, `TLS_AES_256_GCM_SHA384` only, key exchange
 ML-KEM-1024 > X25519MLKEM768 > P-384, and trust limited to the CA you
 pass (no public root store). Proven by
-[`sdk/rust/cofferak-sdk/examples/smoke_tls.rs`](../../sdk/rust/cofferak-sdk/examples/smoke_tls.rs),
+[`sdk/rust/cofferak-sdk/examples/smoke_tls.rs`](https://github.com/arkrwn/cofferak/blob/main/sdk/rust/cofferak-sdk/examples/smoke_tls.rs),
 run by `scripts/server-mode-smoke.sh`, which also asserts the negotiated
 parameters shown above.

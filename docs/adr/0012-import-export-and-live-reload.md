@@ -1,4 +1,4 @@
-# ADR 0012: Import, export and migration; the daemon reloads vault changes live
+# ADR 0012: Import, export and migration, the daemon reloads vault changes live
 
 Status: accepted, amended by ADR 0013
 
@@ -30,7 +30,7 @@ file's contents safely.
   `P/KEY` through the daemon. Existing paths are kept unless `--overwrite`.
 - `cofferak export-env --prefix P -o FILE|-` writes the direct children of
   `P` as a `.env` file (mode 0600, never overwriting without `--force`),
-  every value double-quoted and escaped; binary values, nested paths and
+  every value double-quoted and escaped, binary values, nested paths and
   names that aren't valid variable names are skipped and reported.
 - `cofferak run --prefix P [--prefix Q] -- CMD` executes `CMD` with those
   variables in its environment (later prefixes override earlier ones),
@@ -42,11 +42,11 @@ These go through the daemon with a service token, so the token's path
 prefixes and read/write permission apply and every access is audited.
 
 Parsing rules (documented in the module): blank lines and `#` comments
-skipped; optional `export `; `KEY=VALUE` with optional spaces; unquoted
-values end at ` #`; single quotes are literal; double quotes understand
-`\n \r \t \" \\ \$`; both may span lines; a UTF-8 BOM and CRLF are
+skipped, optional `export `; `KEY=VALUE` with optional spaces, unquoted
+values end at ` #`, single quotes are literal, double quotes understand
+`\n \r \t \" \\ \$`, both may span lines, a UTF-8 BOM and CRLF are
 accepted; `${VAR}` is **not** expanded (values are stored as written).
-Keys must match `[A-Za-z_][A-Za-z0-9_]*`; errors name the line.
+Keys must match `[A-Za-z_][A-Za-z0-9_]*`, errors name the line.
 `parse(format(x)) == x` is tested for arbitrary text.
 
 ### Whole-vault bundles (admin commands)
@@ -64,9 +64,9 @@ iteration count, 32-byte salt and 96-bit nonce, then AES-256-GCM-SIV over
 the bincode payload with the whole header as associated data. The key is
 PBKDF2-HMAC-SHA384 with 600,000 iterations (AWS-LC). PBKDF2 was chosen
 over Argon2id because it is FIPS-approved and available in the validated
-module already used for everything else; the passphrase minimum is 14
+module already used for everything else, the passphrase minimum is 14
 bytes, the FIPS PBKDF2 minimum. Opening rejects an iteration count outside
-100,000–50,000,000, and any change to the header or ciphertext fails
+100,000-50,000,000, and any change to the header or ciphertext fails
 authentication. Bundles never contain host keys or the root key, so they
 are machine- and OS-independent.
 
@@ -77,7 +77,7 @@ file is handed back to the invoking user (`SUDO_UID`/`SUDO_GID`).
 
 The daemon records the identity of `vault.cofferak` (device, inode,
 modification time, length) when it loads or writes it. Before each
-request it checks the file; if another process replaced it (every write is
+request it checks the file, if another process replaced it (every write is
 an atomic rename, so the inode changes), it reloads the secrets and
 service tokens. New services work immediately, and a service removed from
 the vault is denied immediately. If the vault was re-keyed (`rotate-dek`),
@@ -92,8 +92,8 @@ before (ADR 0010). The check is one `stat` per request.
   conservative choice.
 - **Encrypting bundles to the destination's public key** (no passphrase):
   stronger, but needs the destination set up first and an extra key
-  exchange step; added in ADR 0013.
-- **A database backend:** not needed; a single atomically written file is
+  exchange step, added in ADR 0013.
+- **A database backend:** not needed, a single atomically written file is
   simpler to back up, move and audit.
 
 ## Proof

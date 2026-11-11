@@ -94,14 +94,14 @@ On the **old** machine:
 cofferak export -o cofferak-backup.cfk          # Linux: sudo env COFFERAK_DATA_DIR=… cofferak export …
 ```
 
-You're asked for a passphrase twice (at least 14 characters; a long
+You're asked for a passphrase twice (at least 14 characters, a long
 passphrase of several random words is best). The bundle holds every
 secret and every service token, encrypted with AES-256-GCM-SIV under a
 key derived from the passphrase with PBKDF2-HMAC-SHA384 (600,000
 iterations). It holds no machine-specific keys, so it works on any
 machine and between Linux and macOS.
 
-Copy the file any way you like (scp, USB, cloud storage); it is useless
+Copy the file any way you like (scp, USB, cloud storage), it is useless
 without the passphrase. Send the passphrase separately.
 
 On the **new** machine: install cofferak, create a vault and enroll the
@@ -116,7 +116,7 @@ cofferak import cofferak-backup.cfk --with-tokens
   `--with-tokens` moves the service tokens too. Without that flag only
   secrets are imported and the tokens in the bundle are listed, not added:
   each token grants access to this vault, so it is never added by surprise.
-- A running daemon picks the import up immediately; no restart.
+- A running daemon picks the import up immediately, no restart.
 - Paths that already exist on the new machine are kept unless you pass
   `--overwrite`.
 - The new vault has its **own** root key (from its `init --root`): store
@@ -135,11 +135,11 @@ If you'd rather keep the *same* vault and root key: copy the data
 directory (`vault.cofferak`, `meta.json`) to the new machine, then run
 `cofferak recover --root-key <root key file> --new-host <id>` there
 ([recovery-runbook.md](recovery-runbook.md)). This also works between
-Linux and macOS. It needs the offline root key; the bundle method doesn't.
+Linux and macOS. It needs the offline root key, the bundle method doesn't.
 
 ## 4. Coffer to coffer, with keys instead of a passphrase
 
-For regular moves between coffers you own, pair them once; afterwards a
+For regular moves between coffers you own, pair them once, afterwards a
 transfer can only be opened by the coffer it was made for, and that
 coffer verifies which coffer sent it. Each coffer keeps its own master
 key: imported secrets are re-encrypted under the receiver's key. Design:
@@ -164,7 +164,7 @@ sequenceDiagram
     Srv-->>Mac: the reverse direction works the same way
 ```
 
-**Pair once** (each side shares its public identity; it's not secret):
+**Pair once** (each side shares its public identity, it's not secret):
 
 ```bash
 # on the mac
@@ -188,7 +188,7 @@ cofferak import myapp.cfk            # "imported from peer 'mac' (signature veri
 ```
 
 - Only the server can open `myapp.cfk` (X25519 + ML-KEM-1024 to the
-  server's identity); the server checks two signatures (ECDSA P-384 +
+  server's identity), the server checks two signatures (ECDSA P-384 +
   ML-DSA-87) proving the mac made it, then stores the secrets under its
   own key. A running daemon picks them up immediately.
 - Without `--prefix` the whole vault is sent, service tokens included;
@@ -220,17 +220,17 @@ vault kv get -format=json kv/myapp \
 ```
 
 Checked against Vault's documented `-format=json` output shape (quotes,
-multi-line values and non-ASCII text come through intact); keys must be
+multi-line values and non-ASCII text come through intact), keys must be
 valid variable names. Non-string values (numbers, JSON objects) arrive
 as their JSON text. Map Vault policies to cofferak service tokens with
 `enroll-service --paths … --perm ro|rw`.
 
 ## 6. What doesn't move
 
-- **Host keys** stay sealed to the machine (TPM2/Keychain); every machine
+- **Host keys** stay sealed to the machine (TPM2/Keychain), every machine
   enrolls itself.
-- **The root key** is per vault; a new vault gets a new one.
+- **The root key** is per vault, a new vault gets a new one.
 - **The coffer identity and peer list** belong to each coffer and are
   never exported.
-- **The audit log** (`audit.jsonl`) is not part of a bundle; copy it
+- **The audit log** (`audit.jsonl`) is not part of a bundle, copy it
   alongside if you need the history.

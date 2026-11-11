@@ -1,14 +1,14 @@
 //! `cofferak-cli set <path> <value>` / `get <path>` / `rm <path>` /
 //! `list [prefix]` (all four go over the daemon's Unix socket via
 //! [`crate::client::Client`]) and `rotate-dek` (a local, offline operation
-//! against `vault.cofferak` directly — the daemon's socket protocol has no
+//! against `vault.cofferak` directly - the daemon's socket protocol has no
 //! request for rewriting every host's DEK wrap, and shouldn't: that's an
 //! operator-only, vault-file-level operation, not a service-token-scoped
 //! one).
 //!
 //! `run_get`/`run_set`/`run_rm`/`run_list` are thin: each builds the
 //! matching `Request` variant, sends it, and maps the `Response` back to
-//! either the success value or a `CliError` — `Denied`/`NotFound` for the
+//! either the success value or a `CliError` - `Denied`/`NotFound` for the
 //! daemon's own ACL/lookup outcomes, `Remote` for `Response::Err` or any
 //! response shape that doesn't belong to that request kind, and `Io`
 //! (via `?`) for a transport failure from `Client::send` itself.
@@ -19,12 +19,12 @@
 //! and unwrapping that host's existing wrap, generates a fresh DEK,
 //! re-encrypts every entry and service token under it, re-wraps it for
 //! the root keypair (if one is already set) and for every given host
-//! (reusing each host's own already-sealed, *unchanged* host key — only
+//! (reusing each host's own already-sealed, *unchanged* host key - only
 //! the wrap of the DEK under that key changes), and writes the result
 //! back atomically: serialized to a temp file in the same directory as
 //! `vault.cofferak`, then `rename`d over it. The rename is the only point at
 //! which the new content becomes visible at that path, and is atomic on
-//! the same filesystem — a process killed at any point before it leaves
+//! the same filesystem - a process killed at any point before it leaves
 //! the untouched original `vault.cofferak` in place, so a corrupted vault can
 //! never result from an interrupted rotation.
 
@@ -110,10 +110,10 @@ pub fn run_list(client: &Client, token: &str, prefix: &str) -> Result<Vec<String
 ///
 /// `hosts` must include at least one host that is both actually enrolled
 /// in `data_dir/vault.cofferak` (`vault.hosts`) and whose `data_dir/hosts/
-/// <host_id>.seal` blob successfully unseals with the paired `seal` —
+/// <host_id>.seal` blob successfully unseals with the paired `seal` -
 /// that host's wrap is used to recover the *current* DEK before rotating
 /// it. Every host in `hosts`, not just that first one, gets its wrap of
-/// the DEK updated; a host enrolled in the vault but *not* passed here
+/// the DEK updated, a host enrolled in the vault but *not* passed here
 /// keeps wrapping the old (now-rotated-away) DEK and will need
 /// re-enrolling separately.
 ///
@@ -215,7 +215,7 @@ pub fn run_rotate_dek(
         );
     }
 
-    // Sealed under the new DEK, atomic write; every rotated host's anchor
+    // Sealed under the new DEK, atomic write, every rotated host's anchor
     // is rewritten under the new DEK too.
     let hosts: Vec<&str> = host_keys.iter().map(|(h, _)| h.as_str()).collect();
     super::integrity::commit(data_dir, &hosts, &mut vault, &new_dek)?;

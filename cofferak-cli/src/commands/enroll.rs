@@ -112,7 +112,7 @@ pub fn run_enroll_host_with_seal(
 /// Recovers the DEK by trying every already-enrolled host's own sealed
 /// blob against that same host's real platform [`HostSeal`] backend (via
 /// [`current_host_seal`]), stopping at the first one that successfully
-/// unseals — this machine is expected to be one of the vault's enrolled
+/// unseals - this machine is expected to be one of the vault's enrolled
 /// hosts. Returns `Err(CliError::VaultMissing)` if there is no vault, or
 /// `Err(CliError::HostNotFound)` if no enrolled host's blob unseals here.
 ///
@@ -123,7 +123,7 @@ pub fn run_enroll_host_with_seal(
 // `cli_enroll` integration test binary, which only exercises
 // `run_enroll_host_with_seal` and `run_enroll_service_with_seal` (the
 // real platform `HostSeal` backend this function searches isn't
-// available/stable in CI) — this one is used by the real `cofferak-cli`
+// available/stable in CI) - this one is used by the real `cofferak-cli`
 // binary's `main.rs`.
 #[allow(dead_code)]
 pub fn run_enroll_service(

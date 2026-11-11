@@ -6,7 +6,7 @@
 # The daemon is cofferakd/examples/dev-daemon.rs: the same `Daemon`
 # request path as the real cofferakd (token lookup, ACL, AES-256-GCM-SIV
 # decrypt, audit log append), without host-key sealing, which only
-# happens once at startup. Reads never touch vault.cofferak; only writes
+# happens once at startup. Reads never touch vault.cofferak, only writes
 # do (fsync'd, ADR 0010), so write latency depends on your disk.
 #
 # Usage: ./scripts/bench.sh [requests]

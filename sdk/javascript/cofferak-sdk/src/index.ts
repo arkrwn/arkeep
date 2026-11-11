@@ -6,7 +6,7 @@
  * newline-delimited JSON protocol documented in
  * `cofferakd/src/protocol.rs` (`Request`/`Response`, serde's default
  * externally-tagged enum encoding). Node.js standard library only
- * (`net`, `tls`, `fs`) — no runtime dependencies, including for TLS.
+ * (`net`, `tls`, `fs`) - no runtime dependencies, including for TLS.
  *
  * ```ts
  * import { Client } from "cofferak-sdk";
@@ -27,7 +27,7 @@
  * ```
  *
  * The compiled `dist/index.js` (CommonJS) works the same way from plain
- * JavaScript — this is one package serving both runtimes.
+ * JavaScript - this is one package serving both runtimes.
  */
 
 import * as fs from "node:fs";
@@ -35,12 +35,12 @@ import * as net from "node:net";
 import * as tls from "node:tls";
 
 /** Mirrors cofferakd's `protocol::MAX_LINE_BYTES` (and the Rust/Go/Python
- * SDKs' identical constant) — a hard ceiling on one response line, so a
+ * SDKs' identical constant) - a hard ceiling on one response line, so a
  * malicious or compromised daemon that never terminates a response
  * can't grow this client's buffer without limit. */
 const MAX_LINE_BYTES = 16 * 1024 * 1024;
 
-/** Bounds how long one call can block on the network — a stalled or
+/** Bounds how long one call can block on the network - a stalled or
  * malicious daemon otherwise ties up the caller indefinitely. Matches
  * cofferakd's own per-connection timeout (ADR 0008). */
 const IO_TIMEOUT_MS = 30_000;
@@ -95,12 +95,12 @@ type WireResponse =
 export interface TlsOptions {
   /** `"host:port"` to connect to (matches the daemon's `$COFFERAK_TLS_ADDR`). */
   addr: string;
-  /** Verified against the server's certificate (its subject/SAN) — this
-   * is NOT where you disable verification; there is no option to do
+  /** Verified against the server's certificate (its subject/SAN) - this
+   * is NOT where you disable verification, there is no option to do
    * that in this SDK. */
   serverName: string;
   /** PEM file containing the CA that signed the server's certificate.
-   * cofferak's TLS is for a self-managed deployment, not the public web —
+   * cofferak's TLS is for a self-managed deployment, not the public web -
    * this client trusts ONLY this CA, never Node's bundled public root
    * store (passing `ca` to `tls.connect` replaces the default trust
    * store rather than adding to it). */
@@ -126,7 +126,7 @@ type Transport =
     };
 
 /**
- * A client connected to one cofferakd endpoint — a Unix socket, or
+ * A client connected to one cofferakd endpoint - a Unix socket, or
  * (server mode) a TLS/TCP address. Each call opens a fresh connection,
  * matching the convention established by cofferakd's own CLI client.
  */
@@ -138,7 +138,7 @@ export class Client {
   }
 
   private static fromTransport(transport: Transport): Client {
-    // Bypasses the public (Unix-socket) constructor entirely — there is
+    // Bypasses the public (Unix-socket) constructor entirely - there is
     // no intermediate "empty"/placeholder Client ever created.
     const client = Object.create(Client.prototype) as Client;
     (client as unknown as { transport: Transport }).transport = transport;
@@ -189,7 +189,7 @@ export class Client {
               // (ADR 0011).
               ciphers: "TLS_AES_256_GCM_SHA384",
               // rejectUnauthorized defaults to true and is never set to
-              // false anywhere in this SDK — that is the one setting
+              // false anywhere in this SDK - that is the one setting
               // that would disable certificate verification.
             })
           : net.createConnection({ path: transport.socketPath });
@@ -216,7 +216,7 @@ export class Client {
         sock.write(JSON.stringify(request) + "\n");
       });
       // For the TLS transport `connect` fires on the underlying TCP
-      // socket before the handshake completes; writing the request is
+      // socket before the handshake completes, writing the request is
       // deferred to `secureConnect` there instead.
       if (transport.kind === "tls") {
         (sock as tls.TLSSocket).on("secureConnect", () => {

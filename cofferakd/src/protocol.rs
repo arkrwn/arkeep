@@ -68,7 +68,7 @@ pub fn decode_response(line: &[u8]) -> Result<Response, serde_json::Error> {
 /// Hard ceiling on one request/response line, enforced by
 /// [`read_line_bounded`]. Generous for any realistic secret value while
 /// still bounding memory a single connection can force the process to
-/// allocate — a client that never sends `\n` (or sends one absurdly
+/// allocate - a client that never sends `\n` (or sends one absurdly
 /// long line) otherwise grows the read buffer without limit. This
 /// matters most for the network-reachable TLS listener (server mode,
 /// ADR 0008), but is enforced for every transport (Unix socket
@@ -125,7 +125,7 @@ impl Shutdownable for std::net::TcpStream {
 /// (including the trailing `\n` if one was found before the limit), or
 /// `Err` if the limit was hit before a newline, or on any I/O error.
 /// Hitting the limit is reported as `InvalidData`, not silently
-/// truncated — the caller closes the connection rather than trying to
+/// truncated - the caller closes the connection rather than trying to
 /// parse a partial line as JSON.
 pub fn read_line_bounded<R: std::io::BufRead>(
     reader: &mut R,
@@ -256,9 +256,9 @@ mod tests {
     #[test]
     fn read_line_bounded_rejects_a_line_with_no_newline_past_the_limit() {
         // A tiny reader with a byte stream larger than MAX_LINE_BYTES and
-        // no '\n' anywhere — simulating a client that never terminates
+        // no '\n' anywhere - simulating a client that never terminates
         // its line. Use a small artificial cap via a wrapper is overkill
-        // here; instead feed slightly more than MAX_LINE_BYTES of plain
+        // here, instead feed slightly more than MAX_LINE_BYTES of plain
         // bytes through the real constant so the test is a real,
         // non-mocked proof the cap is enforced, not a stand-in for it.
         let oversized = vec![b'x'; MAX_LINE_BYTES + 1];
@@ -293,7 +293,7 @@ mod deadline_tests {
         let (server, mut client) = UnixStream::pair().unwrap();
         let start = Instant::now();
         let _guard = enforce_deadline(server.try_clone().unwrap(), Duration::from_millis(200));
-        // The client never sends anything; reading from the server side
+        // The client never sends anything, reading from the server side
         // must end (EOF) once the deadline shuts the socket down.
         let mut s = server;
         let mut buf = [0u8; 1];

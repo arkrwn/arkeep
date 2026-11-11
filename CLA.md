@@ -1,7 +1,7 @@
-# Contributor License Agreement (CLA) — Copyright Assignment
+# Contributor License Agreement (CLA) - Copyright Assignment
 
-Copyright Holder: **Arie Kurniawan (arkrwn)** — <hubungi.aja@gmail.com>
-Version: 1.0 (global template — applies to any project owned by the
+Copyright Holder: **Arie Kurniawan (arkrwn)** - <hubungi.aja@gmail.com>
+Version: 1.0 (global template - applies to any project owned by the
 Copyright Holder)
 
 By signing this Agreement, You ("Contributor") agree to the following terms
@@ -10,8 +10,8 @@ software project owned and maintained by the Copyright Holder.
 
 ## 1. Definitions
 
-**"Contribution"** means any work of authorship — including source code,
-documentation, configuration, designs, tests, and bug fixes — that You
+**"Contribution"** means any work of authorship - including source code,
+documentation, configuration, designs, tests, and bug fixes - that You
 intentionally submit to such a project in any form (pull request, patch,
 issue attachment, mailing list message, or any other channel).
 
@@ -39,8 +39,8 @@ projects.
 ## 3. Relicensing Right
 
 The Copyright Holder may license, sublicense, or relicense Your Contributions
-under any licensing scheme — including but not limited to Apache-2.0,
-GPL/AGPL, proprietary, or dual/commercial licensing — without obtaining
+under any licensing scheme - including but not limited to Apache-2.0,
+GPL/AGPL, proprietary, or dual/commercial licensing - without obtaining
 further permission from You.
 
 ## 4. Patent Grant
@@ -51,7 +51,7 @@ worldwide, no-charge, royalty-free, irrevocable patent license to make, use,
 sell, and otherwise exploit the Contribution as part of the projects, under
 any license the Copyright Holder selects.
 
-## 5. Original Work; Employer Authorization
+## 5. Original Work, Employer Authorization
 
 You confirm that:
 

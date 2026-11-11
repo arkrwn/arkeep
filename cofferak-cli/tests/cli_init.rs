@@ -187,7 +187,7 @@ fn run_init_host_with_seal_second_distinct_host_returns_root_wrap_already_set() 
 
     // Enrolling a *different* host_id once a host already exists is out of
     // scope for `run_init_host_with_seal` (that's Task 12's
-    // `run_enroll_host_with_seal`, which takes both hosts' seals) — it must
+    // `run_enroll_host_with_seal`, which takes both hosts' seals) - it must
     // be rejected rather than attempting single-seal DEK recovery, which is
     // unsound against name-bound real backends (systemd-creds, Keychain).
     let result = run_init_host_with_seal(&dir, "host-b", &seal);

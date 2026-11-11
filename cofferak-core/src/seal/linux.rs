@@ -1,10 +1,10 @@
 //! Linux `HostSeal` backend: shells out to the real `systemd-creds` binary.
 //!
 //! `systemd-creds encrypt --name=<name> - -` reads raw key bytes on stdin
-//! and writes a sealed credential blob to stdout; `systemd-creds decrypt
+//! and writes a sealed credential blob to stdout, `systemd-creds decrypt
 //! --name=<name> - -` is the inverse, reading a blob on stdin and writing
-//! the raw key bytes to stdout. (The two `-` positional arguments — input
-//! and output — are mandatory: without them systemd-creds exits with
+//! the raw key bytes to stdout. (The two `-` positional arguments - input
+//! and output - are mandatory: without them systemd-creds exits with
 //! "Too few arguments.") The `name` is bound into the seal by
 //! `systemd-creds` itself, so decrypting with a different name (or a
 //! tampered blob) fails.
@@ -25,17 +25,17 @@ impl SystemdCredsSeal {
     /// stdout.
     ///
     /// Spawn failure (binary missing or not executable) maps to
-    /// [`SealError::Unavailable`]; a non-zero exit status or empty stdout
-    /// maps to [`SealError::Invalid`]; any other I/O failure while talking
+    /// [`SealError::Unavailable`], a non-zero exit status or empty stdout
+    /// maps to [`SealError::Invalid`], any other I/O failure while talking
     /// to the child process maps to [`SealError::Io`].
     fn run(&self, args: &[String], input: &[u8]) -> Result<Vec<u8>, SealError> {
         let mut child = Command::new(systemd_creds())
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            // Captured (not discarded) so a real failure — most commonly
+            // Captured (not discarded) so a real failure - most commonly
             // "Permission denied" reading the root-only host secret when
-            // this process isn't root, see docs/adr/0009 — is visible in
+            // this process isn't root, see docs/adr/0009 - is visible in
             // the returned error instead of a bare "Invalid" that leaves
             // the caller guessing. systemd-creds's own stderr is
             // operational diagnostics, never the key material itself.

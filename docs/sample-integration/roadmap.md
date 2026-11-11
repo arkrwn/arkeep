@@ -1,7 +1,7 @@
 # SDK roadmap
 
 **Shipped and smoke-tested in CI today:** Rust, Go, Python,
-TypeScript/JavaScript (one package) — see the other pages in this
+TypeScript/JavaScript (one package) - see the other pages in this
 directory.
 
 **Planned, not yet started:**
@@ -15,11 +15,11 @@ directory.
 
 No committed timeline. Each new SDK should follow the same bar the
 existing four do: a real smoke test added to `scripts/sdk-smoke.sh`,
-wired into CI, proven against a real daemon — not merely documented.
+wired into CI, proven against a real daemon - not merely documented.
 
 **Also tracked, not language-specific:** publishing these SDKs to their
 respective package registries (crates.io, pkg.go.dev, PyPI, npm) once
 the project is ready to commit to API stability for them. Today they are
 consumed via local path/relative references (see each language's page
-in this directory) — a deliberate choice while the wire protocol and SDK
+in this directory) - a deliberate choice while the wire protocol and SDK
 surface area are still young.

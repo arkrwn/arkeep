@@ -57,7 +57,7 @@ impl fmt::Display for IntegrityError {
             ),
             IntegrityError::Rollback { found, expected_at_least } => write!(
                 f,
-                "vault.cofferak is an older copy (generation {found}, this host has seen {expected_at_least}); \
+                "vault.cofferak is an older copy (generation {found}, this host has seen {expected_at_least}), \
                  if you restored a backup on purpose, run `cofferak accept-restore`"
             ),
         }
@@ -106,7 +106,7 @@ pub struct VaultEntry {
 ///
 /// `root_wrap` is `None` only between `init --root` (vault exists, no DEK
 /// yet) and the first `init --host` (which generates the DEK and must set
-/// `root_wrap`); every vault with at least one host has
+/// `root_wrap`), every vault with at least one host has
 /// `root_wrap = Some(_)`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VaultFile {
@@ -118,14 +118,14 @@ pub struct VaultFile {
     pub services: BTreeMap<String, EncryptedEntry>,
     pub entries: BTreeMap<String, VaultEntry>,
     /// This coffer's identity private key (ADR 0013), encrypted under the
-    /// DEK with associated data `cofferak/v2/identity`; created on first
+    /// DEK with associated data `cofferak/v2/identity`, created on first
     /// use by `cofferak identity`.
     pub identity: Option<EncryptedEntry>,
     /// Trusted peer coffers' public identities by name, each encrypted
     /// under the DEK (associated data `cofferak/v2/peer\0<name>`) so an
     /// attacker who can write the file can't add a peer.
     pub peers: BTreeMap<String, EncryptedEntry>,
-    /// Incremented on every sealed write; compared with this host's
+    /// Incremented on every sealed write, compared with this host's
     /// anchor to detect an older copy being put back (ADR 0015).
     pub generation: u64,
     /// HMAC-SHA384 over the whole vault (with this field empty), keyed from
@@ -293,7 +293,7 @@ impl VaultFile {
                 })
             }
             // Format 2 has the same layout minus the identity/peers fields:
-            // upgrade it in memory; the next save writes format 3.
+            // upgrade it in memory, the next save writes format 3.
             2 => {
                 let v2: VaultFileV2 = bincode_options()
                     .deserialize(bytes)
@@ -319,7 +319,7 @@ impl VaultFile {
 
 /// The `vault.cofferak` format version this build writes. Version 2 is
 /// crypto format v2 (ADR 0011): hybrid post-quantum root wrap and
-/// context-bound ciphertexts; version 3 adds the coffer identity and
+/// context-bound ciphertexts, version 3 adds the coffer identity and
 /// trusted peers (ADR 0013), version 4 adds the generation counter and
 /// whole-file integrity code (ADR 0015). Versions 2 and 3 are read and
 /// upgraded.
@@ -560,8 +560,8 @@ fn now_nanos() -> u128 {
 }
 
 /// An exclusive, process-wide advisory lock on a vault, held for as long
-/// as this value is alive. Every read-modify-write of `vault.cofferak` — the
-/// daemon persisting a `set`/`rm`, and every CLI admin command — takes
+/// as this value is alive. Every read-modify-write of `vault.cofferak` - the
+/// daemon persisting a `set`/`rm`, and every CLI admin command - takes
 /// this lock first, so two writers can never interleave and silently drop
 /// each other's changes. The lock file is `<vault path>.lock`.
 pub struct VaultLock {

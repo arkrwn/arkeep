@@ -1,0 +1,125 @@
+site_name: cofferak
+site_description: A military-grade, superfast coffer for your secrets and credentials.
+repo_url: https://github.com/arkrwn/cofferak
+repo_name: arkrwn/cofferak
+edit_uri: edit/main/docs/
+copyright: Apache License 2.0. The cofferak name and logo are covered by the trademark policy.
+docs_dir: docs
+strict: true
+exclude_docs: |
+  requirements.txt
+
+theme:
+  name: material
+  logo: assets/cofferak-mark-dark.svg
+  favicon: assets/favicon.ico
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.action.edit
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-night
+        name: Dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-sunny
+        name: Light mode
+
+extra_css:
+  - assets/site.css
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+not_in_nav: |
+  /assets/README.md
+  /PROGRESS.md
+
+nav:
+  - Home: index.md
+  - Overview: overview.md
+  - Getting started: getting-started.md
+  - Use it:
+      - Commands: commands.md
+      - SDKs: sdks.md
+      - SDK examples:
+          - sample-integration/README.md
+          - CLI and shell: sample-integration/cli.md
+          - Rust: sample-integration/rust.md
+          - Go: sample-integration/go.md
+          - Python: sample-integration/python.md
+          - TypeScript: sample-integration/typescript.md
+          - JavaScript: sample-integration/javascript.md
+          - Roadmap: sample-integration/roadmap.md
+      - Server mode: server-mode.md
+  - Operate:
+      - Deployment: deployment.md
+      - Backup and health: backup.md
+      - Migration: migration.md
+      - Recovery runbook: recovery-runbook.md
+  - Security:
+      - Protecting the root key: key-security.md
+      - Comparison: comparison.md
+      - Benchmarks: benchmarks.md
+  - Design:
+      - Specification: SPEC.md
+      - Decisions (ADRs):
+          - adr/README.md
+          - "0001 Envelope encryption with a dual-wrapped DEK": adr/0001-envelope-encryption-dual-wrapped-dek.md
+          - "0002 `HostSeal` trait isolates the one platform-dependent piece": adr/0002-hostseal-trait-for-platform-sealing.md
+          - "0003 No external vault/KMS dependency": adr/0003-no-external-vault-dependency.md
+          - "0004 `cofferakd` exposes a library target": adr/0004-cofferakd-library-target.md
+          - "0005 Multi-language SDKs over the shared wire protocol, proven in CI": adr/0005-multi-language-sdks-ci-proven.md
+          - "0006 Real per-host DEK reconstruction and token loading in `cofferakd`": adr/0006-real-token-loading-and-host-id.md
+          - "0007 macOS Keychain cross-process access: run the daemon from the binary that sealed the key": adr/0007-macos-keychain-cross-process-limitation.md
+          - "0008 Server mode is RPC over TLS, reusing the existing wire protocol": adr/0008-server-mode-rpc-over-tls.md
+          - "0009 On Linux, the daemon gets its host key from systemd, not from systemd-creds directly": adr/0009-linux-host-key-via-systemd-credentials.md
+          - "0010 Daemon writes are durable before they are acknowledged, one lock for all vault writers": adr/0010-durable-writes-and-vault-locking.md
+          - "0011 CNSA-grade cryptography, post-quantum recovery wrap, and a hardened, mutual-TLS-only transport": adr/0011-cnsa-grade-crypto-and-hardened-transport.md
+          - "0012 Import, export and migration, the daemon reloads vault changes live": adr/0012-import-export-and-live-reload.md
+          - "0013 Coffer identities and signed, encrypted transfers between coffers": adr/0013-coffer-identities-and-peer-transfers.md
+          - "0014 Roadmap for Kubernetes and multi-node deployments": adr/0014-kubernetes-and-fleet-roadmap.md
+          - "0015 Vault integrity code and rollback protection": adr/0015-vault-integrity-and-rollback-protection.md
+          - "0016 Security hardening after the internal audit": adr/0016-security-hardening-from-the-audit.md
+          - "0017 Closing the known limits from ADR 0015 and ADR 0016": adr/0017-closing-the-known-limits.md
+          - "0018 Backups, self-healing on deletion, and `cofferak doctor`": adr/0018-backup-self-heal-and-doctor.md
+  - Development:
+      - development.md
+      - Progress: PROGRESS.md

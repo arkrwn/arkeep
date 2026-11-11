@@ -57,8 +57,8 @@ fn socket_path() -> PathBuf {
 
 /// Load the vault at `data_dir/vault.cofferak`.
 ///
-/// Returns `Err` with a clear message on any failure — missing file, I/O
-/// error, or a corrupt/truncated file — instead of panicking or silently
+/// Returns `Err` with a clear message on any failure - missing file, I/O
+/// error, or a corrupt/truncated file - instead of panicking or silently
 /// falling back to a freshly-initialized empty vault. This is the testable
 /// core of vault loading; `main` wraps it with the thin `exit`-on-failure
 /// logic below so this function itself never terminates the process.
@@ -69,18 +69,18 @@ pub fn load_vault_or_exit(data_dir: &Path) -> Result<VaultFile, String> {
             format!("could not read vault file at {}: {io_err}", path.display())
         }
         FormatError::Corrupt => format!(
-            "vault file at {} is corrupt or truncated; refusing to start",
+            "vault file at {} is corrupt or truncated, refusing to start",
             path.display()
         ),
         e @ FormatError::UnsupportedVersion(_) => {
-            format!("vault file at {}: {e}; refusing to start", path.display())
+            format!("vault file at {}: {e}, refusing to start", path.display())
         }
     })
 }
 
 /// Build the `HostSeal` backend for `host_id`. **Must match
 /// `cofferak-cli/src/commands/init.rs`'s `current_host_seal(host_id)`
-/// exactly** — the daemon and the CLI are sealing/unsealing the same
+/// exactly** - the daemon and the CLI are sealing/unsealing the same
 /// per-host blob under the same OS-level identity (Keychain
 /// service/account, or `systemd-creds` credential name), so a mismatch
 /// here means the daemon can never unseal what `init --host`/
@@ -101,8 +101,8 @@ fn host_seal(host_id: &str) -> KeychainSeal {
 }
 
 /// Which host this daemon process is running as. `$COFFERAK_HOST_ID` if
-/// set; otherwise, if the vault has exactly one enrolled host, that one
-/// (the common single-host case needs no extra configuration); otherwise
+/// set, otherwise, if the vault has exactly one enrolled host, that one
+/// (the common single-host case needs no extra configuration), otherwise
 /// an error naming every enrolled host so the operator can set the env
 /// var explicitly. The result is validated (`acl::validate_id`) because it
 /// is used to build a file path and a credential name.
@@ -114,14 +114,14 @@ fn resolve_host_id(vault: &VaultFile) -> Result<String, String> {
             match ids.len() {
                 0 => {
                     return Err(
-                        "this vault has no enrolled hosts yet; run `cofferak init --host` first"
+                        "this vault has no enrolled hosts yet, run `cofferak init --host` first"
                             .into(),
                     )
                 }
                 1 => ids.remove(0).clone(),
                 _ => {
                     return Err(format!(
-                        "this vault has multiple enrolled hosts ({}); set $COFFERAK_HOST_ID to the one this process runs as",
+                        "this vault has multiple enrolled hosts ({}), set $COFFERAK_HOST_ID to the one this process runs as",
                         ids.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
                     ))
                 }
@@ -146,12 +146,12 @@ fn credential_name(host_id: &str) -> String {
 ///    `cofferak-<host_id>`, read it. systemd decrypted it *as root* from the
 ///    sealed blob named in `LoadCredentialEncrypted=` and placed the
 ///    plaintext on a private, unit-only tmpfs before dropping to
-///    `User=cofferak` — so this unprivileged daemon never needs access to
+///    `User=cofferak` - so this unprivileged daemon never needs access to
 ///    `systemd-creds`'s root-only host secret.
 /// 2. **Fallback:** unseal `hosts/<host_id>.seal` directly through the
-///    platform `HostSeal` (Keychain on macOS; on Linux this shells out to
+///    platform `HostSeal` (Keychain on macOS, on Linux this shells out to
 ///    `systemd-creds decrypt`, which requires root for host-scope
-///    credentials — so on Linux this path is for manual/root use only).
+///    credentials - so on Linux this path is for manual/root use only).
 fn load_host_key(host_id: &str, data_dir: &Path) -> Result<KeyBytes, String> {
     if let Some(dir) = std::env::var_os("CREDENTIALS_DIRECTORY") {
         let cred_path = PathBuf::from(dir).join(credential_name(host_id));
@@ -160,7 +160,7 @@ fn load_host_key(host_id: &str, data_dir: &Path) -> Result<KeyBytes, String> {
                 .map_err(|e| format!("could not read {}: {e}", cred_path.display()))?;
             let key: [u8; 32] = bytes.as_slice().try_into().map_err(|_| {
                 format!(
-                    "systemd credential {} is {} bytes, expected 32 — was it sealed by `cofferak init --host`?",
+                    "systemd credential {} is {} bytes, expected 32 - was it sealed by `cofferak init --host`?",
                     credential_name(host_id),
                     bytes.len()
                 )
@@ -182,8 +182,8 @@ fn load_host_key(host_id: &str, data_dir: &Path) -> Result<KeyBytes, String> {
         .map_err(|e| {
             let hint = if cfg!(target_os = "linux") {
                 format!(
-                    " — under systemd, deliver it with `LoadCredentialEncrypted={}:{}` \
-                     (see docs/deployment.md); a direct `systemd-creds decrypt` needs root",
+                    " - under systemd, deliver it with `LoadCredentialEncrypted={}:{}` \
+                     (see docs/deployment.md), a direct `systemd-creds decrypt` needs root",
                     credential_name(host_id),
                     sealed_path.display()
                 )
@@ -248,12 +248,12 @@ pub fn run() {
     // Integrity and rollback check (ADR 0015) before serving anything.
     let anchor = cofferak_core::format::read_anchor(&data_dir, &host_id, &dek).unwrap_or_else(|_| {
         eprintln!(
-            "cofferakd: the anchor file for host '{host_id}' was modified outside cofferak; refusing to start"
+            "cofferakd: the anchor file for host '{host_id}' was modified outside cofferak, refusing to start"
         );
         std::process::exit(1);
     });
     if let Err(e) = vault.verify(&dek, anchor) {
-        eprintln!("cofferakd: {e}; refusing to start");
+        eprintln!("cofferakd: {e}, refusing to start");
         std::process::exit(1);
     }
     let generation_seen = anchor.unwrap_or(0).max(vault.generation);

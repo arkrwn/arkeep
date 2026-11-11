@@ -52,7 +52,7 @@ pub struct RestoreReport {
 /// Accept the vault currently on disk as the newest valid one for
 /// `host_id`, after an intentional restore of an older backup. The file
 /// must still be authentic (its integrity code verifies under this
-/// vault's DEK); only the "older than seen" check is reset.
+/// vault's DEK), only the "older than seen" check is reset.
 pub fn run_accept_restore_with_seal(
     data_dir: &Path,
     host_id: &str,

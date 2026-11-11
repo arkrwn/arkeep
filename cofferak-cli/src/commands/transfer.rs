@@ -62,7 +62,7 @@ pub struct ExportReport {
 }
 
 /// What to put in a bundle: every secret (no prefixes) or only those under
-/// the given prefixes; service tokens included or not.
+/// the given prefixes, service tokens included or not.
 #[derive(Debug, Clone, Default)]
 pub struct Selection {
     pub prefixes: Vec<String>,
@@ -295,7 +295,7 @@ pub fn run_export_to_peer_with_seal(
     let peers = decrypt_peers(&vault, &dek)?;
     let peer = peers.get(peer_name).ok_or_else(|| {
         invalid(format!(
-            "no trusted peer named {peer_name}; add it with `cofferak peer add {peer_name} <identity file>`"
+            "no trusted peer named {peer_name}, add it with `cofferak peer add {peer_name} <identity file>`"
         ))
     })?;
     let (me, created) = ensure_identity(&mut vault, &dek)?;
@@ -419,17 +419,17 @@ fn apply_bundle(
     for e in &b.entries {
         if !valid_import_path(&e.path) {
             return Err(invalid(format!(
-                "bundle contains an invalid path {:?}; nothing imported",
+                "bundle contains an invalid path {:?}, nothing imported",
                 e.path
             )));
         }
     }
     for t in &b.services {
         cofferak_core::acl::validate_id("service", &t.service_id)
-            .map_err(|m| invalid(format!("bundle contains {m}; nothing imported")))?;
+            .map_err(|m| invalid(format!("bundle contains {m}, nothing imported")))?;
         if t.prefixes.is_empty() || t.prefixes.iter().any(|p| !valid_import_path(p)) {
             return Err(invalid(format!(
-                "bundle contains service {} with invalid path prefixes; nothing imported",
+                "bundle contains service {} with invalid path prefixes, nothing imported",
                 t.service_id
             )));
         }
@@ -487,7 +487,7 @@ fn apply_bundle(
 
 /// Restore a passphrase bundle or a peer transfer into the vault at
 /// `data_dir` (initialized, with this host enrolled). Existing paths and
-/// service ids are kept unless `overwrite`; everything is re-encrypted
+/// service ids are kept unless `overwrite`, everything is re-encrypted
 /// under this vault's DEK. With `dry_run`, nothing is written.
 #[allow(clippy::too_many_arguments)] // flags map 1:1 to `cofferak import` options
 pub fn run_import_with_seal(
@@ -532,7 +532,7 @@ pub fn run_import_with_seal(
                     .map(|(n, _)| n)
                     .ok_or_else(|| {
                         invalid(format!(
-                            "the bundle was signed by an untrusted coffer ({}); if you expected it, \
+                            "the bundle was signed by an untrusted coffer ({}), if you expected it, \
                              add that coffer with `cofferak peer add <name> <its identity file>` and retry",
                             sender.short_fingerprint()
                         ))
@@ -541,7 +541,7 @@ pub fn run_import_with_seal(
             let age = now_unix() - b.created_at;
             if age > MAX_TRANSFER_AGE_SECS && !allow_old {
                 return Err(invalid(format!(
-                    "this transfer was made {} days ago; transfers older than 30 days are refused \
+                    "this transfer was made {} days ago, transfers older than 30 days are refused \
                      in case they are a replay. If you expected it, re-run with --allow-old",
                     age / 86400
                 )));
@@ -552,7 +552,7 @@ pub fn run_import_with_seal(
                     if b.created_at < last_ts || (b.created_at == last_ts && hash == last_hash) {
                         return Err(invalid(format!(
                             "this transfer from peer '{peer_name}' was already imported, or is older \
-                             than one already imported; refusing a possible replay"
+                             than one already imported, refusing a possible replay"
                         )));
                     }
                 }
@@ -663,7 +663,7 @@ pub fn collect_env(
 }
 
 /// Render the variables under `prefix` as `.env` text. Values must be
-/// UTF-8 text; binary values are listed in the returned skip list.
+/// UTF-8 text, binary values are listed in the returned skip list.
 pub fn run_export_env(
     client: &Client,
     token: &str,
@@ -674,7 +674,7 @@ pub fn run_export_env(
     for (k, v) in vars {
         match std::str::from_utf8(&v) {
             Ok(s) => text_vars.push((k, s.to_string())),
-            Err(_) => skipped.push(format!("{k} (binary value; use `get -o`)")),
+            Err(_) => skipped.push(format!("{k} (binary value, use `get -o`)")),
         }
     }
     let text = Zeroizing::new(dotenv::format(

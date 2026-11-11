@@ -1,7 +1,7 @@
 # Sample integration: JavaScript
 
-Same package as [TypeScript](typescript.md) —
-[`sdk/javascript/cofferak-sdk`](../../sdk/javascript/cofferak-sdk) — consumed
+Same package as [TypeScript](typescript.md) -
+[`sdk/javascript/cofferak-sdk`](https://github.com/arkrwn/cofferak/tree/main/sdk/javascript/cofferak-sdk) - consumed
 from plain JavaScript via its compiled `dist/index.js` (CommonJS), no
 build step needed on the consuming side.
 
@@ -32,12 +32,12 @@ main();
 ```
 
 This exact flow is what
-[`sdk/javascript/cofferak-sdk/examples/smoke.js`](../../sdk/javascript/cofferak-sdk/examples/smoke.js)
+[`sdk/javascript/cofferak-sdk/examples/smoke.js`](https://github.com/arkrwn/cofferak/blob/main/sdk/javascript/cofferak-sdk/examples/smoke.js)
 runs for real in CI (`scripts/sdk-smoke.sh`), against the actual compiled
-`dist/` output — proving the JavaScript consumption path, not just the
+`dist/` output - proving the JavaScript consumption path, not just the
 TypeScript source.
 
-## Server mode (TLS / mutual TLS)
+## Server mode over mutual TLS
 
 ```js
 const client = Client.connectTls({
@@ -50,9 +50,9 @@ const client = Client.connectTls({
 });
 ```
 
-Same hardening as the [TypeScript page](typescript.md#server-mode-tls--mutual-tls)
+Same hardening as the [TypeScript page](typescript.md#server-mode-over-mutual-tls)
 (TLS 1.3 only, no public-root fallback, `rejectUnauthorized` never
-disabled) — this is the same compiled code. Proven for real against the
+disabled) - this is the same compiled code. Proven for real against the
 compiled `dist/` output by
-[`sdk/javascript/cofferak-sdk/examples/smoke_tls.js`](../../sdk/javascript/cofferak-sdk/examples/smoke_tls.js),
+[`sdk/javascript/cofferak-sdk/examples/smoke_tls.js`](https://github.com/arkrwn/cofferak/blob/main/sdk/javascript/cofferak-sdk/examples/smoke_tls.js),
 run by `scripts/server-mode-smoke.sh`.

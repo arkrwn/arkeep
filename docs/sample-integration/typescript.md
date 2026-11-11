@@ -1,8 +1,8 @@
 # Sample integration: TypeScript
 
-Package: [`sdk/javascript/cofferak-sdk`](../../sdk/javascript/cofferak-sdk) —
+Package: [`sdk/javascript/cofferak-sdk`](https://github.com/arkrwn/cofferak/tree/main/sdk/javascript/cofferak-sdk) -
 written in TypeScript, Node's `net` module only, no runtime dependencies.
-(Same package also works from plain JavaScript — see
+(Same package also works from plain JavaScript - see
 [`javascript.md`](javascript.md).)
 
 ```bash
@@ -27,12 +27,12 @@ try {
 }
 ```
 
-Build with `npm run build` (runs `tsc`); this exact flow — compiled to
-plain JavaScript and run with `node` — is what
-[`sdk/javascript/cofferak-sdk/examples/smoke.js`](../../sdk/javascript/cofferak-sdk/examples/smoke.js)
+Build with `npm run build` (runs `tsc`), this exact flow - compiled to
+plain JavaScript and run with `node` - is what
+[`sdk/javascript/cofferak-sdk/examples/smoke.js`](https://github.com/arkrwn/cofferak/blob/main/sdk/javascript/cofferak-sdk/examples/smoke.js)
 runs for real in CI (`scripts/sdk-smoke.sh`).
 
-## Server mode (TLS / mutual TLS)
+## Server mode over mutual TLS
 
 ```ts
 const client = Client.connectTls({
@@ -45,14 +45,14 @@ const client = Client.connectTls({
 });
 ```
 
-Uses Node's own `tls`/`fs` modules — no third-party TLS library. TLS 1.3
+Uses Node's own `tls`/`fs` modules - no third-party TLS library. TLS 1.3
 only (`minVersion`/`maxVersion` both `"TLSv1.3"`, cipher suite
 `TLS_AES_256_GCM_SHA384` only), `rejectUnauthorized`
 is never set to `false` anywhere in this SDK, and passing `ca` to
 `tls.connect` replaces Node's bundled public root store for this
-connection rather than adding to it — this client trusts only the CA
-you provide. Proven for real — including rejecting a wrong hostname,
+connection rather than adding to it - this client trusts only the CA
+you provide. Proven for real - including rejecting a wrong hostname,
 rejecting a connection with no client cert,
-and rejecting a client cert signed by a different, untrusted CA — by
-[`sdk/javascript/cofferak-sdk/examples/smoke_tls.js`](../../sdk/javascript/cofferak-sdk/examples/smoke_tls.js),
+and rejecting a client cert signed by a different, untrusted CA - by
+[`sdk/javascript/cofferak-sdk/examples/smoke_tls.js`](https://github.com/arkrwn/cofferak/blob/main/sdk/javascript/cofferak-sdk/examples/smoke_tls.js),
 run by `scripts/server-mode-smoke.sh`.

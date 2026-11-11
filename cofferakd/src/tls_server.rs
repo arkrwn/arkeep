@@ -1,5 +1,5 @@
 //! Server mode (ADR 0008): the same `Request`/`Response` protocol the
-//! Unix socket speaks, also reachable over TLS-wrapped TCP. Additive —
+//! Unix socket speaks, also reachable over TLS-wrapped TCP. Additive -
 //! enabling this never disables or changes the Unix socket path.
 //!
 //! Enabled by setting `$COFFERAK_TLS_ADDR` (e.g. `0.0.0.0:8443`).
@@ -48,7 +48,7 @@ pub struct TlsServerConfig {
 
 /// Reads the `COFFERAK_TLS_*` environment variables. Returns `Ok(None)` if
 /// server mode isn't requested at all (`COFFERAK_TLS_ADDR` unset). Returns
-/// `Err` with a clear message for a partially-set configuration — never
+/// `Err` with a clear message for a partially-set configuration - never
 /// silently starts with only some of what was asked for.
 pub fn resolve() -> Result<Option<TlsServerConfig>, String> {
     let Ok(addr) = std::env::var("COFFERAK_TLS_ADDR") else {
@@ -133,7 +133,7 @@ fn load_private_key(path: &str) -> Result<PrivateKeyDer<'static>, String> {
 ///
 /// - cipher suite **TLS13_AES_256_GCM_SHA384** only (CNSA: AES-256, SHA-384);
 /// - key exchange **MLKEM1024** (post-quantum, the only ML-KEM parameter
-///   set CNSA 2.0 approves; preferred), then **X25519MLKEM768** (the
+///   set CNSA 2.0 approves, preferred), then **X25519MLKEM768** (the
 ///   IETF post-quantum hybrid that Go and OpenSSL 3.5+ clients offer),
 ///   then **SECP384R1** (CNSA 1.0 classical fallback for TLS libraries
 ///   without post-quantum support).
@@ -195,7 +195,7 @@ fn build_server_config(config: &TlsServerConfig) -> Result<Arc<ServerConfig>, St
 
 /// Start the TLS/TCP listener on its own thread, serving `daemon` the
 /// same way the Unix socket path does. Exits the process with a clear
-/// error on any setup failure (bind, cert load, config build) — mirrors
+/// error on any setup failure (bind, cert load, config build) - mirrors
 /// the Unix socket listener's own `unwrap_or_else(... exit(1))` style in
 /// `main.rs`, so a server-mode misconfiguration fails loudly at startup
 /// rather than silently running without it.
@@ -245,7 +245,7 @@ pub fn start(config: TlsServerConfig, daemon: Arc<Mutex<Daemon>>) {
     });
 }
 
-/// Default cap on concurrent TLS connections; override with
+/// Default cap on concurrent TLS connections, override with
 /// `$COFFERAK_TLS_MAX_CONNECTIONS`.
 pub const DEFAULT_MAX_CONNECTIONS: usize = 256;
 
@@ -256,7 +256,7 @@ pub struct ConnectionLimiter {
     max: usize,
 }
 
-/// One held connection slot; released when dropped (including when the
+/// One held connection slot, released when dropped (including when the
 /// connection thread panics and unwinds).
 pub struct ConnectionSlot {
     live: Arc<AtomicUsize>,
@@ -305,7 +305,7 @@ fn handle_tls_connection(
     daemon: Arc<Mutex<Daemon>>,
     bind_service: bool,
 ) {
-    // Network-reachable, unlike the Unix socket — bound how long one
+    // Network-reachable, unlike the Unix socket - bound how long one
     // stalled/slow client can hold a thread. A client that connects and
     // never sends anything, or never reads the response, is dropped
     // rather than parked forever (a cheap mitigation for a
@@ -324,7 +324,7 @@ fn handle_tls_connection(
     // silently drop any bytes of the *next* request already read ahead
     // into the buffer by the bounded read below). Writes go through
     // `reader.get_mut()`, which hands back `&mut StreamOwned` without
-    // touching the read buffer — both directions share the one
+    // touching the read buffer - both directions share the one
     // `ServerConnection`, as TLS record state requires.
     let mut reader = BufReader::new(tls);
     let mut line = Vec::new();

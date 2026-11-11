@@ -3,7 +3,7 @@
 //!
 //! `KeychainSeal` is `cfg(target_os = "macos")`-gated in
 //! `cofferak_core::seal`, and this test runs for real on macOS against a
-//! real, uniquely-named, test-scoped Keychain item — not a skip, since
+//! real, uniquely-named, test-scoped Keychain item - not a skip, since
 //! this backend is exercised on exactly the platform this crate is
 //! developed on.
 
@@ -15,12 +15,12 @@ use cofferak_core::seal::{HostSeal, KeychainSeal, SealError};
 /// `HostSeal` API, so the test can simulate a missing/deleted item.
 ///
 /// Private to this test file (not part of cofferak-core's public API):
-/// it reuses `security-framework`'s own `delete_generic_password` — the
+/// it reuses `security-framework`'s own `delete_generic_password` - the
 /// same crate and item kind (a generic password) that `KeychainSeal`
 /// itself uses to store/retrieve the key.
 fn delete_item(service: &str, account: &str) {
     // Ignore the result: the item may already be absent
-    // (`errSecItemNotFound`), which is fine — we only need the item to
+    // (`errSecItemNotFound`), which is fine - we only need the item to
     // not exist afterward, not to have actually deleted anything.
     let _ = security_framework::passwords::delete_generic_password(service, account);
 }

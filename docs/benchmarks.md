@@ -26,7 +26,7 @@ the job log.
 
 The daemon is `cofferakd/examples/dev-daemon.rs`, which runs the same
 request path as `cofferakd` but skips host-key unsealing (a one-time
-startup step). Reads never touch `vault.cofferak`; writes are fsync'd to
+startup step). Reads never touch `vault.cofferak`, writes are fsync'd to
 disk before they are acknowledged (ADR 0010), so write latency depends
 mostly on your disk.
 
@@ -46,12 +46,12 @@ mostly on your disk.
 | `get` over TLS 1.3 + mTLS, new ML-KEM-1024 handshake per request, 1 thread | 1,480 req/s | p50 532 µs, p99 1.8 ms |
 | `get` over TLS 1.3 + mTLS, new handshake per request, 8 threads | 5,460 req/s | p50 1.36 ms, p99 3.5 ms |
 
-Measured 2026-11-11 with `./scripts/bench.sh 20000` (one representative run; repeated runs on the same laptop varied by roughly ±15%, more for TLS tail latency).
+Measured 2026-11-11 with `./scripts/bench.sh 20000` (one representative run, repeated runs on the same laptop varied by roughly ±15%, more for TLS tail latency).
 
 ## Results: GitHub Actions `ubuntu-latest` runner (AMD EPYC 9V74, x86-64), release build
 
 From the CI run of this change (`sdk-smoke (ubuntu-latest)` job, step
-"Benchmark"); shared cloud runners vary from run to run.
+"Benchmark"), shared cloud runners vary from run to run.
 
 | Operation | Throughput | Latency |
 |---|---|---|
@@ -70,10 +70,10 @@ From the CI run of this change (`sdk-smoke (ubuntu-latest)` job, step
 ## Reading the numbers
 
 - **The crypto is not the bottleneck.** Decrypting a typical secret takes
-  a quarter of a microsecond; an end-to-end local read takes about
+  a quarter of a microsecond, an end-to-end local read takes about
   0.08 ms, dominated by opening a socket and appending to the audit log.
 - **Post-quantum security costs microseconds, once.** The ML-KEM-1024
-  recovery wrap runs only during `init`, `rotate-dek` and `recover`; it
+  recovery wrap runs only during `init`, `rotate-dek` and `recover`, it
   is never on the request path.
 - **TLS numbers include a full handshake per request** (ML-KEM-1024
   key exchange plus mutual certificate verification), because the SDKs

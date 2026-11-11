@@ -54,7 +54,7 @@ pub fn is_valid_key(name: &str) -> bool {
 }
 
 /// Parse the contents of a `.env` file. Later duplicates of a key replace
-/// earlier ones (as dotenv loaders do); the returned list keeps the order
+/// earlier ones (as dotenv loaders do), the returned list keeps the order
 /// of each key's last occurrence.
 pub fn parse(input: &str) -> Result<Vec<EnvVar>, ParseError> {
     let input = input.strip_prefix('\u{feff}').unwrap_or(input);
@@ -117,7 +117,7 @@ pub fn parse(input: &str) -> Result<Vec<EnvVar>, ParseError> {
         if !is_valid_key(&key) {
             return Err(err(
                 start_line,
-                &format!("{key:?} is not a valid variable name (use letters, digits and _; not starting with a digit)"),
+                &format!("{key:?} is not a valid variable name (use letters, digits and _, not starting with a digit)"),
             ));
         }
         i += 1; // '='

@@ -12,7 +12,7 @@ Wants=local-fs.target
 
 [Service]
 Type=simple
-# Dedicated unprivileged account; create it first (see docs/deployment.md).
+# Dedicated unprivileged account, create it first (see docs/deployment.md).
 User=cofferak
 Group=cofferak
 
@@ -23,7 +23,7 @@ ExecStart=/usr/local/bin/cofferakd
 # ROOT before starting the daemon and exposes the plaintext only to this
 # unit, at $CREDENTIALS_DIRECTORY/cofferak-<host id>, on a private tmpfs.
 # cofferakd itself never needs access to systemd-creds' root-only host secret.
-# The credential name must be "cofferak-<host id>" — the name
+# The credential name must be "cofferak-<host id>" - the name
 # `cofferak init --host` sealed it under.
 LoadCredentialEncrypted=cofferak-REPLACE_WITH_HOST_ID:/var/lib/cofferak/hosts/REPLACE_WITH_HOST_ID.seal
 Environment=COFFERAK_HOST_ID=REPLACE_WITH_HOST_ID
@@ -31,7 +31,7 @@ Environment=COFFERAK_HOST_ID=REPLACE_WITH_HOST_ID
 # Where vault.cofferak, meta.json, hosts/ and audit.jsonl live.
 Environment=COFFERAK_DATA_DIR=/var/lib/cofferak
 # Unix socket the daemon listens on. The directory is created by RuntimeDirectory.
-# Socket is cofferak:cofferak, mode 0660; add consuming services' users to the cofferak group.
+# Socket is cofferak:cofferak, mode 0660, add consuming services' users to the cofferak group.
 Environment=COFFERAK_SOCKET=/run/cofferak/cofferakd.sock
 
 # Server mode (ADR 0008), optional. Uncomment to also listen on TLS/TCP.
@@ -84,7 +84,7 @@ RestrictSUIDSGID=yes
 LockPersonality=yes
 MemoryDenyWriteExecute=yes
 RemoveIPC=yes
-# Only the socket families cofferakd uses (Unix socket; TCP for server mode).
+# Only the socket families cofferakd uses (Unix socket, TCP for server mode).
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 SystemCallArchitectures=native
 SystemCallFilter=@system-service

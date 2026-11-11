@@ -1,4 +1,4 @@
-//! `cofferak-cli recover --root-key <path> --new-host <id>` — disaster
+//! `cofferak-cli recover --root-key <path> --new-host <id>` - disaster
 //! recovery.
 //!
 //! Every other way of recovering the vault's DEK requires an
@@ -16,7 +16,7 @@
 //! validation step (vault exists, `root_wrap` is `Some(_)`, the key file
 //! decodes and actually unwraps it) runs to completion *before* this
 //! function writes anything at all, and the only write of `vault.cofferak`
-//! itself is a temp-file-then-`rename` — never an in-place write — mirroring
+//! itself is a temp-file-then-`rename` - never an in-place write - mirroring
 //! the atomic-write discipline Task 13's `run_rotate_dek` established (see
 //! `secrets.rs`'s module doc comment for why the rename is the only point
 //! at which new content becomes visible at that path).
@@ -35,7 +35,7 @@ use super::init::{random_key, vault_path, CliError};
 ///
 /// - Returns `Err(CliError::VaultMissing)` if `data_dir` has no vault, or
 ///   if the vault's `root_wrap` is `None` (no DEK has ever been generated
-///   — a vault with zero hosts has no DEK to recover).
+///   - a vault with zero hosts has no DEK to recover).
 /// - Returns `Err(CliError::HostAlreadyEnrolled)` if `new_host_id` is
 ///   already in `vault.hosts`.
 /// - Returns `Err(CliError::BadRootKey)` if `root_privkey_path`'s contents
@@ -61,7 +61,7 @@ pub fn run_recover(
     let mut vault = VaultFile::load(&vpath)?;
 
     // A vault with `root_wrap: None` has never had a DEK generated (no
-    // host has ever been enrolled) — there is nothing to recover.
+    // host has ever been enrolled) - there is nothing to recover.
     let root_wrap = vault.root_wrap.clone().ok_or(CliError::VaultMissing)?;
 
     if vault.hosts.contains_key(new_host_id) {
@@ -70,7 +70,7 @@ pub fn run_recover(
 
     // Everything above this point is read-only. Everything below either
     // fails before touching disk (`BadRootKey`) or commits via the atomic
-    // rename at the bottom — no partial/in-place write of `vault.cofferak` is
+    // rename at the bottom - no partial/in-place write of `vault.cofferak` is
     // possible.
     // The key file is the armored block `init --root` printed. Read it as
     // bytes and require UTF-8, so a binary or garbage file is a clean

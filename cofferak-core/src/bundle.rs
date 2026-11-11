@@ -16,10 +16,10 @@
 //! ```
 //!
 //! The key is PBKDF2-HMAC-SHA384(passphrase, salt, iterations) via AWS-LC
-//! (FIPS-approved KDF; the passphrase must be at least 14 bytes, the FIPS
+//! (FIPS-approved KDF, the passphrase must be at least 14 bytes, the FIPS
 //! minimum). Authenticating the header means the iteration count, salt or
 //! version can't be altered without the bundle failing to open. The
-//! payload is a bincode [`Bundle`]; plaintext buffers are zeroized.
+//! payload is a bincode [`Bundle`], plaintext buffers are zeroized.
 //!
 //! A bundle holds values and tokens, never host keys or the root key, so
 //! it is machine- and OS-independent.
@@ -71,7 +71,7 @@ impl Drop for BundleEntry {
 pub struct Bundle {
     pub created_at: i64,
     /// Root-key fingerprint of the vault the bundle was exported from
-    /// (informational; shown on import).
+    /// (informational, shown on import).
     pub source_fingerprint: String,
     pub entries: Vec<BundleEntry>,
     pub services: Vec<AccessToken>,

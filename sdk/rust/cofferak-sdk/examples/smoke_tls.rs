@@ -1,9 +1,9 @@
 //! Smoke test for the TLS/TCP transport (server mode, ADR 0008): set a
 //! secret, read it back, confirm it round-trips, then confirm a denied
-//! path fails cleanly — over TLS, not the Unix socket. Run against a
+//! path fails cleanly - over TLS, not the Unix socket. Run against a
 //! real daemon serving `$COFFERAK_TLS_ADDR` (see
 //! `scripts/sdk-smoke.sh`/`scripts/server-mode-smoke.sh`, which generate
-//! a real self-signed CA + server cert and run this for real — this is
+//! a real self-signed CA + server cert and run this for real - this is
 //! not a mocked test).
 //!
 //! Usage: COFFERAK_TLS_ADDR=127.0.0.1:PORT COFFERAK_TLS_SERVER_NAME=name \
@@ -32,7 +32,7 @@ fn main() {
         .cloned()
         .unwrap_or_else(|| "other/denied".to_string());
 
-    // An empty-string env var (as opposed to an unset one — the smoke
+    // An empty-string env var (as opposed to an unset one - the smoke
     // script always exports both, blank when not applicable) must be
     // treated the same as "not set", not as a literal empty path.
     let client_cert_and_key = match (
@@ -51,7 +51,7 @@ fn main() {
     })
     .expect("TLS client config should be valid");
 
-    // Report what the handshake negotiated; server-mode-smoke.sh asserts
+    // Report what the handshake negotiated, server-mode-smoke.sh asserts
     // on this line (TLS 1.3, AES-256-GCM-SHA384, post-quantum hybrid).
     let info = client
         .tls_session_info()

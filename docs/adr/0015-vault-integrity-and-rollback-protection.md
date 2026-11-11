@@ -70,7 +70,7 @@ vault and the anchor with an older matching pair (for example, from a full
 backup of the data directory) can still roll back without being detected
 at startup. Protecting against that needs a monotonic counter outside the
 attacker's reach (TPM2 NV storage, or a remote witness such as a paired
-coffer); that is future work. A running daemon catches it regardless,
+coffer), that is future work. A running daemon catches it regardless,
 because it keeps the newest generation in memory.
 
 Update: ADR 0017 keeps a second copy of each anchor outside the data
