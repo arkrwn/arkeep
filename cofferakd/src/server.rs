@@ -1,11 +1,10 @@
-use std::collections::BTreeMap;
 use std::io::{BufReader, Write};
 use std::net::Shutdown;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use cofferak_core::crypto::{decrypt_entry, unwrap_dek_for_host, Aad, KeyBytes};
+use cofferak_core::crypto::{unwrap_dek_for_host, KeyBytes};
 use cofferak_core::format::{FormatError, VaultFile};
 use cofferak_core::seal::{HostSeal, SealedBlob};
 
@@ -15,7 +14,7 @@ use cofferak_core::seal::KeychainSeal;
 use cofferak_core::seal::SystemdCredsSeal;
 
 use crate::audit::AuditLog;
-use crate::daemon::{token_key, Daemon};
+use crate::daemon::{load_tokens, Daemon};
 use crate::protocol::{decode_request, encode, Response};
 
 /// Default data directory on Linux, used unless `$COFFERAK_DATA_DIR` is set.
@@ -193,41 +192,6 @@ fn load_host_key(host_id: &str, data_dir: &Path) -> Result<KeyBytes, String> {
             };
             format!("failed to unseal this host's key: {e}{hint}")
         })
-}
-
-/// Decrypt and deserialize every enrolled service's `AccessToken` out of
-/// `vault.services`, keyed for [`Daemon`] by [`token_key`] (the wire
-/// token string clients send). A service entry that fails to
-/// decrypt/deserialize is skipped with a warning rather than aborting
-/// startup over one bad entry — mirroring the audit log's "skip the
-/// malformed line, keep the rest" philosophy.
-fn load_tokens(
-    vault: &VaultFile,
-    dek: &[u8; 32],
-) -> BTreeMap<String, cofferak_core::acl::AccessToken> {
-    let mut tokens = BTreeMap::new();
-    for (service_id, entry) in &vault.services {
-        let plaintext = match decrypt_entry(dek, &Aad::service_token(service_id), entry) {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                eprintln!(
-                    "cofferakd: could not decrypt token for service '{service_id}': {e}, skipping it"
-                );
-                continue;
-            }
-        };
-        let token: cofferak_core::acl::AccessToken = match bincode::deserialize(&plaintext) {
-            Ok(token) => token,
-            Err(e) => {
-                eprintln!(
-                    "cofferakd: could not decode token for service '{service_id}': {e}, skipping it"
-                );
-                continue;
-            }
-        };
-        tokens.insert(token_key(&token.secret), token);
-    }
-    tokens
 }
 
 /// Run the daemon until the process is killed: load the vault, obtain this

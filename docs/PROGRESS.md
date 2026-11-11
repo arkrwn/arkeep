@@ -52,6 +52,9 @@ from a command or test that was actually run. States: `todo`, `doing`,
 | Server mode: mandatory mTLS, TLS 1.3 / AES-256-GCM-SHA384 only, ML-KEM-1024 preferred | done | `server-mode-smoke.sh`: no-client-CA startup refused; no cert / untrusted CA / wrong hostname rejected in all four SDKs; TLS 1.2 and AES-128 refused; Rust negotiates `TLSv1_3 TLS13_AES_256_GCM_SHA384 MLKEM1024` |
 | macOS daemon via `cofferak daemon` (ADR 0007 resolved) | done | Daemon code moved to `cofferakd::server::run`; `sdk-smoke.sh` full mode on macOS: real Keychain-sealed host key, all four SDKs, restart durability |
 | `set --stdin` / `--from-file`, `get -o`, token hidden in `--help` | done | `cofferak-cli/tests/cli_binary.rs`; SSH private key round trip byte-exact (manual test in `localtest.md`) |
+| `.env` import/export and `cofferak run` (ADR 0012) | done | `cofferak-core::dotenv` unit tests (quotes, escapes, `export`, inline comments, multi-line values, CRLF/BOM, round trip); `cli_transfer.rs` over a real socket; `quickstart-check.sh` in CI |
+| Encrypted export/import bundles for migration (ADR 0012) | done | `cofferak-core::bundle` tests (round trip, no plaintext, wrong passphrase/tampering/truncation/weakened header rejected); `cli_transfer.rs` moves secrets and tokens between two vaults; CI exports and re-imports |
+| Live reload of vault changes in the daemon (ADR 0012) | done | `daemon_persistence.rs`: imported entries served and new services authenticated without restart; removed services denied immediately |
 | Benchmarks | done | `scripts/bench.sh`, run in CI on every build; results in `docs/benchmarks.md` |
 
 ## Known gaps / open items
@@ -62,10 +65,10 @@ from a command or test that was actually run. States: `todo`, `doing`,
   internet-facing deployment, keep a firewall or a proxy with per-IP
   limits in front of `$COFFERAK_TLS_ADDR` (mTLS already rejects
   unauthenticated peers at the handshake).
-- **Token/DEK changes need a daemon restart.** `enroll-service`,
-  `rotate-dek` and re-enrolling the daemon's own host take effect on
-  restart; after `rotate-dek` the running daemon refuses writes (never
-  writes under the stale DEK) until restarted. No hot reload yet.
+- **`rotate-dek` needs a daemon restart.** Other admin changes
+  (`enroll-service`, `import`, removing a service) are reloaded live
+  (ADR 0012); after `rotate-dek` the running daemon keeps serving reads but
+  refuses writes (never writes under the stale DEK) until restarted.
 - **macOS: a new build may ask once for Keychain access.** The Keychain
   trusts the binary that created the host-key item by code identity, so
   after installing a new `cofferak` build macOS may show one "allow"

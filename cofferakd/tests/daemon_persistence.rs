@@ -50,8 +50,31 @@ fn fixture(tag: &str) -> Fixture {
         HOST_ID.to_string(),
         wrap_dek_for_host(&DEK, HOST_ID, &HOST_KEY),
     );
+    // The service token is enrolled in the vault, exactly as
+    // `enroll-service` does, so a reload from disk keeps it.
+    vault
+        .services
+        .insert("svc".to_string(), encrypted_token("svc", "app", SECRET));
     vault.save(&vault_path).unwrap();
     Fixture { dir, vault_path }
+}
+
+fn encrypted_token(
+    service_id: &str,
+    prefix: &str,
+    secret: [u8; 32],
+) -> cofferak_core::crypto::EncryptedEntry {
+    let tok = AccessToken {
+        service_id: service_id.to_string(),
+        prefixes: vec![prefix.to_string()],
+        permission: Permission::ReadWrite,
+        secret,
+    };
+    encrypt_entry(
+        &DEK,
+        &Aad::service_token(service_id),
+        &bincode::serialize(&tok).unwrap(),
+    )
 }
 
 fn token() -> String {
@@ -175,7 +198,7 @@ fn persisting_does_not_clobber_changes_another_writer_made_to_the_file() {
     let mut disk = VaultFile::load(&f.vault_path).unwrap();
     disk.services.insert(
         "new-svc".to_string(),
-        encrypt_entry(&DEK, &Aad::service_token("new-svc"), b"token-blob"),
+        encrypted_token("new-svc", "other", [0x55; 32]),
     );
     disk.save(&f.vault_path).unwrap();
 
@@ -233,4 +256,63 @@ fn ciphertext_moved_to_another_path_on_disk_is_rejected_not_served() {
         get(&mut restarted, "app/A"),
         Response::Value(b"secret-a".to_vec())
     );
+}
+
+#[test]
+fn changes_written_by_another_process_are_served_without_a_restart() {
+    // `cofferak import` / `enroll-service` edit vault.cofferak directly; the
+    // daemon notices the file changed and reloads before the next request.
+    let f = fixture("reload");
+    let mut d = persistent_daemon(&f);
+    assert_eq!(get(&mut d, "app/IMPORTED"), Response::NotFound);
+
+    let mut disk = VaultFile::load(&f.vault_path).unwrap();
+    disk.entries.insert(
+        "app/IMPORTED".to_string(),
+        cofferak_core::format::VaultEntry {
+            ciphertext: encrypt_entry(&DEK, &Aad::entry("app/IMPORTED"), b"from-import"),
+            version: 1,
+            updated_at: 0,
+        },
+    );
+    disk.services.insert(
+        "late-svc".to_string(),
+        encrypted_token("late-svc", "app", [0x66; 32]),
+    );
+    disk.save(&f.vault_path).unwrap();
+
+    assert_eq!(
+        get(&mut d, "app/IMPORTED"),
+        Response::Value(b"from-import".to_vec())
+    );
+    // A service enrolled after the daemon started can authenticate at once.
+    let late = d.handle_request(Request::Get {
+        token: token_key(&[0x66; 32]),
+        path: "app/IMPORTED".to_string(),
+    });
+    assert_eq!(late, Response::Value(b"from-import".to_vec()));
+}
+
+#[test]
+fn a_service_removed_from_the_vault_loses_access_immediately() {
+    let f = fixture("revoke");
+    let mut d = persistent_daemon(&f);
+    assert_eq!(set(&mut d, "app/K", b"v"), Response::Ok);
+
+    let mut disk = VaultFile::load(&f.vault_path).unwrap();
+    disk.services.remove("svc");
+    disk.save(&f.vault_path).unwrap();
+
+    assert_eq!(get(&mut d, "app/K"), Response::Denied);
+}
+
+#[test]
+fn own_writes_do_not_trigger_needless_reloads_but_stay_consistent() {
+    let f = fixture("ownwrite");
+    let mut d = persistent_daemon(&f);
+    for i in 0..20 {
+        let v = format!("v{i}");
+        assert_eq!(set(&mut d, "app/LOOP", v.as_bytes()), Response::Ok);
+        assert_eq!(get(&mut d, "app/LOOP"), Response::Value(v.into_bytes()));
+    }
 }

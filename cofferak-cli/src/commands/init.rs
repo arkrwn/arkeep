@@ -83,6 +83,9 @@ pub enum CliError {
     /// not exactly 32 bytes, or whose bytes do not unwrap
     /// `VaultFile.root_wrap` (the wrong keypair, or random garbage).
     BadRootKey,
+    /// Bad user input or an unusable file (a `.env` syntax error, a wrong
+    /// bundle passphrase, ...), with a message that says what to fix.
+    Invalid(String),
 }
 
 impl fmt::Display for CliError {
@@ -107,6 +110,7 @@ impl fmt::Display for CliError {
                 f,
                 "root key file is not a valid cofferak root private key (armored block from `init --root`), or does not match this vault's root public key"
             ),
+            CliError::Invalid(msg) => write!(f, "{msg}"),
         }
     }
 }
@@ -124,7 +128,8 @@ impl std::error::Error for CliError {
             | CliError::Denied
             | CliError::NotFound
             | CliError::Remote(_)
-            | CliError::BadRootKey => None,
+            | CliError::BadRootKey
+            | CliError::Invalid(_) => None,
         }
     }
 }

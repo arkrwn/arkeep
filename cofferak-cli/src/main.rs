@@ -137,6 +137,19 @@ enum Command {
     /// this rather than `cofferakd`: the Keychain lets the `cofferak` binary
     /// read the host key it sealed without an authorization prompt.
     Daemon,
+    /// Import a `.env` file: each `KEY=value` becomes `<prefix>/<KEY>`.
+    ImportEnv(ImportEnvArgs),
+    /// Write the variables under a prefix as a `.env` file.
+    ExportEnv(ExportEnvArgs),
+    /// Run a command with the secrets under one or more prefixes set as
+    /// environment variables (no `.env` file on disk).
+    Run(RunArgs),
+    /// Export the whole vault (every secret and service token) as an
+    /// encrypted, passphrase-protected bundle, to back up or move to
+    /// another machine or OS.
+    Export(ExportArgs),
+    /// Import an encrypted bundle made by `export` into this vault.
+    Import(ImportArgs),
 }
 
 #[derive(Args)]
@@ -267,6 +280,103 @@ struct ListArgs {
     /// `$COFFERAK_SOCKET` if set.
     #[arg(long, value_name = "PATH")]
     socket: Option<PathBuf>,
+}
+
+#[derive(Args)]
+struct ImportEnvArgs {
+    /// The `.env` file to import (`-` reads standard input).
+    file: PathBuf,
+    /// Path prefix to store the variables under, e.g. `myapp/env`.
+    #[arg(long)]
+    prefix: String,
+    /// Replace values that already exist (default: keep them, report them).
+    #[arg(long)]
+    overwrite: bool,
+    /// Show what would be imported without writing anything.
+    #[arg(long)]
+    dry_run: bool,
+    /// Service access token. Defaults to `$COFFERAK_TOKEN` if set.
+    #[arg(long, env = "COFFERAK_TOKEN", hide_env_values = true)]
+    token: String,
+    /// Daemon Unix socket path. Defaults to `$COFFERAK_SOCKET` / the platform path.
+    #[arg(long, value_name = "PATH")]
+    socket: Option<PathBuf>,
+}
+
+#[derive(Args)]
+struct ExportEnvArgs {
+    /// Path prefix whose direct children to export, e.g. `myapp/env`.
+    #[arg(long)]
+    prefix: String,
+    /// File to write (mode 0600), or `-` for standard output. The file
+    /// holds plaintext secrets: prefer `cofferak run` where you can.
+    #[arg(long, short = 'o', value_name = "FILE")]
+    out: PathBuf,
+    /// Overwrite the output file if it exists.
+    #[arg(long)]
+    force: bool,
+    /// Service access token. Defaults to `$COFFERAK_TOKEN` if set.
+    #[arg(long, env = "COFFERAK_TOKEN", hide_env_values = true)]
+    token: String,
+    /// Daemon Unix socket path. Defaults to `$COFFERAK_SOCKET` / the platform path.
+    #[arg(long, value_name = "PATH")]
+    socket: Option<PathBuf>,
+}
+
+#[derive(Args)]
+struct RunArgs {
+    /// Prefix whose direct children become environment variables
+    /// (repeatable; later prefixes override earlier ones).
+    #[arg(long, required = true)]
+    prefix: Vec<String>,
+    /// Pass COFFERAK_TOKEN on to the command (default: removed, so the
+    /// command gets its secrets but not the token).
+    #[arg(long)]
+    keep_token: bool,
+    /// Service access token. Defaults to `$COFFERAK_TOKEN` if set.
+    #[arg(long, env = "COFFERAK_TOKEN", hide_env_values = true)]
+    token: String,
+    /// Daemon Unix socket path. Defaults to `$COFFERAK_SOCKET` / the platform path.
+    #[arg(long, value_name = "PATH")]
+    socket: Option<PathBuf>,
+    /// The command to run, after `--`.
+    #[arg(last = true, required = true, value_name = "COMMAND")]
+    command: Vec<String>,
+}
+
+#[derive(Args)]
+struct ExportArgs {
+    /// Bundle file to write (mode 0600).
+    #[arg(long, short = 'o', value_name = "FILE")]
+    out: PathBuf,
+    /// Overwrite the bundle file if it exists.
+    #[arg(long)]
+    force: bool,
+    /// Read the passphrase from this file (first line) instead of
+    /// prompting. For automation; keep the file private.
+    #[arg(long, value_name = "FILE")]
+    passphrase_file: Option<PathBuf>,
+    /// Vault data directory. Defaults to `$COFFERAK_DATA_DIR` / the platform data dir.
+    #[arg(long, value_name = "DIR")]
+    data_dir: Option<PathBuf>,
+}
+
+#[derive(Args)]
+struct ImportArgs {
+    /// Bundle file made by `cofferak export`.
+    file: PathBuf,
+    /// Replace secrets and services that already exist (default: keep them).
+    #[arg(long)]
+    overwrite: bool,
+    /// Show what would be imported without writing anything.
+    #[arg(long)]
+    dry_run: bool,
+    /// Read the passphrase from this file (first line) instead of prompting.
+    #[arg(long, value_name = "FILE")]
+    passphrase_file: Option<PathBuf>,
+    /// Vault data directory. Defaults to `$COFFERAK_DATA_DIR` / the platform data dir.
+    #[arg(long, value_name = "DIR")]
+    data_dir: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -690,6 +800,11 @@ fn main() {
             }
         }
         Command::Daemon => cofferakd::server::run(),
+        Command::ImportEnv(args) => cmd_import_env(args),
+        Command::ExportEnv(args) => cmd_export_env(args),
+        Command::Run(args) => cmd_run(args),
+        Command::Export(args) => cmd_export(args),
+        Command::Import(args) => cmd_import(args),
         Command::Audit(args) => match args.command {
             AuditCommand::Tail(tail_args) => {
                 let data_dir = resolve_data_dir(tail_args.data_dir);
@@ -708,5 +823,314 @@ fn main() {
                 }
             }
         },
+    }
+}
+
+fn fail(context: &str, e: impl std::fmt::Display) -> ! {
+    eprintln!("cofferak: {context}: {e}");
+    std::process::exit(1);
+}
+
+fn cmd_import_env(args: ImportEnvArgs) {
+    let text = if args.file.as_os_str() == "-" {
+        let mut s = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut s)
+            .unwrap_or_else(|e| fail("import-env", format!("reading standard input: {e}")));
+        zeroize::Zeroizing::new(s)
+    } else {
+        zeroize::Zeroizing::new(
+            std::fs::read_to_string(&args.file)
+                .unwrap_or_else(|e| fail("import-env", format!("{}: {e}", args.file.display()))),
+        )
+    };
+    let client = connect_or_exit(&resolve_socket_path(args.socket));
+    let r = commands::transfer::run_import_env(
+        &client,
+        &args.token,
+        &args.prefix,
+        &text,
+        args.overwrite,
+        args.dry_run,
+    )
+    .unwrap_or_else(|e| fail("import-env", e));
+    let prefix = args.prefix.trim_end_matches('/');
+    let verb = if args.dry_run {
+        "would import"
+    } else {
+        "imported"
+    };
+    for k in &r.added {
+        println!("  + {prefix}/{k}");
+    }
+    for k in &r.replaced {
+        println!("  ~ {prefix}/{k} (replaced)");
+    }
+    for k in &r.skipped {
+        println!("  = {prefix}/{k} (exists, kept; use --overwrite to replace)");
+    }
+    println!(
+        "{verb} {} new, {} replaced, {} kept",
+        r.added.len(),
+        r.replaced.len(),
+        r.skipped.len()
+    );
+    if !args.dry_run && !r.added.is_empty() {
+        println!("check with `cofferak list {prefix}`, then delete the .env file");
+    }
+}
+
+/// Write `bytes` to `path` with mode 0600, refusing to replace an
+/// existing file unless `force`.
+fn write_private(path: &Path, bytes: &[u8], force: bool) -> std::io::Result<()> {
+    if path.exists() && !force {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!("{} exists (use --force to overwrite)", path.display()),
+        ));
+    }
+    cofferak_core::format::write_atomic(path, bytes)
+}
+
+fn cmd_export_env(args: ExportEnvArgs) {
+    let client = connect_or_exit(&resolve_socket_path(args.socket));
+    let (text, skipped) = commands::transfer::run_export_env(&client, &args.token, &args.prefix)
+        .unwrap_or_else(|e| fail("export-env", e));
+    for s in &skipped {
+        eprintln!("cofferak: export-env: skipped {s}");
+    }
+    if args.out.as_os_str() == "-" {
+        use std::io::Write;
+        let _ = std::io::stdout().write_all(text.as_bytes());
+        return;
+    }
+    write_private(&args.out, text.as_bytes(), args.force).unwrap_or_else(|e| fail("export-env", e));
+    let n = text.lines().count();
+    println!(
+        "wrote {n} variables to {} (mode 0600; it contains plaintext secrets)",
+        args.out.display()
+    );
+}
+
+fn cmd_run(args: RunArgs) {
+    let client = connect_or_exit(&resolve_socket_path(args.socket));
+    let (vars, skipped) = commands::transfer::collect_env(&client, &args.token, &args.prefix)
+        .unwrap_or_else(|e| fail("run", e));
+    for s in &skipped {
+        eprintln!("cofferak: run: skipped {s}");
+    }
+    let mut cmd = std::process::Command::new(&args.command[0]);
+    cmd.args(&args.command[1..]);
+    if !args.keep_token {
+        cmd.env_remove("COFFERAK_TOKEN");
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        use std::os::unix::process::CommandExt;
+        for (k, v) in &vars {
+            cmd.env(k, std::ffi::OsStr::from_bytes(v));
+        }
+        let err = cmd.exec();
+        eprintln!(
+            "cofferak: run: could not start {:?}: {err}",
+            args.command[0]
+        );
+        std::process::exit(127);
+    }
+}
+
+/// Read a passphrase from `file` (first line), or prompt on the terminal
+/// with echo off (twice when `confirm`).
+fn read_passphrase(file: Option<&Path>, confirm: bool) -> zeroize::Zeroizing<String> {
+    if let Some(path) = file {
+        let s = zeroize::Zeroizing::new(
+            std::fs::read_to_string(path)
+                .unwrap_or_else(|e| fail("passphrase", format!("{}: {e}", path.display()))),
+        );
+        return zeroize::Zeroizing::new(s.lines().next().unwrap_or("").to_string());
+    }
+    let first = prompt_hidden("Bundle passphrase: ");
+    if confirm {
+        let again = prompt_hidden("Repeat passphrase: ");
+        if *first != *again {
+            fail("passphrase", "the two entries don't match");
+        }
+    }
+    first
+}
+
+#[cfg(unix)]
+fn prompt_hidden(prompt: &str) -> zeroize::Zeroizing<String> {
+    use std::io::{BufRead, Write};
+    use std::os::unix::io::AsRawFd;
+    let tty = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/tty")
+        .unwrap_or_else(|e| {
+            fail(
+                "passphrase",
+                format!("no terminal to prompt on ({e}); use --passphrase-file"),
+            )
+        });
+    let fd = tty.as_raw_fd();
+    // SAFETY: plain termios calls on a file descriptor we own; the original
+    // settings are restored before returning.
+    let mut term: libc::termios = unsafe { std::mem::zeroed() };
+    let have_term = unsafe { libc::tcgetattr(fd, &mut term) } == 0;
+    let original = term;
+    if have_term {
+        term.c_lflag &= !libc::ECHO;
+        unsafe { libc::tcsetattr(fd, libc::TCSANOW, &term) };
+    }
+    let mut w = &tty;
+    let _ = write!(w, "{prompt}");
+    let _ = w.flush();
+    let mut line = zeroize::Zeroizing::new(String::new());
+    let read = std::io::BufReader::new(&tty).read_line(&mut line);
+    if have_term {
+        unsafe { libc::tcsetattr(fd, libc::TCSANOW, &original) };
+    }
+    let _ = writeln!(w);
+    read.unwrap_or_else(|e| fail("passphrase", e));
+    while line.ends_with('\n') || line.ends_with('\r') {
+        line.pop();
+    }
+    line
+}
+
+/// Run `f` with each enrolled host of the vault whose sealed key file is on
+/// this machine (preferring `$COFFERAK_HOST_ID`), returning the first
+/// success; used by `export` and `import` to unlock the vault.
+fn with_local_host<T>(
+    data_dir: &Path,
+    mut f: impl FnMut(&str, &dyn HostSeal) -> Result<T, commands::init::CliError>,
+) -> Result<T, commands::init::CliError> {
+    use commands::init::CliError;
+    let vault =
+        cofferak_core::format::VaultFile::load(&data_dir.join("vault.cofferak")).map_err(|e| {
+            match e {
+                cofferak_core::format::FormatError::Io(_) => CliError::VaultMissing,
+                other => CliError::Format(other),
+            }
+        })?;
+    let mut ids: Vec<String> = vault.hosts.keys().cloned().collect();
+    if let Ok(pref) = std::env::var("COFFERAK_HOST_ID") {
+        if let Some(i) = ids.iter().position(|h| *h == pref) {
+            let h = ids.remove(i);
+            ids.insert(0, h);
+        }
+    }
+    let mut last = CliError::HostNotFound;
+    for id in ids {
+        if !data_dir.join("hosts").join(format!("{id}.seal")).exists() {
+            continue;
+        }
+        let seal = current_host_seal(&id);
+        match f(&id, seal.as_ref()) {
+            Ok(v) => return Ok(v),
+            Err(CliError::Invalid(m)) => return Err(CliError::Invalid(m)),
+            Err(e) => last = e,
+        }
+    }
+    Err(last)
+}
+
+fn cmd_export(args: ExportArgs) {
+    let data_dir = resolve_data_dir(args.data_dir);
+    if args.out.exists() && !args.force {
+        fail(
+            "export",
+            format!("{} exists (use --force to overwrite)", args.out.display()),
+        );
+    }
+    let pass = read_passphrase(args.passphrase_file.as_deref(), true);
+    let (bytes, report) = with_admin_lock(&data_dir, || {
+        with_local_host(&data_dir, |id, seal| {
+            commands::transfer::run_export_with_seal(
+                &data_dir,
+                id,
+                seal,
+                pass.as_bytes(),
+                cofferak_core::bundle::DEFAULT_ITERATIONS,
+            )
+        })
+    })
+    .unwrap_or_else(|e| fail("export", e));
+    write_private(&args.out, &bytes, args.force).unwrap_or_else(|e| fail("export", e));
+    give_to_sudo_user(&args.out);
+    println!(
+        "exported {} secrets and {} service tokens to {} (encrypted, mode 0600)",
+        report.entries,
+        report.services,
+        args.out.display()
+    );
+    println!("keep the passphrase separately from the file; `cofferak import` needs both");
+}
+
+/// When running as root via `sudo` (needed on Linux for admin commands),
+/// hand a file we created back to the user who ran sudo, so they can
+/// copy or delete it without sudo.
+fn give_to_sudo_user(path: &Path) {
+    #[cfg(unix)]
+    {
+        // SAFETY: geteuid has no preconditions.
+        if unsafe { libc::geteuid() } != 0 {
+            return;
+        }
+        let parse = |v: &str| std::env::var(v).ok().and_then(|s| s.parse::<u32>().ok());
+        if let (Some(uid), Some(gid)) = (parse("SUDO_UID"), parse("SUDO_GID")) {
+            let _ = std::os::unix::fs::lchown(path, Some(uid), Some(gid));
+        }
+    }
+}
+
+fn cmd_import(args: ImportArgs) {
+    let data_dir = resolve_data_dir(args.data_dir);
+    let meta = std::fs::metadata(&args.file)
+        .unwrap_or_else(|e| fail("import", format!("{}: {e}", args.file.display())));
+    if meta.len() > cofferak_core::bundle::MAX_BUNDLE_BYTES {
+        fail("import", "bundle is too large");
+    }
+    let bytes = std::fs::read(&args.file)
+        .unwrap_or_else(|e| fail("import", format!("{}: {e}", args.file.display())));
+    let pass = read_passphrase(args.passphrase_file.as_deref(), false);
+    let r = with_admin_lock(&data_dir, || {
+        with_local_host(&data_dir, |id, seal| {
+            commands::transfer::run_import_with_seal(
+                &data_dir,
+                id,
+                seal,
+                &bytes,
+                pass.as_bytes(),
+                args.overwrite,
+                args.dry_run,
+            )
+        })
+    })
+    .unwrap_or_else(|e| fail("import", e));
+    let verb = if args.dry_run {
+        "would import"
+    } else {
+        "imported"
+    };
+    println!(
+        "{verb} from vault {}…: secrets {} new, {} replaced, {} kept; service tokens {} new, {} replaced, {} kept",
+        &r.source_fingerprint[..r.source_fingerprint.len().min(16)],
+        r.entries_added,
+        r.entries_replaced,
+        r.entries_skipped.len(),
+        r.services_added,
+        r.services_replaced,
+        r.services_skipped.len()
+    );
+    for p in r.entries_skipped.iter().take(20) {
+        println!("  = {p} (exists, kept; use --overwrite to replace)");
+    }
+    for s in &r.services_skipped {
+        println!("  = service {s} (exists, kept)");
+    }
+    if !args.dry_run {
+        println!("a running daemon picks the changes up automatically");
     }
 }

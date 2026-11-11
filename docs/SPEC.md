@@ -151,9 +151,14 @@ used on macOS so the Keychain serves the host key to the binary that sealed
 it, ADR 0007). Values are limited to 3 MiB. `--token` falls back to
 `$COFFERAK_TOKEN`, whose value is never shown in `--help`. Admin commands run under the vault lock; on Linux the ones
 that touch a host key need root, and they hand created files back to the
-data directory's owner. Restart `cofferakd` after `enroll-service`,
-`rotate-dek`, or re-enrolling its host: tokens and the DEK are loaded at
-startup. See `cofferak-cli/src/main.rs` for exact flags — this spec
+data directory's owner. The daemon reloads secrets and tokens when
+`vault.cofferak` changes on disk (ADR 0012), so `enroll-service` and
+`import` apply live; restart it after `rotate-dek` or re-enrolling its own
+host (its DEK is loaded at startup). Moving data: `import-env` /
+`export-env` (`.env` files, via the daemon with a token), `run` (exec a
+command with secrets as environment variables; `COFFERAK_TOKEN` removed
+from its environment), and `export` / `import` (whole-vault bundles
+encrypted with PBKDF2-HMAC-SHA384 + AES-256-GCM-SIV; admin). See `cofferak-cli/src/main.rs` for exact flags — this spec
 does not restate flag syntax.
 
 ## 8. SDKs
