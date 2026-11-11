@@ -80,9 +80,8 @@ sudo systemd-run --unit=cofferak-demo --uid="$(id -u)" --gid="$(id -g)" \
 journalctl -u cofferak-demo -n 5     # check it started
 ```
 
-The daemon reads service tokens at startup, so after any later
-`enroll-service`, restart it (Ctrl-C and start again, or
-`sudo systemctl restart cofferak-demo`).
+Later admin changes (`enroll-service`, `import`) are picked up by the
+running daemon automatically; only `rotate-dek` needs a restart.
 
 ## 4. Store and read secrets from the shell
 
@@ -135,25 +134,24 @@ Pass a secret to a program for a single run:
 DB_PASSWORD="$(cofferak get myapp/DB_PASSWORD)" ./your-app
 ```
 
-Move an existing `.env` file into the vault, one entry per variable:
+Move an existing `.env` file into the vault (quotes, `export`, inline
+comments and multi-line values are all understood; `--dry-run` previews):
 
 ```bash
-while IFS='=' read -r key value; do
-  [[ -z "$key" || "$key" == \#* ]] && continue
-  printf %s "$value" | cofferak set "myapp/env/$key" --stdin
-done < .env
-# check, then delete the plaintext file
-cofferak list myapp/env && shred -u .env 2>/dev/null || rm -P .env
+cofferak import-env .env --prefix myapp/env
+cofferak list myapp/env                     # check, then delete the plaintext file
+rm -P .env 2>/dev/null || shred -u .env
 ```
 
-…and run the app with them, without writing a file:
+…and run the app with them, without writing a file (`COFFERAK_TOKEN` is
+not passed on to the app):
 
 ```bash
-env $(for p in $(cofferak list myapp/env); do
-  printf '%s=%s ' "${p##*/}" "$(cofferak get "$p")"; done) ./your-app
+cofferak run --prefix myapp/env -- ./your-app
 ```
 
-(For values with spaces, read them in code with an SDK instead; see below.)
+Need a `.env` file for a tool that insists on one?
+`cofferak export-env --prefix myapp/env -o app.env` (mode 0600).
 
 Use an SSH key that never sits in `~/.ssh` as a file:
 
@@ -296,17 +294,28 @@ Expected output for each: `<lang> got: <lang>-secret-123` and
 `<lang>: other/SECRET correctly denied`. For remote access over mutual
 TLS, see each SDK's page under [sample-integration/](sample-integration/).
 
-## 7. Read-only tokens
+## 7. Move everything to another machine
+
+```bash
+$ADMIN export -o backup.cfk       # asks for a passphrase (14+ characters), twice
+# on the new machine, after steps 1–3 there:
+$ADMIN import backup.cfk          # secrets and app tokens restored; the daemon picks them up live
+```
+
+Works between Linux and macOS. Details, backups and moving from
+HashiCorp Vault: [migration.md](migration.md).
+
+## 8. Read-only tokens
 
 Give a deployed app only what it needs:
 
 ```bash
-$ADMIN enroll-service myapp-prod --paths myapp --perm ro     # restart the daemon afterwards
+$ADMIN enroll-service myapp-prod --paths myapp --perm ro     # live immediately
 COFFERAK_TOKEN=<ro token> cofferak get myapp/DB_PASSWORD      # works
 COFFERAK_TOKEN=<ro token> cofferak set myapp/X --stdin <<<"x" # access denied
 ```
 
-## 8. Audit log
+## 9. Audit log
 
 ```bash
 cofferak audit tail --count 20
@@ -315,7 +324,7 @@ cofferak audit tail --count 20
 Every request is recorded with its time, service, action, path and
 result (`ok`, `denied`, `not_found`). Values are never logged.
 
-## 9. Clean up
+## 10. Clean up
 
 ```bash
 # stop the daemon: Ctrl-C (macOS) or `sudo systemctl stop cofferak-demo` (Linux)
@@ -330,7 +339,6 @@ security delete-generic-password -s cofferak -a demo   # macOS only
 | `could not connect to daemon at ...` | The daemon isn't running, or `COFFERAK_SOCKET` differs between the two terminals. |
 | `path must be shorter than SUN_LEN` | Unix socket paths are limited to ~104 characters on macOS; use a shorter `COFFERAK_SOCKET`. |
 | `access denied` | Wrong token, path outside the token's prefixes, or a write with a read-only token. |
-| `access denied` right after `enroll-service` | The daemon loads tokens at startup; restart it. |
 | Daemon hangs at startup on macOS | You ran `cofferakd` instead of `cofferak daemon`; the Keychain only serves the key silently to the binary that created it ([ADR 0007](adr/0007-macos-keychain-cross-process-limitation.md)). After installing a new build, macOS may ask once: choose Always Allow. |
 | `host seal backend rejected input` on Linux | Admin command run without root; use `$ADMIN` as set in step 1. |
 | `write could not be persisted` after `rotate-dek` | The daemon still holds the old key; restart it. |

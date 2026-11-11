@@ -77,6 +77,49 @@ struct Persistence {
     /// writing entries encrypted under it would corrupt the vault, so
     /// writes are refused until the daemon is restarted.
     host_wrap: DekWrapHost,
+    /// Identity of `vault.cofferak` as last loaded or written by this
+    /// daemon. When it changes (another process — `import`,
+    /// `enroll-service`, ... — replaced the file), the daemon reloads its
+    /// entries and service tokens before serving the next request.
+    stamp: Option<FileStamp>,
+    /// Set once a re-keyed vault has been reported, to log it only once.
+    rekey_reported: bool,
+}
+
+/// (device, inode, mtime seconds, mtime nanoseconds, length) of a file.
+/// Every vault write is an atomic rename, so any change gives a new inode.
+type FileStamp = (u64, u64, i64, i64, u64);
+
+fn file_stamp(path: &std::path::Path) -> Option<FileStamp> {
+    use std::os::unix::fs::MetadataExt;
+    let m = std::fs::metadata(path).ok()?;
+    Some((m.dev(), m.ino(), m.mtime(), m.mtime_nsec(), m.len()))
+}
+
+/// Decrypt and decode every enrolled service's `AccessToken` from
+/// `vault.services`, keyed by [`token_key`]. A service entry that fails to
+/// decrypt or decode is skipped with a warning rather than taking the rest
+/// down with it.
+pub fn load_tokens(vault: &VaultFile, dek: &[u8; 32]) -> BTreeMap<String, AccessToken> {
+    let mut tokens = BTreeMap::new();
+    for (service_id, entry) in &vault.services {
+        let plaintext = match decrypt_entry(dek, &Aad::service_token(service_id), entry) {
+            Ok(bytes) => zeroize::Zeroizing::new(bytes),
+            Err(e) => {
+                eprintln!("cofferakd: could not decrypt token for service '{service_id}': {e}, skipping it");
+                continue;
+            }
+        };
+        match bincode::deserialize::<AccessToken>(&plaintext) {
+            Ok(token) => {
+                tokens.insert(token_key(&token.secret), token);
+            }
+            Err(e) => {
+                eprintln!("cofferakd: could not decode token for service '{service_id}': {e}, skipping it");
+            }
+        }
+    }
+    tokens
 }
 
 /// One entry-level change to write through to disk.
@@ -131,17 +174,54 @@ impl Daemon {
         host_id: String,
         host_wrap: DekWrapHost,
     ) -> Self {
+        let stamp = file_stamp(&vault_path);
         self.persistence = Some(Persistence {
             vault_path,
             host_id,
             host_wrap,
+            stamp,
+            rekey_reported: false,
         });
         self
+    }
+
+    /// If `vault.cofferak` changed on disk since this daemon last loaded or
+    /// wrote it, reload entries and service tokens, so CLI changes
+    /// (`import`, `enroll-service`, ...) take effect without a restart.
+    /// If the vault was re-keyed (`rotate-dek`), the in-memory state is
+    /// kept and writes stay refused until a restart (see [`persist`]).
+    fn refresh_from_disk(&mut self) {
+        let Some(p) = &mut self.persistence else {
+            return;
+        };
+        let now = file_stamp(&p.vault_path);
+        if now.is_none() || now == p.stamp {
+            return;
+        }
+        let disk = match VaultFile::load(&p.vault_path) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("cofferakd: vault changed on disk but could not be reloaded: {e}");
+                return;
+            }
+        };
+        if disk.hosts.get(&p.host_id) != Some(&p.host_wrap) {
+            if !p.rekey_reported {
+                eprintln!("cofferakd: vault on disk was re-keyed; serving the last loaded state, writes refused until restart");
+                p.rekey_reported = true;
+            }
+            p.stamp = now;
+            return;
+        }
+        p.stamp = now;
+        self.tokens = load_tokens(&disk, &self.dek);
+        self.entries = disk.entries;
     }
 
     /// Handle one request: resolve the token, enforce the ACL, perform the
     /// action, and append exactly one audit entry before returning.
     pub fn handle_request(&mut self, req: Request) -> Response {
+        self.refresh_from_disk();
         match req {
             Request::Get { token, path } => self.handle_get(&token, &path),
             Request::Set { token, path, value } => self.handle_set(&token, &path, value),
@@ -154,8 +234,8 @@ impl Daemon {
     /// Re-reads the vault under its exclusive lock and applies only this
     /// change, so concurrent CLI admin edits to other parts of the file
     /// (hosts, services) are never clobbered.
-    fn persist(&self, change: Change<'_>) -> Result<(), String> {
-        let Some(p) = &self.persistence else {
+    fn persist(&mut self, change: Change<'_>) -> Result<(), String> {
+        let Some(p) = &mut self.persistence else {
             return Ok(());
         };
         let _lock =
@@ -178,7 +258,10 @@ impl Daemon {
             }
         }
         disk.save(&p.vault_path)
-            .map_err(|e| format!("could not write vault: {e}"))
+            .map_err(|e| format!("could not write vault: {e}"))?;
+        // Our own write must not look like an external change.
+        p.stamp = file_stamp(&p.vault_path);
+        Ok(())
     }
 
     /// Append one audit entry. I/O failure here is best-effort: it must

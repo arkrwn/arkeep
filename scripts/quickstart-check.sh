@@ -65,4 +65,22 @@ if cofferak get other/thing 2>/dev/null; then echo "expected denial" >&2; exit 1
 step "5. use a secret without a .env file"
 [[ "$(DB_PASSWORD="$(cofferak get myapp/DB_PASSWORD)" sh -c 'printf %s "$DB_PASSWORD"')" == "p@ss w0rd" ]]
 
+step "6. import a .env file, run an app with it, export it again"
+cat > "$WORK/app.env" <<'ENVEOF'
+export DB_HOST=db.internal
+DB_PASSWORD="p@ss \"q\" w0rd"
+API_KEY=abc=123   # comment
+ENVEOF
+cofferak import-env "$WORK/app.env" --prefix myapp/env | tail -1
+[[ "$(cofferak get myapp/env/DB_PASSWORD)" == 'p@ss "q" w0rd' ]]
+[[ "$(cofferak run --prefix myapp/env -- sh -c 'printf "%s|%s|%s" "$DB_HOST" "$API_KEY" "${COFFERAK_TOKEN:-none}"')" == "db.internal|abc=123|none" ]]
+cofferak export-env --prefix myapp/env -o "$WORK/out.env" >/dev/null
+grep -q '^DB_PASSWORD="p@ss \\"q\\" w0rd"$' "$WORK/out.env"
+
+step "7. export the vault to an encrypted bundle and import it back"
+printf 'correct horse battery staple\n' > "$WORK/pass"
+$ADMIN export -o "$WORK/backup.cfk" --passphrase-file "$WORK/pass"
+if LC_ALL=C grep -a -q 'p@ss' "$WORK/backup.cfk"; then echo "plaintext in bundle" >&2; exit 1; fi
+$ADMIN import "$WORK/backup.cfk" --passphrase-file "$WORK/pass" --dry-run | grep -q "0 new, 0 replaced, 5 kept"
+
 echo "== README quickstart: all steps passed ($OS)"

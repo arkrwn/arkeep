@@ -29,6 +29,7 @@
   <a href="#server-mode">Server mode</a> ·
   <a href="docs/benchmarks.md">Benchmarks</a> ·
   <a href="#sdks">SDKs</a> ·
+  <a href="docs/migration.md">Migration</a> ·
   <a href="docs/deployment.md">Deployment</a> ·
   <a href="docs/SPEC.md">Spec</a>
 </p>
@@ -89,6 +90,8 @@ Both claims are specific and checked on every commit:
 - **Audit log** — every request, allowed or denied, is recorded.
 - **Disaster recovery** — rebuild access on a new machine with the
   offline root key.
+- **Easy migration** — import `.env` files, run apps without them, and
+  move a whole vault to another machine or OS with one encrypted bundle.
 - **Client SDKs** — Rust, Go, Python and TypeScript/JavaScript, each
   tested against a real daemon in CI over the Unix socket and mTLS.
 
@@ -379,13 +382,15 @@ cofferak list myapp
 cofferak get other/thing                           # denied: outside myapp's paths
 ```
 
-**5. Use a secret without a `.env` file**
+**5. Replace your `.env` file**
 
 ```bash
-DB_PASSWORD="$(cofferak get myapp/DB_PASSWORD)" ./your-app
+cofferak import-env .env --prefix myapp/env       # parses quotes, export, comments, multi-line values
+cofferak run --prefix myapp/env -- ./your-app      # app gets the variables; no file on disk
+rm .env
 ```
 
-or read it in code with an [SDK](#sdks). To clean up: stop the daemon
+or read secrets in code with an [SDK](#sdks). To clean up: stop the daemon
 (Ctrl-C, or `sudo systemctl stop cofferak-demo` on Linux) and
 `rm -rf ~/.cofferak-demo`; on macOS also
 `security delete-generic-password -s cofferak -a demo`.
@@ -418,6 +423,11 @@ on macOS). `set`/`get`/`rm`/`list` additionally accept `--socket <PATH>`
 | `recover --root-key <path> --new-host <id>` | Disaster recovery: enroll a new host using the offline root private key (the saved armored block), bypassing every enrolled host's own sealed blob. See [`docs/recovery-runbook.md`](docs/recovery-runbook.md). |
 | `audit tail [--count N]` | Print the last `N` (default 20) entries of the daemon's audit log, read directly from `<data_dir>/audit.jsonl`. |
 | `daemon` | Run the daemon in the foreground (same code as `cofferakd`). Use this on macOS; see [deployment](docs/deployment.md#macos-launchd). |
+| `import-env <file\|-> --prefix <p>` | Import a `.env` file (each `KEY=value` → `<p>/KEY`); `--dry-run`, `--overwrite`. |
+| `export-env --prefix <p> -o <file\|->` | Write the variables under `<p>` as a `.env` file (mode 0600). |
+| `run --prefix <p> [--prefix <q>] -- <cmd>` | Run a command with those secrets as environment variables; nothing written to disk. |
+| `export -o <file>` | Whole vault (secrets + service tokens) as a passphrase-encrypted bundle, for backup or moving to another machine/OS. |
+| `import <file>` | Restore a bundle into this vault; `--dry-run`, `--overwrite`. Apps keep their tokens. |
 
 `cofferakd` itself takes no CLI flags; it reads `COFFERAK_DATA_DIR` and
 `COFFERAK_SOCKET` from the environment (same per-OS defaults as above),
@@ -428,6 +438,29 @@ mode](#server-mode). See [`docs/deployment.md`](docs/deployment.md) for
 running it as a systemd service (Linux) or a launchd agent (macOS),
 including the `systemd-creds`/Keychain host-key sealing steps and socket
 permissions.
+
+## Import, export and migrate
+
+cofferak has no database to migrate: the whole vault is one file. Moving
+secrets is a few commands ([docs/migration.md](docs/migration.md)):
+
+```bash
+cofferak import-env .env --prefix myapp/env            # from a .env file
+cofferak export-env --prefix myapp/env -o app.env      # back to a .env file
+
+cofferak export -o backup.cfk                          # old machine: encrypted bundle, passphrase-protected
+cofferak import backup.cfk                             # new machine (any OS): secrets and app tokens restored
+                                                       # (export/import are admin commands: on Linux use $ADMIN)
+
+vault kv get -format=json secret/myapp \
+  | jq -r '.data.data | to_entries[] | "\(.key)=\(.value | @json)"' \
+  | cofferak import-env - --prefix myapp/env           # from HashiCorp Vault KV
+```
+
+Bundles are AES-256-GCM-SIV encrypted with a PBKDF2-HMAC-SHA384 key from
+your passphrase, hold no machine-specific keys, and work between Linux
+and macOS. A running daemon picks up imports and newly enrolled services
+immediately, with no restart ([ADR 0012](docs/adr/0012-import-export-and-live-reload.md)).
 
 ## SDKs
 

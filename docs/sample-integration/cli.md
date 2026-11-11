@@ -10,10 +10,9 @@ sudo cofferak init --root --data-dir /var/lib/cofferak
 
 sudo cofferak init --host my-server-01 --data-dir /var/lib/cofferak
 
-# Enroll a consuming service and capture its one-time token, then restart
-# the daemon so it loads the new token:
+# Enroll a consuming service and capture its one-time token (the running
+# daemon picks it up automatically):
 sudo cofferak enroll-service myapp --paths myapp --perm rw --data-dir /var/lib/cofferak
-sudo systemctl restart cofferakd
 # prints a hex token ONCE — deliver it to that service the same sealed
 # way you deliver the host unseal key (systemd LoadCredentialEncrypted /
 # launchd + Keychain), never as a plaintext env var in a committed file.

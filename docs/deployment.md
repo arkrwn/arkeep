@@ -38,7 +38,7 @@ this host's key cannot be obtained (see below) or does not unwrap the
 vault's DEK, if `COFFERAK_HOST_ID` is not a valid id, or if this host's id
 isn't actually enrolled in `vault.cofferak`. It never creates an empty vault.
 
-## Writes are durable; restart after admin commands
+## Writes are durable; admin changes apply live
 
 Every `set`/`rm` the daemon acknowledges is already on disk: it is
 written through to `vault.cofferak` atomically (temp file, fsync, rename,
@@ -46,17 +46,19 @@ fsync directory) under an exclusive lock on `vault.cofferak.lock` before the
 client gets `ok` ([ADR 0010](adr/0010-durable-writes-and-vault-locking.md)).
 If the write can't be persisted, the client gets an error and nothing
 changes. CLI admin commands (`init`, `enroll-host`, `enroll-service`,
-`rotate-dek`, `recover`) take the same lock, so they never interleave
-with daemon writes.
+`rotate-dek`, `recover`, `import`, `export`) take the same lock, so they
+never interleave with daemon writes.
 
-The daemon loads service tokens and the DEK **at startup**. After any of
-these, restart it:
+The daemon notices when `vault.cofferak` changes on disk and reloads its
+secrets and service tokens before the next request, so `enroll-service`,
+`import` and removing a service take effect **without a restart**
+([ADR 0012](adr/0012-import-export-and-live-reload.md)). The one exception
+is a change of the vault's key:
 
 | Command | Why a restart is needed |
 |---------|-------------------------|
-| `enroll-service` | the new service's token is only loaded at startup |
-| `rotate-dek` | the daemon's in-memory DEK is stale; it **refuses all writes** (clients get an error) until restarted, rather than writing entries under the old key |
-| `enroll-host`, `recover` | if they re-enrolled *this* host, same as `rotate-dek` |
+| `rotate-dek` | the daemon's in-memory DEK is stale; it keeps serving reads and **refuses writes** (clients get an error) until restarted, rather than writing entries under the old key |
+| `enroll-host`, `recover` | only if they re-enrolled *this* host, same as `rotate-dek` |
 
 ```sh
 sudo systemctl restart cofferakd        # Linux
@@ -139,12 +141,11 @@ unsealing the file itself, which on Linux only works as root.)
    journalctl -u cofferakd -n 50
    ```
 
-5. Enroll each consuming service (as root, since it unseals the host key),
-   then restart the daemon so it loads the new token:
+5. Enroll each consuming service (as root, since it unseals the host key).
+   The running daemon picks the new token up by itself:
 
    ```sh
    sudo cofferak enroll-service my-app --paths my-app --perm ro --data-dir /var/lib/cofferak
-   sudo systemctl restart cofferakd
    ```
 
 Always provision hosts through `cofferak init --host` / `cofferak enroll-host`
@@ -218,7 +219,7 @@ so launchd restarts it if it exits, and logs errors to
    ls -l "$COFFERAK_DATA_DIR/cofferakd.sock"
    ```
 
-To restart it (e.g. after `enroll-service`) or remove it:
+To restart it (e.g. after `rotate-dek`) or remove it:
 
 ```sh
 launchctl kickstart -k gui/$(id -u)/com.cofferak.cofferakd

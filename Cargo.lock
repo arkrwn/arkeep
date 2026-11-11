@@ -270,6 +270,7 @@ dependencies = [
  "rustls-pemfile",
  "serde",
  "serde_json",
+ "zeroize",
 ]
 
 [[package]]
