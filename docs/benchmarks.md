@@ -48,6 +48,25 @@ mostly on your disk.
 
 Measured 2026-11-11 with `./scripts/bench.sh 20000` (one representative run; repeated runs on the same laptop varied by roughly ±15%, more for TLS tail latency).
 
+## Results: GitHub Actions `ubuntu-latest` runner (AMD EPYC 9V74, x86-64), release build
+
+From the CI run of this change (`sdk-smoke (ubuntu-latest)` job, step
+"Benchmark"); shared cloud runners vary from run to run.
+
+| Operation | Throughput | Latency |
+|---|---|---|
+| Decrypt 64 B secret (AES-256-GCM-SIV) | 3,860,000 ops/s | 0.26 µs |
+| Decrypt 1 KB | 2,112,000 ops/s | 0.47 µs |
+| Decrypt 16 KB | 260,000 ops/s (≈4.3 GB/s) | 3.9 µs |
+| Encrypt 64 B (includes fresh random nonce) | 1,420,000 ops/s | 0.70 µs |
+| Encrypt 16 KB | 188,000 ops/s (≈3.1 GB/s) | 5.3 µs |
+| Recovery wrap (X25519 + ML-KEM-1024 + HKDF-SHA-384) | 10,400 ops/s | 96 µs |
+| Recovery unwrap | 12,100 ops/s | 83 µs |
+| `get` over Unix socket, 1 client thread | 11,900 req/s | p50 82 µs, p99 143 µs |
+| `get` over Unix socket, 8 client threads | 26,900 req/s | p50 258 µs, p99 828 µs |
+| `get` over TLS 1.3 + mTLS, new ML-KEM-1024 handshake per request, 1 thread | 2,470 req/s | p50 402 µs, p99 469 µs |
+| `get` over TLS 1.3 + mTLS, new handshake per request, 8 threads | 5,680 req/s | p50 1.35 ms, p99 2.57 ms |
+
 ## Reading the numbers
 
 - **The crypto is not the bottleneck.** Decrypting a typical secret takes

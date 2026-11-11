@@ -61,9 +61,10 @@ Both claims are specific and checked on every commit:
   support ML-DSA certificates. All of it runs on AWS-LC, a FIPS 140-3
   validated module. Details and test evidence:
   [ADR 0011](docs/adr/0011-cnsa-grade-crypto-and-hardened-transport.md).
-- **Superfast** = decrypting a secret takes **0.24 µs**, large values
-  stream at **≈1.4 GB/s**, and a complete local read through the daemon
-  has an **84 µs** median latency (Apple M3 Pro). Reproduce with
+- **Superfast** = decrypting a secret takes **0.24–0.26 µs**, large
+  values stream at **1.4 GB/s (Apple M3 Pro) to 4.3 GB/s (x86-64 Linux
+  CI runner)**, and a complete local read through the daemon has a
+  **~83 µs** median latency on both. Reproduce with
   `./scripts/bench.sh`; CI runs it on every build. Full table:
   [docs/benchmarks.md](docs/benchmarks.md).
 
