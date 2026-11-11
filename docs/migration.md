@@ -21,6 +21,14 @@ and `import` are admin commands (on Linux run them as root, as with
 
 ## 1. Replace a `.env` file
 
+```mermaid
+flowchart LR
+    F[".env<br/>plaintext on disk"] -- "cofferak import-env .env<br/>--prefix myapp/env" --> D["cofferakd<br/>(token checked:<br/>myapp/* rw)"]
+    D -- "AES-256-GCM-SIV<br/>bound to each path" --> V[("vault.cofferak<br/>myapp/env/DB_HOST<br/>myapp/env/API_KEY …")]
+    F -. "then delete it" .-> X["🗑"]
+    V -- "cofferak run --prefix myapp/env -- ./app" --> A["./app<br/>DB_HOST, API_KEY … in its environment<br/>COFFERAK_TOKEN removed"]
+```
+
 ```bash
 cofferak import-env .env --prefix myapp/env --dry-run   # preview
 cofferak import-env .env --prefix myapp/env
@@ -61,6 +69,24 @@ nested paths like `myapp/env/a/b`, names with `-` or `.`) are skipped and
 listed. The file contains plaintext secrets: prefer `cofferak run`.
 
 ## 3. Back up a vault, or move it to another machine or OS
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor You
+    participant Old as Old machine<br/>(coffer A, master key A)
+    participant File as cofferak-backup.cfk
+    participant New as New machine, any OS<br/>(coffer B, master key B)
+    You->>Old: cofferak export -o cofferak-backup.cfk
+    Old->>Old: decrypt secrets + tokens with key A
+    You->>Old: passphrase (twice)
+    Old->>File: PBKDF2-HMAC-SHA384 → AES-256-GCM-SIV
+    You->>New: copy the file (scp, USB, cloud…)
+    Note over You,New: send the passphrase separately
+    You->>New: cofferak import cofferak-backup.cfk + passphrase
+    New->>New: decrypt bundle, re-encrypt everything with key B
+    Note over New: apps keep their tokens,<br/>a running daemon picks it up live
+```
 
 On the **old** machine:
 
@@ -116,6 +142,25 @@ transfer can only be opened by the coffer it was made for, and that
 coffer verifies which coffer sent it. Each coffer keeps its own master
 key: imported secrets are re-encrypted under the receiver's key. Design:
 [ADR 0013](adr/0013-coffer-identities-and-peer-transfers.md).
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Mac as Mac coffer<br/>(master key M, identity Im)
+    participant Srv as Server coffer<br/>(master key S, identity Is)
+    Note over Mac,Srv: pairing, once
+    Mac->>Srv: mac.id (public identity Im)
+    Srv->>Mac: server.id (public identity Is)
+    Note over Mac,Srv: compare fingerprints out of band,<br/>then `peer add` on each side
+    Note over Mac,Srv: every transfer
+    Mac->>Mac: export --to server --prefix myapp<br/>decrypt myapp/* with key M
+    Mac->>Mac: encrypt to Is (X25519 + ML-KEM-1024)<br/>sign with Im (ECDSA P-384 + ML-DSA-87)
+    Mac->>Srv: myapp.cfk (any channel)
+    Srv->>Srv: addressed to me? signatures valid?<br/>sender is trusted peer 'mac'?
+    Srv->>Srv: decrypt with Is, re-encrypt with key S
+    Note over Srv: each coffer still has exactly one master key
+    Srv-->>Mac: the reverse direction works the same way
+```
 
 **Pair once** (each side shares its public identity; it's not secret):
 
