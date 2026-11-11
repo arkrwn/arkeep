@@ -323,6 +323,24 @@ pub struct ImportReport {
     pub services_added: usize,
     pub services_replaced: usize,
     pub services_skipped: Vec<String>,
+    /// Service tokens the bundle carried, as (id, prefixes, permission),
+    /// whether or not they were imported.
+    pub tokens_offered: Vec<(String, Vec<String>, String)>,
+    /// True if the bundle carried tokens that were not imported because
+    /// `--with-tokens` was not given.
+    pub tokens_withheld: bool,
+}
+
+/// A path from an imported bundle must look like one cofferak itself
+/// would accept: non-empty, no empty or `.`/`..` segments, no leading `/`,
+/// no control characters.
+fn valid_import_path(p: &str) -> bool {
+    !p.is_empty()
+        && p.len() <= 1024
+        && !p.starts_with('/')
+        && p.split('/')
+            .all(|seg| !seg.is_empty() && seg != "." && seg != "..")
+        && !p.chars().any(|c| c.is_control())
 }
 
 /// How to open the bundle being imported.
@@ -346,8 +364,34 @@ fn apply_bundle(
     dek: &[u8; 32],
     b: &Bundle,
     overwrite: bool,
+    import_tokens: bool,
     report: &mut ImportReport,
 ) -> Result<(), CliError> {
+    // Validate everything first: a bundle with any invalid path or service
+    // id is rejected as a whole, before anything changes.
+    for e in &b.entries {
+        if !valid_import_path(&e.path) {
+            return Err(invalid(format!(
+                "bundle contains an invalid path {:?}; nothing imported",
+                e.path
+            )));
+        }
+    }
+    for t in &b.services {
+        cofferak_core::acl::validate_id("service", &t.service_id)
+            .map_err(|m| invalid(format!("bundle contains {m}; nothing imported")))?;
+        if t.prefixes.is_empty() || t.prefixes.iter().any(|p| !valid_import_path(p)) {
+            return Err(invalid(format!(
+                "bundle contains service {} with invalid path prefixes; nothing imported",
+                t.service_id
+            )));
+        }
+        report.tokens_offered.push((
+            t.service_id.clone(),
+            t.prefixes.clone(),
+            format!("{:?}", t.permission),
+        ));
+    }
     for e in &b.entries {
         let exists = vault.entries.contains_key(&e.path);
         if exists && !overwrite {
@@ -367,6 +411,10 @@ fn apply_bundle(
                 updated_at: e.updated_at,
             },
         );
+    }
+    if !import_tokens {
+        report.tokens_withheld = !b.services.is_empty();
+        return Ok(());
     }
     for t in &b.services {
         let exists = vault.services.contains_key(&t.service_id);
@@ -394,6 +442,7 @@ fn apply_bundle(
 /// `data_dir` (initialized, with this host enrolled). Existing paths and
 /// service ids are kept unless `overwrite`; everything is re-encrypted
 /// under this vault's DEK. With `dry_run`, nothing is written.
+#[allow(clippy::too_many_arguments)] // flags map 1:1 to `cofferak import` options
 pub fn run_import_with_seal(
     data_dir: &Path,
     host_id: &str,
@@ -401,6 +450,7 @@ pub fn run_import_with_seal(
     bundle_bytes: &[u8],
     key: ImportKey<'_>,
     overwrite: bool,
+    import_tokens: bool,
     dry_run: bool,
 ) -> Result<ImportReport, CliError> {
     let (mut vault, dek) = open_vault(data_dir, host_id, seal)?;
@@ -445,7 +495,7 @@ pub fn run_import_with_seal(
         }
     };
     report.source_fingerprint = b.source_fingerprint.clone();
-    apply_bundle(&mut vault, &dek, &b, overwrite, &mut report)?;
+    apply_bundle(&mut vault, &dek, &b, overwrite, import_tokens, &mut report)?;
     if !dry_run {
         save_vault(data_dir, host_id, &mut vault, &dek)?;
     }

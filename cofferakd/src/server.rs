@@ -204,6 +204,10 @@ fn load_host_key(host_id: &str, data_dir: &Path) -> Result<KeyBytes, String> {
 /// it as `cofferak daemon`: the host key lives in a Keychain item created
 /// by the `cofferak` binary, and the Keychain lets the creating binary read
 /// it back without an authorization prompt (ADR 0007).
+/// Concurrent connections allowed on the Unix socket.
+const UNIX_MAX_CONNECTIONS: usize = 256;
+
+/// Run the daemon until the process is killed (see below).
 pub fn run() {
     let data_dir = data_dir();
 
@@ -313,13 +317,28 @@ pub fn run() {
         std::process::exit(1);
     }
 
+    // Bounded like the TLS listener: a flood of local connections can't
+    // exhaust threads or memory, and each connection has a hard deadline.
+    let limiter = crate::tls_server::ConnectionLimiter::new(UNIX_MAX_CONNECTIONS);
     for stream in listener.incoming() {
         let stream = match stream {
             Ok(s) => s,
             Err(_) => continue,
         };
+        let Some(slot) = limiter.try_acquire() else {
+            let _ = stream.shutdown(Shutdown::Both);
+            continue;
+        };
         let daemon = Arc::clone(&daemon);
-        std::thread::spawn(move || handle_connection(stream, daemon));
+        std::thread::spawn(move || {
+            let _slot = slot;
+            let _deadline = stream.try_clone().ok().map(|s| {
+                crate::protocol::enforce_deadline(s, crate::protocol::CONNECTION_DEADLINE)
+            });
+            let _ = stream.set_read_timeout(Some(crate::protocol::CONNECTION_DEADLINE));
+            let _ = stream.set_write_timeout(Some(crate::protocol::CONNECTION_DEADLINE));
+            handle_connection(stream, daemon);
+        });
     }
 }
 
@@ -350,7 +369,10 @@ fn handle_connection(stream: UnixStream, daemon: Arc<Mutex<Daemon>>) {
         }
 
         let response = match decode_request(&line) {
-            Ok(req) => daemon.lock().unwrap().handle_request(req),
+            Ok(req) => daemon
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .handle_request(req),
             Err(_) => Response::Err("malformed request".to_string()),
         };
 

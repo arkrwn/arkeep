@@ -64,7 +64,49 @@ pub fn decode_response(line: &[u8]) -> Result<Response, serde_json::Error> {
 /// ADR 0008), but is enforced for every transport (Unix socket
 /// included) for one consistent, auditable limit rather than a
 /// per-transport exception.
-pub const MAX_LINE_BYTES: usize = 16 * 1024 * 1024;
+pub const MAX_LINE_BYTES: usize = 8 * 1024 * 1024;
+
+/// Largest secret value the daemon accepts (enforced in the daemon, not
+/// only in clients). A value is sent as a JSON array of numbers, up to four
+/// characters per byte, so this fits well inside [`MAX_LINE_BYTES`].
+pub const MAX_VALUE_BYTES: usize = 1024 * 1024;
+
+/// Hard limit on how long one client connection may stay open, on both the
+/// Unix socket and TLS: a slow or stalled client can't hold a slot longer.
+pub const CONNECTION_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Close `stream` when `deadline` passes, unless the returned guard is
+/// dropped first (the connection finished). One short-lived thread per
+/// connection, woken as soon as the connection ends.
+pub fn enforce_deadline<S: Shutdownable + Send + 'static>(
+    stream: S,
+    deadline: std::time::Duration,
+) -> std::sync::mpsc::Sender<()> {
+    let (tx, rx) = std::sync::mpsc::channel::<()>();
+    std::thread::spawn(move || {
+        if let Err(std::sync::mpsc::RecvTimeoutError::Timeout) = rx.recv_timeout(deadline) {
+            stream.shutdown_both();
+        }
+    });
+    tx
+}
+
+/// A connection that can be shut down from another thread.
+pub trait Shutdownable {
+    fn shutdown_both(&self);
+}
+
+impl Shutdownable for std::os::unix::net::UnixStream {
+    fn shutdown_both(&self) {
+        let _ = self.shutdown(std::net::Shutdown::Both);
+    }
+}
+
+impl Shutdownable for std::net::TcpStream {
+    fn shutdown_both(&self) {
+        let _ = self.shutdown(std::net::Shutdown::Both);
+    }
+}
 
 /// Read one newline-delimited line from `reader` into `buf` (which is
 /// cleared first), refusing to grow past [`MAX_LINE_BYTES`]. Returns
@@ -226,5 +268,45 @@ mod tests {
         let mut buf = Vec::new();
         let result = read_line_bounded(&mut reader, &mut buf);
         assert!(result.is_err(), "expected an error, got {result:?}");
+    }
+}
+
+#[cfg(test)]
+mod deadline_tests {
+    use super::enforce_deadline;
+    use std::io::Read;
+    use std::os::unix::net::UnixStream;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn a_stalled_connection_is_closed_at_the_deadline() {
+        let (server, mut client) = UnixStream::pair().unwrap();
+        let start = Instant::now();
+        let _guard = enforce_deadline(server.try_clone().unwrap(), Duration::from_millis(200));
+        // The client never sends anything; reading from the server side
+        // must end (EOF) once the deadline shuts the socket down.
+        let mut s = server;
+        let mut buf = [0u8; 1];
+        let n = s.read(&mut buf).unwrap_or(0);
+        assert_eq!(n, 0);
+        assert!(start.elapsed() >= Duration::from_millis(150));
+        assert!(start.elapsed() < Duration::from_secs(5));
+        let _ = client.read(&mut buf);
+    }
+
+    #[test]
+    fn a_finished_connection_is_left_alone() {
+        let (server, _client) = UnixStream::pair().unwrap();
+        let guard = enforce_deadline(server.try_clone().unwrap(), Duration::from_millis(100));
+        drop(guard);
+        std::thread::sleep(Duration::from_millis(200));
+        server.set_nonblocking(true).unwrap();
+        let mut buf = [0u8; 1];
+        let err = (&server).read(&mut buf).unwrap_err();
+        assert_eq!(
+            err.kind(),
+            std::io::ErrorKind::WouldBlock,
+            "socket must still be open"
+        );
     }
 }

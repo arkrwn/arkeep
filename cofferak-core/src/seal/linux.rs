@@ -29,7 +29,7 @@ impl SystemdCredsSeal {
     /// maps to [`SealError::Invalid`]; any other I/O failure while talking
     /// to the child process maps to [`SealError::Io`].
     fn run(&self, args: &[String], input: &[u8]) -> Result<Vec<u8>, SealError> {
-        let mut child = Command::new("systemd-creds")
+        let mut child = Command::new(systemd_creds())
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -102,4 +102,15 @@ impl HostSeal for SystemdCredsSeal {
         key.copy_from_slice(&stdout);
         Ok(key)
     }
+}
+
+/// Absolute path of `systemd-creds`, never looked up through `PATH`: admin
+/// commands run as root, possibly with a caller-controlled environment.
+fn systemd_creds() -> &'static str {
+    for p in ["/usr/bin/systemd-creds", "/bin/systemd-creds"] {
+        if std::path::Path::new(p).exists() {
+            return p;
+        }
+    }
+    "/usr/bin/systemd-creds"
 }

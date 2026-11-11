@@ -32,7 +32,17 @@ umask 077
 newkey() { openssl ecparam -name secp384r1 -genkey -noout -out "$1" 2>/dev/null; }
 
 if [[ -e "$OUT/ca.key" ]]; then
-  echo "$OUT/ca.key exists; reusing that CA"
+  # Reusing a CA key found in the output directory would sign with a key
+  # someone else may have planted there. Ask for it explicitly.
+  if [[ "${REUSE_CA:-}" != "1" ]]; then
+    echo "$OUT/ca.key already exists. To issue more certificates from that CA, re-run with REUSE_CA=1, otherwise pick an empty directory." >&2
+    exit 1
+  fi
+  if [[ -L "$OUT/ca.key" || "$(stat -c %u "$OUT/ca.key" 2>/dev/null || stat -f %u "$OUT/ca.key")" != "$(id -u)" ]]; then
+    echo "$OUT/ca.key is a symlink or not owned by you; refusing to use it" >&2
+    exit 1
+  fi
+  echo "reusing the CA in $OUT (REUSE_CA=1)"
 else
   newkey "$OUT/ca.key"
   openssl req -x509 -new -sha384 -key "$OUT/ca.key" -days "$DAYS" \

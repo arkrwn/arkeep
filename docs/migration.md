@@ -108,12 +108,14 @@ On the **new** machine: install cofferak, create a vault and enroll the
 machine as usual (README Quickstart or [deployment.md](deployment.md)), then:
 
 ```bash
-cofferak import cofferak-backup.cfk --dry-run   # shows what will be added
-cofferak import cofferak-backup.cfk
+cofferak import cofferak-backup.cfk --dry-run                 # shows what will be added, tokens included
+cofferak import cofferak-backup.cfk --with-tokens
 ```
 
-- Apps keep working with **the tokens they already have**: service tokens
-  are moved too.
+- Apps keep working with **the tokens they already have**, because
+  `--with-tokens` moves the service tokens too. Without that flag only
+  secrets are imported and the tokens in the bundle are listed, not added:
+  each token grants access to this vault, so it is never added by surprise.
 - A running daemon picks the import up immediately; no restart.
 - Paths that already exist on the new machine are kept unless you pass
   `--overwrite`.

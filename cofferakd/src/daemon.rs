@@ -144,9 +144,26 @@ enum Change<'a> {
 pub struct Daemon {
     dek: KeyBytes,
     entries: BTreeMap<String, VaultEntry>,
-    tokens: BTreeMap<String, AccessToken>,
+    /// Indexed by SHA-256 of the wire token (see [`token_index`]), so a
+    /// lookup compares fixed digests, never a client's guess against the
+    /// real token string.
+    tokens: BTreeMap<[u8; 32], AccessToken>,
     audit: AuditLog,
     persistence: Option<Persistence>,
+}
+
+/// SHA-256 of a wire token string: the daemon's internal token key.
+fn token_digest(token: &str) -> [u8; 32] {
+    use sha2::Digest;
+    sha2::Sha256::digest(token.as_bytes()).into()
+}
+
+/// Re-key a map from [`token_key`] strings to their digests.
+fn token_index(tokens: BTreeMap<String, AccessToken>) -> BTreeMap<[u8; 32], AccessToken> {
+    tokens
+        .into_iter()
+        .map(|(k, v)| (token_digest(&k), v))
+        .collect()
 }
 
 impl Daemon {
@@ -163,7 +180,7 @@ impl Daemon {
         Daemon {
             dek: KeyBytes::new(dek),
             entries: vault.entries,
-            tokens,
+            tokens: token_index(tokens),
             audit,
             persistence: None,
         }
@@ -236,7 +253,7 @@ impl Daemon {
         }
         p.stamp = now;
         p.generation_seen = p.generation_seen.max(disk.generation);
-        self.tokens = load_tokens(&disk, &self.dek);
+        self.tokens = token_index(load_tokens(&disk, &self.dek));
         self.entries = disk.entries;
     }
 
@@ -306,7 +323,7 @@ impl Daemon {
         let entry = AuditEntry {
             ts: now_unix(),
             service_id: service_id.to_string(),
-            path: path.to_string(),
+            path: audit_safe(path),
             action: action.to_string(),
             result: result.to_string(),
         };
@@ -314,7 +331,7 @@ impl Daemon {
     }
 
     fn handle_get(&mut self, token: &str, path: &str) -> Response {
-        let tok = self.tokens.get(token).cloned();
+        let tok = self.tokens.get(&token_digest(token)).cloned();
         let Some(tok) = tok else {
             self.log("unknown", path, "get", "denied");
             return Response::Denied;
@@ -342,7 +359,7 @@ impl Daemon {
     }
 
     fn handle_set(&mut self, token: &str, path: &str, value: Vec<u8>) -> Response {
-        let tok = self.tokens.get(token).cloned();
+        let tok = self.tokens.get(&token_digest(token)).cloned();
         let Some(tok) = tok else {
             self.log("unknown", path, "set", "denied");
             return Response::Denied;
@@ -350,6 +367,14 @@ impl Daemon {
         if !tok.permission.allows_write() || !path_allowed(&tok.prefixes, path) {
             self.log(&tok.service_id, path, "set", "denied");
             return Response::Denied;
+        }
+        if value.len() > crate::protocol::MAX_VALUE_BYTES {
+            self.log(&tok.service_id, path, "set", "too large");
+            return Response::Err(format!(
+                "value too large ({} bytes, limit {})",
+                value.len(),
+                crate::protocol::MAX_VALUE_BYTES
+            ));
         }
         let version = self
             .entries
@@ -372,7 +397,7 @@ impl Daemon {
     }
 
     fn handle_rm(&mut self, token: &str, path: &str) -> Response {
-        let tok = self.tokens.get(token).cloned();
+        let tok = self.tokens.get(&token_digest(token)).cloned();
         let Some(tok) = tok else {
             self.log("unknown", path, "rm", "denied");
             return Response::Denied;
@@ -396,7 +421,7 @@ impl Daemon {
     }
 
     fn handle_list(&mut self, token: &str, prefix: &str) -> Response {
-        let tok = self.tokens.get(token).cloned();
+        let tok = self.tokens.get(&token_digest(token)).cloned();
         let Some(tok) = tok else {
             self.log("unknown", prefix, "list", "denied");
             return Response::Denied;
@@ -414,5 +439,45 @@ impl Daemon {
             .collect();
         self.log(&tok.service_id, prefix, "list", "ok");
         Response::Listed(matches)
+    }
+}
+
+/// Longest path kept in an audit entry. Requests are checked before the
+/// path is used, so anything longer is junk from a client and is cut.
+const AUDIT_PATH_MAX: usize = 256;
+
+/// Make a client-supplied path safe to store in the audit log: control
+/// characters (newlines, terminal escapes) are escaped, and the length is
+/// capped so unauthenticated requests can't grow the log quickly.
+pub fn audit_safe(path: &str) -> String {
+    let mut out = String::new();
+    for c in path.chars() {
+        if out.len() >= AUDIT_PATH_MAX {
+            out.push_str("...");
+            break;
+        }
+        if c.is_control() {
+            out.extend(c.escape_default());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod audit_safe_tests {
+    use super::audit_safe;
+
+    #[test]
+    fn control_characters_are_escaped_and_length_capped() {
+        assert_eq!(audit_safe("app/x"), "app/x");
+        assert_eq!(
+            audit_safe("a\nfake 0 svc get b ok"),
+            "a\\nfake 0 svc get b ok"
+        );
+        assert_eq!(audit_safe("\u{1b}[31mred"), "\\u{1b}[31mred");
+        let long = "a".repeat(10_000);
+        assert!(audit_safe(&long).len() <= 260);
     }
 }

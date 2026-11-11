@@ -18,8 +18,9 @@ directly, one compromised host exposing other hosts' trust, a service
 reading secrets outside its enrolled path prefix.
 
 Does not protect against: root on an already-unsealed live host reading
-process memory, or loss/disclosure of the creator's offline root private
-key.
+process memory, loss or disclosure of the creator's offline root private
+key, or, on macOS, another process running as the same user as the vault
+admin (the Keychain trusts the cofferak binary, see ADR 0016).
 
 Integrity (ADR 0015): the whole vault carries an HMAC-SHA384 keyed from
 the DEK and a generation counter, and each host keeps an authenticated
