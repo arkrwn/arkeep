@@ -157,8 +157,13 @@ data directory's owner. The daemon reloads secrets and tokens when
 host (its DEK is loaded at startup). Moving data: `import-env` /
 `export-env` (`.env` files, via the daemon with a token), `run` (exec a
 command with secrets as environment variables; `COFFERAK_TOKEN` removed
-from its environment), and `export` / `import` (whole-vault bundles
-encrypted with PBKDF2-HMAC-SHA384 + AES-256-GCM-SIV; admin). See `cofferak-cli/src/main.rs` for exact flags — this spec
+from its environment), and `export` / `import` (admin): passphrase
+bundles (PBKDF2-HMAC-SHA384 + AES-256-GCM-SIV), or with `export --to PEER`
+transfers encrypted to a paired coffer's identity (X25519 + ML-KEM-1024)
+and signed (ECDSA P-384 + ML-DSA-87), accepted only from trusted peers
+(`identity`, `peer add|list|rm`; ADR 0013). `vault.cofferak` format 3
+stores the coffer identity and peers, encrypted under the DEK; format 2 is
+read and upgraded. See `cofferak-cli/src/main.rs` for exact flags — this spec
 does not restate flag syntax.
 
 ## 8. SDKs

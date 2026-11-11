@@ -89,6 +89,27 @@ pub struct VaultFile {
     pub hosts: BTreeMap<String, DekWrapHost>,
     pub services: BTreeMap<String, EncryptedEntry>,
     pub entries: BTreeMap<String, VaultEntry>,
+    /// This coffer's identity private key (ADR 0013), encrypted under the
+    /// DEK with associated data `cofferak/v2/identity`; created on first
+    /// use by `cofferak identity`.
+    pub identity: Option<EncryptedEntry>,
+    /// Trusted peer coffers' public identities by name, each encrypted
+    /// under the DEK (associated data `cofferak/v2/peer\0<name>`) so an
+    /// attacker who can write the file can't add a peer.
+    pub peers: BTreeMap<String, EncryptedEntry>,
+}
+
+/// Vault format version 2 (before identities and peers), read and
+/// upgraded in memory by [`VaultFile::load`].
+#[derive(Deserialize)]
+struct VaultFileV2 {
+    _version: u16,
+    created_at: i64,
+    root_pubkey: RootPublicKey,
+    root_wrap: Option<DekWrapRoot>,
+    hosts: BTreeMap<String, DekWrapHost>,
+    services: BTreeMap<String, EncryptedEntry>,
+    entries: BTreeMap<String, VaultEntry>,
 }
 
 impl VaultFile {
@@ -103,6 +124,8 @@ impl VaultFile {
             hosts: BTreeMap::new(),
             services: BTreeMap::new(),
             entries: BTreeMap::new(),
+            identity: None,
+            peers: BTreeMap::new(),
         }
     }
 
@@ -135,19 +158,38 @@ impl VaultFile {
             Some(b) => u16::from_le_bytes([b[0], b[1]]),
             None => return Err(FormatError::Corrupt),
         };
-        if version != VAULT_FORMAT_VERSION {
-            return Err(FormatError::UnsupportedVersion(version));
+        match version {
+            VAULT_FORMAT_VERSION => bincode_options()
+                .deserialize(&bytes)
+                .map_err(|_| FormatError::Corrupt),
+            // Format 2 has the same layout minus the identity/peers fields:
+            // upgrade it in memory; the next save writes format 3.
+            2 => {
+                let v2: VaultFileV2 = bincode_options()
+                    .deserialize(&bytes)
+                    .map_err(|_| FormatError::Corrupt)?;
+                Ok(VaultFile {
+                    version: VAULT_FORMAT_VERSION,
+                    created_at: v2.created_at,
+                    root_pubkey: v2.root_pubkey,
+                    root_wrap: v2.root_wrap,
+                    hosts: v2.hosts,
+                    services: v2.services,
+                    entries: v2.entries,
+                    identity: None,
+                    peers: BTreeMap::new(),
+                })
+            }
+            other => Err(FormatError::UnsupportedVersion(other)),
         }
-        bincode_options()
-            .deserialize(&bytes)
-            .map_err(|_| FormatError::Corrupt)
     }
 }
 
-/// The `vault.cofferak` format version this build reads and writes. Version
-/// 2 is crypto format v2 (ADR 0011): hybrid post-quantum root wrap and
-/// context-bound ciphertexts.
-pub const VAULT_FORMAT_VERSION: u16 = 2;
+/// The `vault.cofferak` format version this build writes. Version 2 is
+/// crypto format v2 (ADR 0011): hybrid post-quantum root wrap and
+/// context-bound ciphertexts; version 3 adds the coffer identity and
+/// trusted peers (ADR 0013). Version 2 files are read and upgraded.
+pub const VAULT_FORMAT_VERSION: u16 = 3;
 
 /// Upper bound on a `vault.cofferak` file, enforced on both encode and decode.
 pub const MAX_VAULT_BYTES: u64 = 256 * 1024 * 1024;
@@ -414,6 +456,40 @@ mod tests {
             VaultFile::load(&path),
             Err(FormatError::UnsupportedVersion(1))
         ));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn version_2_vaults_load_and_upgrade() {
+        #[derive(Serialize)]
+        struct V2<'a> {
+            version: u16,
+            created_at: i64,
+            root_pubkey: &'a RootPublicKey,
+            root_wrap: &'a Option<DekWrapRoot>,
+            hosts: &'a BTreeMap<String, DekWrapHost>,
+            services: &'a BTreeMap<String, EncryptedEntry>,
+            entries: &'a BTreeMap<String, VaultEntry>,
+        }
+        let v = sample_vault_with_root_wrap_some();
+        let bytes = bincode_options()
+            .serialize(&V2 {
+                version: 2,
+                created_at: v.created_at,
+                root_pubkey: &v.root_pubkey,
+                root_wrap: &v.root_wrap,
+                hosts: &v.hosts,
+                services: &v.services,
+                entries: &v.entries,
+            })
+            .unwrap();
+        let path = temp_path("v2.cofferak");
+        std::fs::write(&path, bytes).unwrap();
+        let loaded = VaultFile::load(&path).unwrap();
+        assert_eq!(loaded.version, VAULT_FORMAT_VERSION);
+        assert_eq!(loaded.entries, v.entries);
+        assert_eq!(loaded.hosts, v.hosts);
+        assert!(loaded.identity.is_none() && loaded.peers.is_empty());
         let _ = std::fs::remove_file(&path);
     }
 

@@ -16,6 +16,7 @@ use cofferak_core::bundle::{self, Bundle, BundleEntry};
 use cofferak_core::crypto::{decrypt_entry, encrypt_entry, unwrap_dek_for_host, Aad, KeyBytes};
 use cofferak_core::dotenv;
 use cofferak_core::format::{VaultEntry, VaultFile, VaultMeta};
+use cofferak_core::identity::{self, IdentityPublic, IdentitySecret};
 use cofferak_core::seal::{HostSeal, SealedBlob};
 use zeroize::Zeroizing;
 
@@ -60,28 +61,38 @@ pub struct ExportReport {
     pub services: usize,
 }
 
-/// Build an encrypted bundle of every secret and service token in the
-/// vault at `data_dir`, unlocking it as `host_id` with `seal`.
-pub fn run_export_with_seal(
-    data_dir: &Path,
-    host_id: &str,
-    seal: &dyn HostSeal,
-    passphrase: &[u8],
-    iterations: u32,
-) -> Result<(Vec<u8>, ExportReport), CliError> {
-    if passphrase.len() < bundle::MIN_PASSPHRASE_BYTES {
-        return Err(invalid(bundle::BundleError::WeakPassphrase.to_string()));
-    }
-    let vpath = vault_path(data_dir);
-    if !vpath.exists() {
-        return Err(CliError::VaultMissing);
-    }
-    let vault = VaultFile::load(&vpath)?;
-    let dek = unlock(data_dir, &vault, host_id, seal)?;
+/// What to put in a bundle: every secret (no prefixes) or only those under
+/// the given prefixes; service tokens included or not.
+#[derive(Debug, Clone, Default)]
+pub struct Selection {
+    pub prefixes: Vec<String>,
+    pub include_tokens: bool,
+}
 
-    let mut entries = Vec::with_capacity(vault.entries.len());
+impl Selection {
+    /// The whole vault, tokens included.
+    #[allow(dead_code)] // used by the integration tests
+    pub fn everything() -> Self {
+        Selection {
+            prefixes: Vec::new(),
+            include_tokens: true,
+        }
+    }
+}
+
+/// Decrypt the selected secrets and tokens of `vault` into a [`Bundle`].
+fn build_bundle(vault: &VaultFile, dek: &[u8; 32], sel: &Selection) -> Result<Bundle, CliError> {
+    let prefixes: Vec<String> = sel
+        .prefixes
+        .iter()
+        .map(|p| p.trim_end_matches('/').to_string())
+        .collect();
+    let mut entries = Vec::new();
     for (path, e) in &vault.entries {
-        let value = decrypt_entry(&dek, &Aad::entry(path), &e.ciphertext)
+        if !prefixes.is_empty() && !cofferak_core::acl::path_allowed(&prefixes, path) {
+            continue;
+        }
+        let value = decrypt_entry(dek, &Aad::entry(path), &e.ciphertext)
             .map_err(|err| invalid(format!("could not decrypt {path}: {err}")))?;
         entries.push(BundleEntry {
             path: path.clone(),
@@ -90,35 +101,217 @@ pub fn run_export_with_seal(
             updated_at: e.updated_at,
         });
     }
-    let mut services = Vec::with_capacity(vault.services.len());
-    for (id, e) in &vault.services {
-        let plain = Zeroizing::new(
-            decrypt_entry(&dek, &Aad::service_token(id), e)
-                .map_err(|err| invalid(format!("could not decrypt token of {id}: {err}")))?,
-        );
-        let token: AccessToken = bincode::deserialize(&plain)
-            .map_err(|err| invalid(format!("could not decode token of {id}: {err}")))?;
-        services.push(token);
+    let mut services = Vec::new();
+    if sel.include_tokens {
+        for (id, e) in &vault.services {
+            let plain = Zeroizing::new(
+                decrypt_entry(dek, &Aad::service_token(id), e)
+                    .map_err(|err| invalid(format!("could not decrypt token of {id}: {err}")))?,
+            );
+            let token: AccessToken = bincode::deserialize(&plain)
+                .map_err(|err| invalid(format!("could not decode token of {id}: {err}")))?;
+            services.push(token);
+        }
     }
-    let report = ExportReport {
-        entries: entries.len(),
-        services: services.len(),
-    };
-    let b = Bundle {
+    Ok(Bundle {
         created_at: now_unix(),
         source_fingerprint: vault.root_pubkey.fingerprint(),
         entries,
         services,
+    })
+}
+
+/// Build a passphrase-encrypted bundle of the vault at `data_dir`
+/// (unlocked as `host_id` with `seal`).
+pub fn run_export_with_seal(
+    data_dir: &Path,
+    host_id: &str,
+    seal: &dyn HostSeal,
+    passphrase: &[u8],
+    iterations: u32,
+    sel: &Selection,
+) -> Result<(Vec<u8>, ExportReport), CliError> {
+    if passphrase.len() < bundle::MIN_PASSPHRASE_BYTES {
+        return Err(invalid(bundle::BundleError::WeakPassphrase.to_string()));
+    }
+    let (vault, dek) = open_vault(data_dir, host_id, seal)?;
+    let b = build_bundle(&vault, &dek, sel)?;
+    let report = ExportReport {
+        entries: b.entries.len(),
+        services: b.services.len(),
     };
     let sealed = bundle::seal_with_iterations(&b, passphrase, iterations)
         .map_err(|e| invalid(e.to_string()))?;
     Ok((sealed, report))
 }
 
+fn open_vault(
+    data_dir: &Path,
+    host_id: &str,
+    seal: &dyn HostSeal,
+) -> Result<(VaultFile, KeyBytes), CliError> {
+    let vpath = vault_path(data_dir);
+    if !vpath.exists() {
+        return Err(CliError::VaultMissing);
+    }
+    let vault = VaultFile::load(&vpath)?;
+    let dek = unlock(data_dir, &vault, host_id, seal)?;
+    Ok((vault, dek))
+}
+
+/// This coffer's identity, creating (and storing) one on first use.
+/// Returns the identity and whether the vault was modified.
+fn ensure_identity(
+    vault: &mut VaultFile,
+    dek: &[u8; 32],
+) -> Result<(IdentitySecret, bool), CliError> {
+    if let Some(enc) = &vault.identity {
+        let plain = Zeroizing::new(
+            decrypt_entry(dek, &Aad::identity(), enc)
+                .map_err(|e| invalid(format!("could not decrypt this coffer's identity: {e}")))?,
+        );
+        let id = IdentitySecret::from_bytes(&plain).map_err(|e| invalid(e.to_string()))?;
+        return Ok((id, false));
+    }
+    let id = IdentitySecret::generate().map_err(|e| invalid(e.to_string()))?;
+    vault.identity = Some(encrypt_entry(dek, &Aad::identity(), &id.to_bytes()));
+    Ok((id, true))
+}
+
+fn save_vault(data_dir: &Path, vault: &VaultFile) -> Result<(), CliError> {
+    vault.save(&vault_path(data_dir))?;
+    VaultMeta::from_vault(vault).save(&meta_path(data_dir))?;
+    Ok(())
+}
+
+/// This coffer's public identity (created on first use).
+pub fn run_identity_with_seal(
+    data_dir: &Path,
+    host_id: &str,
+    seal: &dyn HostSeal,
+) -> Result<IdentityPublic, CliError> {
+    let (mut vault, dek) = open_vault(data_dir, host_id, seal)?;
+    let (id, created) = ensure_identity(&mut vault, &dek)?;
+    if created {
+        save_vault(data_dir, &vault)?;
+    }
+    Ok(id.public().clone())
+}
+
+fn decrypt_peers(
+    vault: &VaultFile,
+    dek: &[u8; 32],
+) -> Result<BTreeMap<String, IdentityPublic>, CliError> {
+    let mut out = BTreeMap::new();
+    for (name, enc) in &vault.peers {
+        let plain = Zeroizing::new(
+            decrypt_entry(dek, &Aad::peer(name), enc)
+                .map_err(|e| invalid(format!("could not decrypt peer {name}: {e}")))?,
+        );
+        let text =
+            std::str::from_utf8(&plain).map_err(|_| invalid(format!("peer {name} is corrupt")))?;
+        out.insert(
+            name.clone(),
+            IdentityPublic::from_text(text).map_err(|e| invalid(format!("peer {name}: {e}")))?,
+        );
+    }
+    Ok(out)
+}
+
+/// Trust `peer` (another coffer's public identity) under `name`.
+pub fn run_peer_add_with_seal(
+    data_dir: &Path,
+    host_id: &str,
+    seal: &dyn HostSeal,
+    name: &str,
+    peer: &IdentityPublic,
+    replace: bool,
+) -> Result<(), CliError> {
+    cofferak_core::acl::validate_id("peer", name).map_err(invalid)?;
+    let (mut vault, dek) = open_vault(data_dir, host_id, seal)?;
+    if vault.peers.contains_key(name) && !replace {
+        return Err(invalid(format!(
+            "a peer named {name} already exists (use --replace)"
+        )));
+    }
+    let (me, created) = ensure_identity(&mut vault, &dek)?;
+    if me.public().fingerprint() == peer.fingerprint() {
+        return Err(invalid("that is this coffer's own identity"));
+    }
+    let _ = created;
+    for (other, p) in decrypt_peers(&vault, &dek)? {
+        if other != name && p.fingerprint() == peer.fingerprint() {
+            return Err(invalid(format!(
+                "this identity is already trusted as {other}"
+            )));
+        }
+    }
+    vault.peers.insert(
+        name.to_string(),
+        encrypt_entry(&dek, &Aad::peer(name), peer.to_text().as_bytes()),
+    );
+    save_vault(data_dir, &vault)
+}
+
+/// Trusted peers by name.
+pub fn run_peer_list_with_seal(
+    data_dir: &Path,
+    host_id: &str,
+    seal: &dyn HostSeal,
+) -> Result<BTreeMap<String, IdentityPublic>, CliError> {
+    let (vault, dek) = open_vault(data_dir, host_id, seal)?;
+    decrypt_peers(&vault, &dek)
+}
+
+/// Stop trusting the peer `name`. Returns false if there was none.
+pub fn run_peer_rm(data_dir: &Path, name: &str) -> Result<bool, CliError> {
+    let vpath = vault_path(data_dir);
+    if !vpath.exists() {
+        return Err(CliError::VaultMissing);
+    }
+    let mut vault = VaultFile::load(&vpath)?;
+    let removed = vault.peers.remove(name).is_some();
+    if removed {
+        save_vault(data_dir, &vault)?;
+    }
+    Ok(removed)
+}
+
+/// Build a transfer for the trusted peer `peer_name`: encrypted so only
+/// that coffer can open it, signed with this coffer's identity.
+pub fn run_export_to_peer_with_seal(
+    data_dir: &Path,
+    host_id: &str,
+    seal: &dyn HostSeal,
+    peer_name: &str,
+    sel: &Selection,
+) -> Result<(Vec<u8>, ExportReport), CliError> {
+    let (mut vault, dek) = open_vault(data_dir, host_id, seal)?;
+    let peers = decrypt_peers(&vault, &dek)?;
+    let peer = peers.get(peer_name).ok_or_else(|| {
+        invalid(format!(
+            "no trusted peer named {peer_name}; add it with `cofferak peer add {peer_name} <identity file>`"
+        ))
+    })?;
+    let (me, created) = ensure_identity(&mut vault, &dek)?;
+    if created {
+        save_vault(data_dir, &vault)?;
+    }
+    let b = build_bundle(&vault, &dek, sel)?;
+    let report = ExportReport {
+        entries: b.entries.len(),
+        services: b.services.len(),
+    };
+    let bytes = identity::seal_transfer(&b, &me, peer).map_err(|e| invalid(e.to_string()))?;
+    Ok((bytes, report))
+}
+
 /// What an import did (or, with `dry_run`, would do).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ImportReport {
     pub source_fingerprint: String,
+    /// For a peer transfer: the trusted peer it came from.
+    pub from_peer: Option<String>,
     pub entries_added: usize,
     pub entries_replaced: usize,
     pub entries_skipped: Vec<String>,
@@ -127,31 +320,29 @@ pub struct ImportReport {
     pub services_skipped: Vec<String>,
 }
 
-/// Restore a bundle into the vault at `data_dir` (which must already be
-/// initialized with this host enrolled). Existing paths and service ids
-/// are kept unless `overwrite`; everything is re-encrypted under this
-/// vault's DEK. With `dry_run`, nothing is written.
-pub fn run_import_with_seal(
-    data_dir: &Path,
-    host_id: &str,
-    seal: &dyn HostSeal,
-    bundle_bytes: &[u8],
-    passphrase: &[u8],
-    overwrite: bool,
-    dry_run: bool,
-) -> Result<ImportReport, CliError> {
-    let b = bundle::open(bundle_bytes, passphrase).map_err(|e| invalid(e.to_string()))?;
-    let vpath = vault_path(data_dir);
-    if !vpath.exists() {
-        return Err(CliError::VaultMissing);
-    }
-    let mut vault = VaultFile::load(&vpath)?;
-    let dek = unlock(data_dir, &vault, host_id, seal)?;
+/// How to open the bundle being imported.
+pub enum ImportKey<'a> {
+    /// A passphrase bundle (`CFKEXPT1`).
+    Passphrase(&'a [u8]),
+    /// A peer transfer (`CFKEXPT2`), opened with this coffer's identity.
+    /// `from` optionally pins the expected sender by its public identity
+    /// instead of requiring it to be a stored peer.
+    Identity { from: Option<IdentityPublic> },
+}
 
-    let mut report = ImportReport {
-        source_fingerprint: b.source_fingerprint.clone(),
-        ..Default::default()
-    };
+/// True if `bytes` is a peer transfer rather than a passphrase bundle.
+pub fn is_peer_transfer(bytes: &[u8]) -> bool {
+    identity::is_transfer(bytes)
+}
+
+/// Re-encrypt `b`'s secrets and tokens under `dek` into `vault`.
+fn apply_bundle(
+    vault: &mut VaultFile,
+    dek: &[u8; 32],
+    b: &Bundle,
+    overwrite: bool,
+    report: &mut ImportReport,
+) -> Result<(), CliError> {
     for e in &b.entries {
         let exists = vault.entries.contains_key(&e.path);
         if exists && !overwrite {
@@ -166,7 +357,7 @@ pub fn run_import_with_seal(
         vault.entries.insert(
             e.path.clone(),
             VaultEntry {
-                ciphertext: encrypt_entry(&dek, &Aad::entry(&e.path), &e.value),
+                ciphertext: encrypt_entry(dek, &Aad::entry(&e.path), &e.value),
                 version: e.version,
                 updated_at: e.updated_at,
             },
@@ -188,12 +379,70 @@ pub fn run_import_with_seal(
         );
         vault.services.insert(
             t.service_id.clone(),
-            encrypt_entry(&dek, &Aad::service_token(&t.service_id), &plain),
+            encrypt_entry(dek, &Aad::service_token(&t.service_id), &plain),
         );
     }
+    Ok(())
+}
+
+/// Restore a passphrase bundle or a peer transfer into the vault at
+/// `data_dir` (initialized, with this host enrolled). Existing paths and
+/// service ids are kept unless `overwrite`; everything is re-encrypted
+/// under this vault's DEK. With `dry_run`, nothing is written.
+pub fn run_import_with_seal(
+    data_dir: &Path,
+    host_id: &str,
+    seal: &dyn HostSeal,
+    bundle_bytes: &[u8],
+    key: ImportKey<'_>,
+    overwrite: bool,
+    dry_run: bool,
+) -> Result<ImportReport, CliError> {
+    let (mut vault, dek) = open_vault(data_dir, host_id, seal)?;
+    let mut report = ImportReport::default();
+    let b = match key {
+        ImportKey::Passphrase(p) => {
+            bundle::open(bundle_bytes, p).map_err(|e| invalid(e.to_string()))?
+        }
+        ImportKey::Identity { from } => {
+            let Some(_) = vault.identity else {
+                return Err(invalid(
+                    "this coffer has no identity yet, so nothing can have been sent to it; \
+                     run `cofferak identity` and give the output to the sender first",
+                ));
+            };
+            let (me, _) = ensure_identity(&mut vault, &dek)?;
+            let (sender, b) =
+                identity::open_transfer(bundle_bytes, &me).map_err(|e| invalid(e.to_string()))?;
+            let fp = sender.fingerprint();
+            let peer_name = match from {
+                Some(pinned) if pinned.fingerprint() == fp => "(pinned with --from)".to_string(),
+                Some(_) => {
+                    return Err(invalid(format!(
+                        "the bundle was signed by {}, not by the identity given with --from",
+                        sender.short_fingerprint()
+                    )))
+                }
+                None => decrypt_peers(&vault, &dek)?
+                    .into_iter()
+                    .find(|(_, p)| p.fingerprint() == fp)
+                    .map(|(n, _)| n)
+                    .ok_or_else(|| {
+                        invalid(format!(
+                            "the bundle was signed by an untrusted coffer ({}); if you expected it, \
+                             add that coffer with `cofferak peer add <name> <its identity file>` and retry",
+                            sender.short_fingerprint()
+                        ))
+                    })?,
+            };
+            report.from_peer = Some(peer_name);
+            b
+        }
+    };
+    report.source_fingerprint = b.source_fingerprint.clone();
+    apply_bundle(&mut vault, &dek, &b, overwrite, &mut report)?;
     if !dry_run {
-        vault.save(&vpath)?;
-        VaultMeta::from_vault(&vault).save(&meta_path(data_dir))?;
+        save_vault(data_dir, &vault)?;
     }
     Ok(report)
 }

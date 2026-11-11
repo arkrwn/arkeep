@@ -178,6 +178,24 @@ pub fn run_rotate_dek(
         *service = encrypt_entry(&new_dek, &aad, &plaintext);
     }
 
+    if let Some(identity) = vault.identity.as_mut() {
+        let aad = Aad::identity();
+        let plaintext = Zeroizing::new(
+            decrypt_entry(&old_dek, &aad, identity)
+                .map_err(|e| CliError::Io(std::io::Error::other(e)))?,
+        );
+        *identity = encrypt_entry(&new_dek, &aad, &plaintext);
+    }
+
+    for (name, peer) in vault.peers.iter_mut() {
+        let aad = Aad::peer(name);
+        let plaintext = Zeroizing::new(
+            decrypt_entry(&old_dek, &aad, peer)
+                .map_err(|e| CliError::Io(std::io::Error::other(e)))?,
+        );
+        *peer = encrypt_entry(&new_dek, &aad, &plaintext);
+    }
+
     if vault.root_wrap.is_some() {
         vault.root_wrap = Some(
             wrap_dek_for_root(&new_dek, &vault.root_pubkey)

@@ -241,8 +241,15 @@ fn bundle_moves_every_secret_and_token_to_another_vault() {
     let (src, token) = vault_with("src", 1, &[("app/DB", b"p@ss"), ("app/ssh/key", &key)]);
     let (dst, _) = vault_with("dst", 2, &[("app/LOCAL", b"keep")]);
 
-    let (bytes, rep) =
-        transfer::run_export_with_seal(&src, "h", &FakeHostSeal { tag: 1 }, PASS, FAST).unwrap();
+    let (bytes, rep) = transfer::run_export_with_seal(
+        &src,
+        "h",
+        &FakeHostSeal { tag: 1 },
+        PASS,
+        FAST,
+        &transfer::Selection::everything(),
+    )
+    .unwrap();
     assert_eq!((rep.entries, rep.services), (2, 1));
 
     let r = transfer::run_import_with_seal(
@@ -250,7 +257,7 @@ fn bundle_moves_every_secret_and_token_to_another_vault() {
         "h",
         &FakeHostSeal { tag: 2 },
         &bytes,
-        PASS,
+        transfer::ImportKey::Passphrase(PASS),
         false,
         false,
     )
@@ -270,7 +277,7 @@ fn bundle_moves_every_secret_and_token_to_another_vault() {
         "h",
         &FakeHostSeal { tag: 2 },
         &bytes,
-        PASS,
+        transfer::ImportKey::Passphrase(PASS),
         true,
         false,
     )
@@ -289,8 +296,15 @@ fn bundle_moves_every_secret_and_token_to_another_vault() {
 fn import_dry_run_and_wrong_passphrase_change_nothing() {
     let (src, _) = vault_with("src2", 1, &[("app/A", b"1")]);
     let (dst, _) = vault_with("dst2", 2, &[]);
-    let (bytes, _) =
-        transfer::run_export_with_seal(&src, "h", &FakeHostSeal { tag: 1 }, PASS, FAST).unwrap();
+    let (bytes, _) = transfer::run_export_with_seal(
+        &src,
+        "h",
+        &FakeHostSeal { tag: 1 },
+        PASS,
+        FAST,
+        &transfer::Selection::everything(),
+    )
+    .unwrap();
     let before = std::fs::read(vault_path(&dst)).unwrap();
 
     let r = transfer::run_import_with_seal(
@@ -298,7 +312,7 @@ fn import_dry_run_and_wrong_passphrase_change_nothing() {
         "h",
         &FakeHostSeal { tag: 2 },
         &bytes,
-        PASS,
+        transfer::ImportKey::Passphrase(PASS),
         false,
         true,
     )
@@ -315,7 +329,7 @@ fn import_dry_run_and_wrong_passphrase_change_nothing() {
         "h",
         &FakeHostSeal { tag: 2 },
         &bytes,
-        b"not the passphrase!",
+        transfer::ImportKey::Passphrase(b"not the passphrase!"),
         false,
         false,
     )
@@ -332,8 +346,15 @@ fn import_dry_run_and_wrong_passphrase_change_nothing() {
 #[test]
 fn export_refuses_weak_passphrase_and_missing_vault() {
     let (src, _) = vault_with("src3", 1, &[]);
-    let e = transfer::run_export_with_seal(&src, "h", &FakeHostSeal { tag: 1 }, b"short", FAST)
-        .unwrap_err();
+    let e = transfer::run_export_with_seal(
+        &src,
+        "h",
+        &FakeHostSeal { tag: 1 },
+        b"short",
+        FAST,
+        &transfer::Selection::everything(),
+    )
+    .unwrap_err();
     assert!(matches!(e, CliError::Invalid(_)));
     let e = transfer::run_export_with_seal(
         &temp_dir("none"),
@@ -341,6 +362,7 @@ fn export_refuses_weak_passphrase_and_missing_vault() {
         &FakeHostSeal { tag: 1 },
         PASS,
         FAST,
+        &transfer::Selection::everything(),
     )
     .unwrap_err();
     assert!(matches!(e, CliError::VaultMissing));
@@ -471,4 +493,217 @@ fn collect_env_merges_prefixes_in_order() {
         transfer::collect_env(&client, &tok, &["app/base".into(), "app/prod".into()]).unwrap();
     assert_eq!(&*vars["A"], b"prod");
     assert_eq!(&*vars["B"], b"base");
+}
+
+// ---- peer transfers (ADR 0013) ----
+
+fn pair(a: &Path, a_tag: u8, a_name: &str, b: &Path, b_tag: u8, b_name: &str) {
+    let a_id = transfer::run_identity_with_seal(a, "h", &FakeHostSeal { tag: a_tag }).unwrap();
+    let b_id = transfer::run_identity_with_seal(b, "h", &FakeHostSeal { tag: b_tag }).unwrap();
+    transfer::run_peer_add_with_seal(a, "h", &FakeHostSeal { tag: a_tag }, b_name, &b_id, false)
+        .unwrap();
+    transfer::run_peer_add_with_seal(b, "h", &FakeHostSeal { tag: b_tag }, a_name, &a_id, false)
+        .unwrap();
+}
+
+#[test]
+fn peer_transfer_moves_secrets_both_ways_and_reencrypts_under_the_receivers_key() {
+    let (mac, _) = vault_with(
+        "pmac",
+        1,
+        &[("app/MAC_ONLY", b"from-mac"), ("other/X", b"x")],
+    );
+    let (srv, _) = vault_with("psrv", 2, &[("app/SRV_ONLY", b"from-server")]);
+    pair(&mac, 1, "mac", &srv, 2, "server");
+
+    // Mac -> server, only app/*.
+    let sel = transfer::Selection {
+        prefixes: vec!["app".into()],
+        include_tokens: false,
+    };
+    let (bytes, rep) =
+        transfer::run_export_to_peer_with_seal(&mac, "h", &FakeHostSeal { tag: 1 }, "server", &sel)
+            .unwrap();
+    assert_eq!((rep.entries, rep.services), (1, 0));
+    let r = transfer::run_import_with_seal(
+        &srv,
+        "h",
+        &FakeHostSeal { tag: 2 },
+        &bytes,
+        transfer::ImportKey::Identity { from: None },
+        false,
+        false,
+    )
+    .unwrap();
+    assert_eq!(r.from_peer.as_deref(), Some("mac"));
+    assert_eq!(r.entries_added, 1);
+    // Readable on the server with the server's own key only.
+    assert_eq!(value_of(&srv, 2, "app/MAC_ONLY").unwrap(), b"from-mac");
+    assert!(
+        value_of(&srv, 2, "other/X").is_none(),
+        "prefix filter leaked"
+    );
+
+    // Server -> mac (append).
+    let (back, _) = transfer::run_export_to_peer_with_seal(
+        &srv,
+        "h",
+        &FakeHostSeal { tag: 2 },
+        "mac",
+        &transfer::Selection::everything(),
+    )
+    .unwrap();
+    let r = transfer::run_import_with_seal(
+        &mac,
+        "h",
+        &FakeHostSeal { tag: 1 },
+        &back,
+        transfer::ImportKey::Identity { from: None },
+        false,
+        false,
+    )
+    .unwrap();
+    assert_eq!(r.from_peer.as_deref(), Some("server"));
+    assert_eq!(value_of(&mac, 1, "app/SRV_ONLY").unwrap(), b"from-server");
+    cleanup(&mac);
+    cleanup(&srv);
+}
+
+#[test]
+fn transfers_from_untrusted_coffers_or_for_other_coffers_are_refused() {
+    let (mac, _) = vault_with("umac", 1, &[("app/A", b"a")]);
+    let (srv, _) = vault_with("usrv", 2, &[]);
+    let (evil, _) = vault_with("uevil", 3, &[("app/A", b"evil")]);
+    pair(&mac, 1, "mac", &srv, 2, "server");
+    // `evil` knows the server's public identity and trusts it, but the
+    // server doesn't trust `evil`.
+    let srv_id = transfer::run_identity_with_seal(&srv, "h", &FakeHostSeal { tag: 2 }).unwrap();
+    transfer::run_peer_add_with_seal(
+        &evil,
+        "h",
+        &FakeHostSeal { tag: 3 },
+        "server",
+        &srv_id,
+        false,
+    )
+    .unwrap();
+    let (forged, _) = transfer::run_export_to_peer_with_seal(
+        &evil,
+        "h",
+        &FakeHostSeal { tag: 3 },
+        "server",
+        &transfer::Selection::everything(),
+    )
+    .unwrap();
+    let before = std::fs::read(vault_path(&srv)).unwrap();
+    let e = transfer::run_import_with_seal(
+        &srv,
+        "h",
+        &FakeHostSeal { tag: 2 },
+        &forged,
+        transfer::ImportKey::Identity { from: None },
+        false,
+        false,
+    )
+    .unwrap_err();
+    assert!(
+        matches!(e, CliError::Invalid(ref m) if m.contains("untrusted")),
+        "{e}"
+    );
+    assert_eq!(std::fs::read(vault_path(&srv)).unwrap(), before);
+
+    // A transfer the mac made for the server can't be imported by `evil`.
+    let (for_srv, _) = transfer::run_export_to_peer_with_seal(
+        &mac,
+        "h",
+        &FakeHostSeal { tag: 1 },
+        "server",
+        &transfer::Selection::everything(),
+    )
+    .unwrap();
+    let e = transfer::run_import_with_seal(
+        &evil,
+        "h",
+        &FakeHostSeal { tag: 3 },
+        &for_srv,
+        transfer::ImportKey::Identity { from: None },
+        false,
+        false,
+    )
+    .unwrap_err();
+    assert!(
+        matches!(e, CliError::Invalid(ref m) if m.contains("different coffer")),
+        "{e}"
+    );
+
+    // Exporting to an unknown peer fails clearly.
+    let e = transfer::run_export_to_peer_with_seal(
+        &mac,
+        "h",
+        &FakeHostSeal { tag: 1 },
+        "nobody",
+        &transfer::Selection::everything(),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(e, CliError::Invalid(ref m) if m.contains("no trusted peer")),
+        "{e}"
+    );
+    for d in [&mac, &srv, &evil] {
+        cleanup(d);
+    }
+}
+
+#[test]
+fn identity_and_peers_survive_dek_rotation() {
+    let (mac, _) = vault_with("rmac", 1, &[("app/A", b"a")]);
+    let (srv, _) = vault_with("rsrv", 2, &[]);
+    pair(&mac, 1, "mac", &srv, 2, "server");
+    let before = transfer::run_identity_with_seal(&srv, "h", &FakeHostSeal { tag: 2 }).unwrap();
+    let hosts: Vec<(String, Box<dyn HostSeal>)> =
+        vec![("h".into(), Box::new(FakeHostSeal { tag: 2 }))];
+    secrets::run_rotate_dek(&srv, &hosts).unwrap();
+    let after = transfer::run_identity_with_seal(&srv, "h", &FakeHostSeal { tag: 2 }).unwrap();
+    assert_eq!(before, after, "identity changed across rotate-dek");
+    let peers = transfer::run_peer_list_with_seal(&srv, "h", &FakeHostSeal { tag: 2 }).unwrap();
+    assert!(peers.contains_key("mac"));
+    let (bytes, _) = transfer::run_export_to_peer_with_seal(
+        &mac,
+        "h",
+        &FakeHostSeal { tag: 1 },
+        "server",
+        &transfer::Selection::everything(),
+    )
+    .unwrap();
+    transfer::run_import_with_seal(
+        &srv,
+        "h",
+        &FakeHostSeal { tag: 2 },
+        &bytes,
+        transfer::ImportKey::Identity { from: None },
+        false,
+        false,
+    )
+    .unwrap();
+    assert_eq!(value_of(&srv, 2, "app/A").unwrap(), b"a");
+    cleanup(&mac);
+    cleanup(&srv);
+}
+
+#[test]
+fn peer_names_are_validated_and_self_or_duplicate_trust_refused() {
+    let (a, _) = vault_with("na", 1, &[]);
+    let (b, _) = vault_with("nb", 2, &[]);
+    let a_id = transfer::run_identity_with_seal(&a, "h", &FakeHostSeal { tag: 1 }).unwrap();
+    let b_id = transfer::run_identity_with_seal(&b, "h", &FakeHostSeal { tag: 2 }).unwrap();
+    let s = FakeHostSeal { tag: 1 };
+    assert!(transfer::run_peer_add_with_seal(&a, "h", &s, "../x", &b_id, false).is_err());
+    assert!(transfer::run_peer_add_with_seal(&a, "h", &s, "me", &a_id, false).is_err());
+    transfer::run_peer_add_with_seal(&a, "h", &s, "b", &b_id, false).unwrap();
+    assert!(transfer::run_peer_add_with_seal(&a, "h", &s, "b", &b_id, false).is_err());
+    assert!(transfer::run_peer_add_with_seal(&a, "h", &s, "b2", &b_id, false).is_err());
+    assert!(transfer::run_peer_rm(&a, "b").unwrap());
+    assert!(!transfer::run_peer_rm(&a, "b").unwrap());
+    cleanup(&a);
+    cleanup(&b);
 }

@@ -148,8 +148,15 @@ enum Command {
     /// encrypted, passphrase-protected bundle, to back up or move to
     /// another machine or OS.
     Export(ExportArgs),
-    /// Import an encrypted bundle made by `export` into this vault.
+    /// Import a bundle made by `export` (passphrase or peer transfer) into
+    /// this vault.
     Import(ImportArgs),
+    /// Print this coffer's public identity (created on first use), to give
+    /// to another coffer that should be able to send you secrets.
+    Identity(IdentityArgs),
+    /// Manage trusted peer coffers (who may send you transfers, and whom
+    /// you can export to with `export --to`).
+    Peer(PeerArgs),
 }
 
 #[derive(Args)]
@@ -349,6 +356,18 @@ struct ExportArgs {
     /// Bundle file to write (mode 0600).
     #[arg(long, short = 'o', value_name = "FILE")]
     out: PathBuf,
+    /// Encrypt for this trusted peer coffer (see `cofferak peer`) instead
+    /// of with a passphrase. Only that coffer can import it, and it can
+    /// verify the bundle came from this one.
+    #[arg(long, value_name = "PEER")]
+    to: Option<String>,
+    /// Export only secrets under this prefix (repeatable). Default: all.
+    #[arg(long, value_name = "PREFIX")]
+    prefix: Vec<String>,
+    /// Include service tokens even with --prefix (a whole-vault export
+    /// always includes them).
+    #[arg(long)]
+    with_tokens: bool,
     /// Overwrite the bundle file if it exists.
     #[arg(long)]
     force: bool,
@@ -374,9 +393,49 @@ struct ImportArgs {
     /// Read the passphrase from this file (first line) instead of prompting.
     #[arg(long, value_name = "FILE")]
     passphrase_file: Option<PathBuf>,
+    /// For a peer transfer: accept it only if signed by this identity file
+    /// (instead of requiring the sender to be a stored peer).
+    #[arg(long, value_name = "IDENTITY_FILE")]
+    from: Option<PathBuf>,
     /// Vault data directory. Defaults to `$COFFERAK_DATA_DIR` / the platform data dir.
     #[arg(long, value_name = "DIR")]
     data_dir: Option<PathBuf>,
+}
+
+#[derive(Args)]
+struct IdentityArgs {
+    /// Also write the identity to this file (to copy to the other coffer).
+    #[arg(long, short = 'o', value_name = "FILE")]
+    out: Option<PathBuf>,
+    /// Vault data directory. Defaults to `$COFFERAK_DATA_DIR` / the platform data dir.
+    #[arg(long, value_name = "DIR")]
+    data_dir: Option<PathBuf>,
+}
+
+#[derive(Args)]
+struct PeerArgs {
+    #[command(subcommand)]
+    command: PeerCommand,
+    /// Vault data directory. Defaults to `$COFFERAK_DATA_DIR` / the platform data dir.
+    #[arg(long, value_name = "DIR", global = true)]
+    data_dir: Option<PathBuf>,
+}
+
+#[derive(Subcommand)]
+enum PeerCommand {
+    /// Trust another coffer: NAME and the identity file it gave you
+    /// (`cofferak identity -o FILE` there; `-` reads standard input).
+    Add {
+        name: String,
+        identity_file: PathBuf,
+        /// Replace an existing peer with this name.
+        #[arg(long)]
+        replace: bool,
+    },
+    /// List trusted peers and their fingerprints.
+    List,
+    /// Stop trusting a peer.
+    Rm { name: String },
 }
 
 #[derive(Args)]
@@ -805,6 +864,8 @@ fn main() {
         Command::Run(args) => cmd_run(args),
         Command::Export(args) => cmd_export(args),
         Command::Import(args) => cmd_import(args),
+        Command::Identity(args) => cmd_identity(args),
+        Command::Peer(args) => cmd_peer(args),
         Command::Audit(args) => match args.command {
             AuditCommand::Tail(tail_args) => {
                 let data_dir = resolve_data_dir(tail_args.data_dir);
@@ -1036,38 +1097,6 @@ fn with_local_host<T>(
     Err(last)
 }
 
-fn cmd_export(args: ExportArgs) {
-    let data_dir = resolve_data_dir(args.data_dir);
-    if args.out.exists() && !args.force {
-        fail(
-            "export",
-            format!("{} exists (use --force to overwrite)", args.out.display()),
-        );
-    }
-    let pass = read_passphrase(args.passphrase_file.as_deref(), true);
-    let (bytes, report) = with_admin_lock(&data_dir, || {
-        with_local_host(&data_dir, |id, seal| {
-            commands::transfer::run_export_with_seal(
-                &data_dir,
-                id,
-                seal,
-                pass.as_bytes(),
-                cofferak_core::bundle::DEFAULT_ITERATIONS,
-            )
-        })
-    })
-    .unwrap_or_else(|e| fail("export", e));
-    write_private(&args.out, &bytes, args.force).unwrap_or_else(|e| fail("export", e));
-    give_to_sudo_user(&args.out);
-    println!(
-        "exported {} secrets and {} service tokens to {} (encrypted, mode 0600)",
-        report.entries,
-        report.services,
-        args.out.display()
-    );
-    println!("keep the passphrase separately from the file; `cofferak import` needs both");
-}
-
 /// When running as root via `sudo` (needed on Linux for admin commands),
 /// hand a file we created back to the user who ran sudo, so they can
 /// copy or delete it without sudo.
@@ -1085,6 +1114,65 @@ fn give_to_sudo_user(path: &Path) {
     }
 }
 
+fn selection(prefixes: &[String], with_tokens: bool) -> commands::transfer::Selection {
+    commands::transfer::Selection {
+        prefixes: prefixes.to_vec(),
+        include_tokens: prefixes.is_empty() || with_tokens,
+    }
+}
+
+fn cmd_export(args: ExportArgs) {
+    let data_dir = resolve_data_dir(args.data_dir);
+    if args.out.exists() && !args.force {
+        fail(
+            "export",
+            format!("{} exists (use --force to overwrite)", args.out.display()),
+        );
+    }
+    let sel = selection(&args.prefix, args.with_tokens);
+    let (bytes, report) = if let Some(peer) = &args.to {
+        with_admin_lock(&data_dir, || {
+            with_local_host(&data_dir, |id, seal| {
+                commands::transfer::run_export_to_peer_with_seal(&data_dir, id, seal, peer, &sel)
+            })
+        })
+    } else {
+        let pass = read_passphrase(args.passphrase_file.as_deref(), true);
+        with_admin_lock(&data_dir, || {
+            with_local_host(&data_dir, |id, seal| {
+                commands::transfer::run_export_with_seal(
+                    &data_dir,
+                    id,
+                    seal,
+                    pass.as_bytes(),
+                    cofferak_core::bundle::DEFAULT_ITERATIONS,
+                    &sel,
+                )
+            })
+        })
+    }
+    .unwrap_or_else(|e| fail("export", e));
+    write_private(&args.out, &bytes, args.force).unwrap_or_else(|e| fail("export", e));
+    give_to_sudo_user(&args.out);
+    match &args.to {
+        Some(peer) => println!(
+            "exported {} secrets and {} service tokens to {} for peer '{peer}' (only that coffer can open it; signed by this one)",
+            report.entries,
+            report.services,
+            args.out.display()
+        ),
+        None => {
+            println!(
+                "exported {} secrets and {} service tokens to {} (encrypted, mode 0600)",
+                report.entries,
+                report.services,
+                args.out.display()
+            );
+            println!("keep the passphrase separately from the file; `cofferak import` needs both");
+        }
+    }
+}
+
 fn cmd_import(args: ImportArgs) {
     let data_dir = resolve_data_dir(args.data_dir);
     let meta = std::fs::metadata(&args.file)
@@ -1094,15 +1182,27 @@ fn cmd_import(args: ImportArgs) {
     }
     let bytes = std::fs::read(&args.file)
         .unwrap_or_else(|e| fail("import", format!("{}: {e}", args.file.display())));
-    let pass = read_passphrase(args.passphrase_file.as_deref(), false);
+    let peer_transfer = commands::transfer::is_peer_transfer(&bytes);
+    let pinned = args.from.as_ref().map(|f| read_identity_file(f));
+    let pass = if peer_transfer {
+        None
+    } else {
+        Some(read_passphrase(args.passphrase_file.as_deref(), false))
+    };
     let r = with_admin_lock(&data_dir, || {
         with_local_host(&data_dir, |id, seal| {
+            let key = match &pass {
+                Some(p) => commands::transfer::ImportKey::Passphrase(p.as_bytes()),
+                None => commands::transfer::ImportKey::Identity {
+                    from: pinned.clone(),
+                },
+            };
             commands::transfer::run_import_with_seal(
                 &data_dir,
                 id,
                 seal,
                 &bytes,
-                pass.as_bytes(),
+                key,
                 args.overwrite,
                 args.dry_run,
             )
@@ -1114,9 +1214,15 @@ fn cmd_import(args: ImportArgs) {
     } else {
         "imported"
     };
+    let source = match &r.from_peer {
+        Some(p) => format!("peer '{p}' (signature verified)"),
+        None => format!(
+            "vault {}…",
+            &r.source_fingerprint[..r.source_fingerprint.len().min(16)]
+        ),
+    };
     println!(
-        "{verb} from vault {}…: secrets {} new, {} replaced, {} kept; service tokens {} new, {} replaced, {} kept",
-        &r.source_fingerprint[..r.source_fingerprint.len().min(16)],
+        "{verb} from {source}: secrets {} new, {} replaced, {} kept; service tokens {} new, {} replaced, {} kept",
         r.entries_added,
         r.entries_replaced,
         r.entries_skipped.len(),
@@ -1131,6 +1237,99 @@ fn cmd_import(args: ImportArgs) {
         println!("  = service {s} (exists, kept)");
     }
     if !args.dry_run {
-        println!("a running daemon picks the changes up automatically");
+        println!("re-encrypted under this coffer's own key; a running daemon picks the changes up automatically");
+    }
+}
+
+fn read_identity_file(path: &Path) -> cofferak_core::identity::IdentityPublic {
+    let text = if path.as_os_str() == "-" {
+        let mut s = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut s)
+            .unwrap_or_else(|e| fail("identity", e));
+        s
+    } else {
+        std::fs::read_to_string(path)
+            .unwrap_or_else(|e| fail("identity", format!("{}: {e}", path.display())))
+    };
+    cofferak_core::identity::IdentityPublic::from_text(&text)
+        .unwrap_or_else(|e| fail("identity", format!("{}: {e}", path.display())))
+}
+
+fn cmd_identity(args: IdentityArgs) {
+    let data_dir = resolve_data_dir(args.data_dir);
+    let id = with_admin_lock(&data_dir, || {
+        with_local_host(&data_dir, |h, seal| {
+            commands::transfer::run_identity_with_seal(&data_dir, h, seal)
+        })
+    })
+    .unwrap_or_else(|e| fail("identity", e));
+    let text = format!(
+        "# cofferak identity — fingerprint {}\n{}\n",
+        id.short_fingerprint(),
+        id.to_text()
+    );
+    if let Some(out) = &args.out {
+        std::fs::write(out, &text)
+            .unwrap_or_else(|e| fail("identity", format!("{}: {e}", out.display())));
+        give_to_sudo_user(out);
+        println!("wrote this coffer's public identity to {}", out.display());
+        println!("fingerprint: {}", id.short_fingerprint());
+        println!(
+            "give the file to the other coffer and run there: cofferak peer add <name> {}",
+            out.display()
+        );
+    } else {
+        print!("{text}");
+    }
+}
+
+fn cmd_peer(args: PeerArgs) {
+    let data_dir = resolve_data_dir(args.data_dir);
+    match args.command {
+        PeerCommand::Add {
+            name,
+            identity_file,
+            replace,
+        } => {
+            let peer = read_identity_file(&identity_file);
+            with_admin_lock(&data_dir, || {
+                with_local_host(&data_dir, |h, seal| {
+                    commands::transfer::run_peer_add_with_seal(
+                        &data_dir, h, seal, &name, &peer, replace,
+                    )
+                })
+            })
+            .unwrap_or_else(|e| fail("peer add", e));
+            println!(
+                "trusting peer '{name}' (fingerprint {})",
+                peer.short_fingerprint()
+            );
+            println!("confirm this fingerprint with the other side over a channel you trust");
+        }
+        PeerCommand::List => {
+            let peers = with_admin_lock(&data_dir, || {
+                with_local_host(&data_dir, |h, seal| {
+                    commands::transfer::run_peer_list_with_seal(&data_dir, h, seal)
+                })
+            })
+            .unwrap_or_else(|e| fail("peer list", e));
+            if peers.is_empty() {
+                println!("no trusted peers yet (add one with `cofferak peer add <name> <identity file>`)");
+            }
+            for (name, p) in peers {
+                println!("{name:20} {}", p.short_fingerprint());
+            }
+        }
+        PeerCommand::Rm { name } => {
+            let removed = with_admin_lock(&data_dir, || {
+                commands::transfer::run_peer_rm(&data_dir, &name)
+            })
+            .unwrap_or_else(|e| fail("peer rm", e));
+            if removed {
+                println!("no longer trusting peer '{name}'");
+            } else {
+                fail("peer rm", format!("no peer named {name}"));
+            }
+        }
     }
 }
