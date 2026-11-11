@@ -13,6 +13,7 @@
 
 use std::io::{BufReader, Write};
 use std::net::{TcpListener, TcpStream};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -31,6 +32,8 @@ pub struct TlsServerConfig {
     pub cert_path: String,
     pub key_path: String,
     pub client_ca_path: Option<String>,
+    /// Maximum concurrent TLS connections (`$MIKAVT_TLS_MAX_CONNECTIONS`).
+    pub max_connections: usize,
 }
 
 /// Reads the `MIKAVT_TLS_*` environment variables. Returns `Ok(None)` if
@@ -46,12 +49,29 @@ pub fn resolve() -> Result<Option<TlsServerConfig>, String> {
     let key_path = std::env::var("MIKAVT_TLS_KEY")
         .map_err(|_| "MIKAVT_TLS_ADDR is set but MIKAVT_TLS_KEY is not".to_string())?;
     let client_ca_path = std::env::var("MIKAVT_TLS_CLIENT_CA").ok();
+    let max_connections =
+        parse_max_connections(std::env::var("MIKAVT_TLS_MAX_CONNECTIONS").ok().as_deref())?;
     Ok(Some(TlsServerConfig {
         addr,
         cert_path,
         key_path,
         client_ca_path,
+        max_connections,
     }))
+}
+
+/// `$MIKAVT_TLS_MAX_CONNECTIONS`: a positive integer, default
+/// [`DEFAULT_MAX_CONNECTIONS`].
+fn parse_max_connections(raw: Option<&str>) -> Result<usize, String> {
+    match raw {
+        None | Some("") => Ok(DEFAULT_MAX_CONNECTIONS),
+        Some(s) => match s.parse::<usize>() {
+            Ok(n) if n > 0 => Ok(n),
+            _ => Err(format!(
+                "MIKAVT_TLS_MAX_CONNECTIONS must be a positive integer, got {s:?}"
+            )),
+        },
+    }
 }
 
 fn load_certs(path: &str) -> Result<Vec<CertificateDer<'static>>, String> {
@@ -125,14 +145,79 @@ pub fn start(config: TlsServerConfig, daemon: Arc<Mutex<Daemon>>) {
         }
     );
 
+    let limiter = ConnectionLimiter::new(config.max_connections);
     std::thread::spawn(move || {
         for stream in listener.incoming() {
             let Ok(tcp) = stream else { continue };
+            // Over the limit: close immediately instead of spawning a
+            // thread, so a flood of connections can't exhaust threads or
+            // memory. Legitimate clients just retry.
+            let Some(slot) = limiter.try_acquire() else {
+                let _ = tcp.shutdown(std::net::Shutdown::Both);
+                continue;
+            };
             let daemon = Arc::clone(&daemon);
             let server_config = Arc::clone(&server_config);
-            std::thread::spawn(move || handle_tls_connection(tcp, server_config, daemon));
+            std::thread::spawn(move || {
+                let _slot = slot;
+                handle_tls_connection(tcp, server_config, daemon);
+            });
         }
     });
+}
+
+/// Default cap on concurrent TLS connections; override with
+/// `$MIKAVT_TLS_MAX_CONNECTIONS`.
+pub const DEFAULT_MAX_CONNECTIONS: usize = 256;
+
+/// Counts live connections and refuses new ones past `max`.
+#[derive(Clone)]
+pub struct ConnectionLimiter {
+    live: Arc<AtomicUsize>,
+    max: usize,
+}
+
+/// One held connection slot; released when dropped (including when the
+/// connection thread panics and unwinds).
+pub struct ConnectionSlot {
+    live: Arc<AtomicUsize>,
+}
+
+impl ConnectionLimiter {
+    pub fn new(max: usize) -> Self {
+        ConnectionLimiter {
+            live: Arc::new(AtomicUsize::new(0)),
+            max,
+        }
+    }
+
+    pub fn try_acquire(&self) -> Option<ConnectionSlot> {
+        let mut current = self.live.load(Ordering::Acquire);
+        loop {
+            if current >= self.max {
+                return None;
+            }
+            match self.live.compare_exchange_weak(
+                current,
+                current + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => {
+                    return Some(ConnectionSlot {
+                        live: Arc::clone(&self.live),
+                    })
+                }
+                Err(actual) => current = actual,
+            }
+        }
+    }
+}
+
+impl Drop for ConnectionSlot {
+    fn drop(&mut self) {
+        self.live.fetch_sub(1, Ordering::AcqRel);
+    }
 }
 
 fn handle_tls_connection(
@@ -184,5 +269,28 @@ fn handle_tls_connection(
         if reader.get_mut().write_all(&encode(&response)).is_err() {
             break;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn limiter_refuses_past_max_and_frees_slots_on_drop() {
+        let limiter = ConnectionLimiter::new(2);
+        let a = limiter.try_acquire().expect("slot 1");
+        let _b = limiter.try_acquire().expect("slot 2");
+        assert!(limiter.try_acquire().is_none(), "third must be refused");
+        drop(a);
+        assert!(limiter.try_acquire().is_some(), "freed slot is reusable");
+    }
+
+    #[test]
+    fn parse_max_connections_rejects_zero_and_garbage() {
+        assert_eq!(parse_max_connections(None), Ok(DEFAULT_MAX_CONNECTIONS));
+        assert_eq!(parse_max_connections(Some("64")), Ok(64));
+        assert!(parse_max_connections(Some("0")).is_err());
+        assert!(parse_max_connections(Some("lots")).is_err());
     }
 }

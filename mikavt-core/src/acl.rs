@@ -55,9 +55,59 @@ pub fn path_allowed(prefixes: &[String], path: &str) -> bool {
     })
 }
 
+/// Validate a host or service id. Ids end up in file paths
+/// (`hosts/<id>.seal`), OS credential names (`mikavt-<id>`), and Keychain
+/// account names, so they are restricted to `[A-Za-z0-9._-]`, 1–64
+/// characters, not starting with `.` or `-` — which rules out path
+/// separators, `..`, hidden files, and option-like values by
+/// construction. `kind` is only used in the error message.
+pub fn validate_id(kind: &str, id: &str) -> Result<(), String> {
+    let ok_len = !id.is_empty() && id.len() <= 64;
+    let ok_chars = id
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'_' || b == b'-');
+    let ok_start = !id.starts_with('.') && !id.starts_with('-');
+    if ok_len && ok_chars && ok_start {
+        Ok(())
+    } else {
+        Err(format!(
+            "invalid {kind} id {id:?}: use 1-64 characters from [A-Za-z0-9._-], \
+             not starting with '.' or '-'"
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn validate_id_accepts_ordinary_ids() {
+        for id in ["host-a", "web01", "my_service", "svc.v2", "A"] {
+            assert!(validate_id("host", id).is_ok(), "{id} should be valid");
+        }
+    }
+
+    #[test]
+    fn validate_id_rejects_traversal_separators_and_option_like_values() {
+        for id in [
+            "",
+            "..",
+            "../etc/passwd",
+            "a/b",
+            "a\\b",
+            ".hidden",
+            "-rf",
+            "with space",
+            "nul\0byte",
+            &"x".repeat(65),
+        ] {
+            assert!(
+                validate_id("host", id).is_err(),
+                "{id:?} should be rejected"
+            );
+        }
+    }
 
     fn prefixes(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()

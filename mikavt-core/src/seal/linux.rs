@@ -31,7 +31,13 @@ impl SystemdCredsSeal {
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            // Captured (not discarded) so a real failure — most commonly
+            // "Permission denied" reading the root-only host secret when
+            // this process isn't root, see docs/adr/0009 — is visible in
+            // the returned error instead of a bare "Invalid" that leaves
+            // the caller guessing. systemd-creds's own stderr is
+            // operational diagnostics, never the key material itself.
+            .stderr(Stdio::piped())
             .spawn()
             .map_err(|_| SealError::Unavailable)?;
 
@@ -49,7 +55,13 @@ impl SystemdCredsSeal {
         let output = child.wait_with_output()?;
 
         if !output.status.success() || output.stdout.is_empty() {
-            return Err(SealError::Invalid);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let detail = if stderr.trim().is_empty() {
+                format!("exit status {}", output.status)
+            } else {
+                format!("exit status {}: {}", output.status, stderr.trim())
+            };
+            return Err(SealError::Invalid(detail));
         }
 
         Ok(output.stdout)
@@ -68,7 +80,10 @@ impl HostSeal for SystemdCredsSeal {
         let stdout = self.run(&args, &blob.0)?;
 
         if stdout.len() != 32 {
-            return Err(SealError::Invalid);
+            return Err(SealError::Invalid(format!(
+                "systemd-creds decrypt returned {} bytes, expected 32",
+                stdout.len()
+            )));
         }
 
         let mut key = [0u8; 32];

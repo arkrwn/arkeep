@@ -88,6 +88,10 @@ Step 4 regardless of outcome.
 
 ## Step 2 — run `recover`
 
+On Linux, run it with `sudo` (sealing the new host key uses
+`systemd-creds`' root-only host scope — ADR 0009); it hands the files it
+writes back to the data directory's owner.
+
 ```bash
 mikavt recover \
   --root-key /tmp/mikavt-root.key \
@@ -122,9 +126,10 @@ This has:
   `meta.json` back to disk.
 
 You can now start `mikavtd` on this machine against the same
-`--data-dir` (or `$MIKAVT_DATA_DIR`) and it will unseal
-`<new-host-id>`'s key and serve requests normally — see
-[`docs/deployment.md`](deployment.md).
+`--data-dir` (or `$MIKAVT_DATA_DIR`) as host `<new-host-id>` and it will
+serve requests normally. On Linux, set `REPLACE_WITH_HOST_ID` in the unit
+to `<new-host-id>` so `LoadCredentialEncrypted=` delivers the new key —
+see [`docs/deployment.md`](deployment.md).
 
 ### If it fails instead
 
@@ -159,7 +164,9 @@ Once the new host is recovered:
    stolen hardware, not just failed hardware) — the old host's sealed
    blob being gone doesn't by itself prove the key material was exposed,
    but rotation is cheap insurance and invalidates any copy of the old
-   DEK wrap that might have leaked with the lost host.
+   DEK wrap that might have leaked with the lost host. Restart `mikavtd`
+   after rotating: until then it refuses writes rather than encrypting
+   under the old DEK.
 
 ## Step 4 — clean up the key file, always
 

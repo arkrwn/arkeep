@@ -19,8 +19,3 @@ mikavtd = { path = "../mikavtd" }
 clap = { version = "4", features = ["derive", "env"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
 bincode = "1"
-# `src/client.rs` still pulls in its own copy of `mikavtd/src/protocol.rs`
-# via `#[path]` rather than `mikavtd::protocol` (pre-existing convention,
-# left as-is by Task 15); these back that `serde`/`serde_json`-based copy.
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"

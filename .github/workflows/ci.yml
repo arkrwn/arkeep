@@ -12,6 +12,7 @@ jobs:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
@@ -39,10 +40,28 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
+      # systemd-creds' host scope needs root (ADR 0009), so the regular run
+      # above skips the real seal/unseal round trip. Re-run just that test
+      # binary as root so the real backend is proven, not merely skipped.
+      - name: Test systemd-creds HostSeal as root (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          BIN="$(cargo test -p mikavt-core --test seal_linux --no-run --message-format=json \
+            | jq -r 'select(.reason == "compiler-artifact" and .executable != null) | .executable' \
+            | tail -n 1)"
+          test -x "$BIN"
+          sudo "$BIN" --nocapture 2>&1 | tee seal_linux.log
+          if grep -q "skipped" seal_linux.log; then
+            echo "seal_linux was skipped even as root" >&2
+            exit 1
+          fi
+
   sdk-smoke:
     name: sdk-smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:

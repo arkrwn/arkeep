@@ -69,7 +69,7 @@ fn seal_unseal_round_trips_and_missing_item_is_invalid() {
         delete_item(&service, &account);
 
         match sealer.unseal(&sealed) {
-            Err(SealError::Invalid) => {}
+            Err(SealError::Invalid(_)) => {}
             Err(other) => panic!("expected SealError::Invalid, got {other:?}"),
             Ok(_) => panic!("unseal of a deleted keychain item must not succeed"),
         }
