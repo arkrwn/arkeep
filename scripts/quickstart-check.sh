@@ -31,7 +31,7 @@ step "1. set up"
 mkdir -p "$COFFERAK_DATA_DIR" && chmod 700 "$COFFERAK_DATA_DIR"
 
 step "2. create the vault, enroll this machine and an app"
-if [[ "$OS" == "Linux" ]]; then ADMIN="sudo -E $(command -v cofferak)"; else ADMIN=cofferak; fi
+if [[ "$OS" == "Linux" ]]; then ADMIN="sudo env COFFERAK_DATA_DIR=$COFFERAK_DATA_DIR $(command -v cofferak)"; else ADMIN=cofferak; fi
 ROOT_OUT="$($ADMIN init --root)"
 grep -q -- "-----BEGIN COFFERAK ROOT PRIVATE KEY-----" <<<"$ROOT_OUT"; unset ROOT_OUT
 $ADMIN init --host "$HOST"

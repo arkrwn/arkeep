@@ -32,11 +32,14 @@ These `export`s live only in this terminal. Nothing secret goes in
 
 Admin commands (`init`, `enroll-*`, `rotate-dek`, `recover`) seal or
 unseal the host key. On Linux that needs root (`systemd-creds`); the
-files they create are handed back to you automatically. Set this once:
+files they create are handed back to you automatically. `sudo` drops your
+environment and `PATH` (and newer `sudo` versions ignore `-E`), so the
+Linux form passes the data directory and the binary's full path
+explicitly. Set this once:
 
 ```bash
 ADMIN=cofferak                              # macOS
-ADMIN="sudo -E $(command -v cofferak)"      # Linux (sudo resets PATH, hence the full path)
+ADMIN="sudo env COFFERAK_DATA_DIR=$COFFERAK_DATA_DIR $(command -v cofferak)"   # Linux
 ```
 
 ## 2. Create the vault, enroll this machine and an app

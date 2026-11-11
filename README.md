@@ -340,7 +340,7 @@ mkdir -p "$COFFERAK_DATA_DIR" && chmod 700 "$COFFERAK_DATA_DIR"
 
 ```bash
 ADMIN=cofferak                                    # macOS
-ADMIN="sudo -E $(command -v cofferak)"            # Linux: sealing with systemd-creds needs root
+ADMIN="sudo env COFFERAK_DATA_DIR=$COFFERAK_DATA_DIR $(command -v cofferak)"   # Linux: sealing needs root
 
 $ADMIN init --root            # prints the root private key ONCE: save the whole
                               # -----BEGIN/END----- block offline (it's your recovery key)
