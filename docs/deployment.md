@@ -24,98 +24,137 @@ exactly one enrolled host.
 | `COFFERAK_DATA_DIR` | Directory holding `vault.cofferak`, `hosts/<id>.seal` and `audit.jsonl` | `/var/lib/cofferak` | `~/Library/Application Support/cofferak` |
 | `COFFERAK_SOCKET` | Path of the Unix socket the daemon listens on | `/run/cofferak/cofferakd.sock` | `~/Library/Application Support/cofferak/cofferakd.sock` |
 | `COFFERAK_HOST_ID` | Which enrolled host this process runs as | — (required if more than one host is enrolled) | — (same) |
+| `COFFERAK_TLS_ADDR`, `COFFERAK_TLS_CERT`, `COFFERAK_TLS_KEY`, `COFFERAK_TLS_CLIENT_CA` | Server mode (ADR 0008); off unless `COFFERAK_TLS_ADDR` is set | — | — |
+| `COFFERAK_TLS_MAX_CONNECTIONS` | Cap on concurrent TLS connections; extra connections are closed | `256` | `256` |
 
 The templates set `COFFERAK_DATA_DIR`/`COFFERAK_SOCKET` explicitly, using the
 same socket filename (`cofferakd.sock`) as the built-in fallback. When you
-change the socket path, change the matching client configuration too. If
-you enroll more than one host into the same vault (`cofferak enroll-host`),
-add `Environment=COFFERAK_HOST_ID=<id>` to the unit/plist as well.
+change the socket path, change the matching client configuration too. The
+Linux unit always sets `COFFERAK_HOST_ID` (its credential name depends on
+it); on macOS add it to the plist if the vault has more than one host.
 
 The daemon will refuse to start if `vault.cofferak` is missing or corrupt, if
-this host's sealed key file under `hosts/` is missing or cannot be
-unsealed, or if this host's `id` isn't actually enrolled in `vault.cofferak`
-(a sealed file existing on disk with no matching `vault.hosts` entry is
-treated as an error, not ignored). It does not create an empty vault in
-any of these cases.
+this host's key cannot be obtained (see below) or does not unwrap the
+vault's DEK, if `COFFERAK_HOST_ID` is not a valid id, or if this host's id
+isn't actually enrolled in `vault.cofferak`. It never creates an empty vault.
+
+## Writes are durable; restart after admin commands
+
+Every `set`/`rm` the daemon acknowledges is already on disk: it is
+written through to `vault.cofferak` atomically (temp file, fsync, rename,
+fsync directory) under an exclusive lock on `vault.cofferak.lock` before the
+client gets `ok` ([ADR 0010](adr/0010-durable-writes-and-vault-locking.md)).
+If the write can't be persisted, the client gets an error and nothing
+changes. CLI admin commands (`init`, `enroll-host`, `enroll-service`,
+`rotate-dek`, `recover`) take the same lock, so they never interleave
+with daemon writes.
+
+The daemon loads service tokens and the DEK **at startup**. After any of
+these, restart it:
+
+| Command | Why a restart is needed |
+|---------|-------------------------|
+| `enroll-service` | the new service's token is only loaded at startup |
+| `rotate-dek` | the daemon's in-memory DEK is stale; it **refuses all writes** (clients get an error) until restarted, rather than writing entries under the old key |
+| `enroll-host`, `recover` | if they re-enrolled *this* host, same as `rotate-dek` |
+
+```sh
+sudo systemctl restart cofferakd        # Linux
+launchctl kickstart -k gui/$(id -u)/com.cofferak.cofferakd   # macOS
+```
 
 ## Linux (systemd)
 
 The unit template:
 
-- runs `cofferakd` as an unprivileged `cofferak` user;
-- sets `COFFERAK_DATA_DIR` and `COFFERAK_SOCKET`;
+- runs `cofferakd` as an unprivileged `cofferak` user with no capabilities;
+- receives this host's key through `LoadCredentialEncrypted=` (below);
+- sets `COFFERAK_HOST_ID`, `COFFERAK_DATA_DIR` and `COFFERAK_SOCKET`;
 - uses `RuntimeDirectory=cofferak` to create `/run/cofferak` for the socket,
-  and `StateDirectory=cofferak` to create `/var/lib/cofferak` for the data;
-- restarts the daemon on failure and applies basic hardening.
+  and `StateDirectory=cofferak` (mode `0700`) for the data;
+- disables core dumps and applies systemd sandboxing (`ProtectSystem=strict`,
+  `NoNewPrivileges`, a system-call filter, and more — see the file).
 
-The daemon reads the sealed host key directly from
-`$COFFERAK_DATA_DIR/hosts/<host-id>.seal` (produced by `cofferak init --host`
-or `cofferak enroll-host` — see [Sealed host key](#sealed-host-key)). The
-unit does not deliver the key itself.
+### How the daemon gets its host key (ADR 0009)
+
+`cofferak init --host <id>` seals this host's 32-byte key with
+`systemd-creds encrypt --name=cofferak-<id> - -` into
+`$COFFERAK_DATA_DIR/hosts/<id>.seal`. systemd-creds' host scope encrypts
+against `/var/lib/systemd/credential.secret` (and the TPM2 if present),
+which only root can use — so **admin commands that seal or unseal a host
+key must run as root** (`sudo cofferak ...`). They hand any file they create
+back to the data directory's owner afterwards, so the daemon can still
+read and write the vault.
+
+The daemon itself never runs as root and never calls `systemd-creds`.
+Instead the unit's
+
+```ini
+LoadCredentialEncrypted=cofferak-<id>:/var/lib/cofferak/hosts/<id>.seal
+```
+
+has systemd decrypt the blob as root at service start and place the
+plaintext key in `$CREDENTIALS_DIRECTORY/cofferak-<id>` — a private,
+non-swappable mount visible only to this unit. `cofferakd` reads it, unwraps
+the DEK, and zeroizes the key. The credential name must be exactly
+`cofferak-<id>`: it is bound into the sealed blob, and systemd rejects a
+mismatch. (Without `$CREDENTIALS_DIRECTORY` the daemon falls back to
+unsealing the file itself, which on Linux only works as root.)
 
 ### Install
 
-1. Build and install the binary:
+1. Build and install both binaries:
 
    ```sh
    cargo build --release
    sudo install -m 0755 target/release/cofferakd /usr/local/bin/cofferakd
+   sudo install -m 0755 target/release/cofferak  /usr/local/bin/cofferak
    ```
 
-2. Create the service account:
+2. Create the service account and the data directory:
 
    ```sh
    sudo useradd --system --no-create-home --shell /usr/sbin/nologin cofferak
+   sudo install -d -m 0700 -o cofferak -g cofferak /var/lib/cofferak
    ```
 
-3. Install the unit and reload systemd:
+3. Bootstrap the vault and this host, **as root** (see above). Store the
+   root private key `init --root` prints offline, never on this host
+   ([key security](key-security.md)):
 
    ```sh
-   sudo install -m 0644 deployment/linux/cofferakd.service /etc/systemd/system/
+   HOST_ID="$(hostname -s)"
+   sudo cofferak init --root --data-dir /var/lib/cofferak
+   sudo cofferak init --host "$HOST_ID" --data-dir /var/lib/cofferak
+   ```
+
+4. Install the unit with your host id filled in, and start it:
+
+   ```sh
+   sed "s/REPLACE_WITH_HOST_ID/$HOST_ID/g" deployment/linux/cofferakd.service \
+     | sudo tee /etc/systemd/system/cofferakd.service >/dev/null
    sudo systemctl daemon-reload
-   ```
-
-4. Create the data directory and its ownership first — `cofferak init`
-   needs somewhere to write — then bootstrap the vault and this host
-   (see [Sealed host key](#sealed-host-key) for what this actually does):
-
-   ```sh
-   sudo mkdir -p /var/lib/cofferak
-   sudo chown -R cofferak:cofferak /var/lib/cofferak
-   sudo -u cofferak cofferak init --root --data-dir /var/lib/cofferak
-   sudo -u cofferak cofferak init --host "$(hostname)" --data-dir /var/lib/cofferak
-   ```
-
-5. Start the service and check its status:
-
-   ```sh
    sudo systemctl enable --now cofferakd
    systemctl status cofferakd
    journalctl -u cofferakd -n 50
    ```
 
-### Sealed host key
+5. Enroll each consuming service (as root, since it unseals the host key),
+   then restart the daemon so it loads the new token:
 
-`cofferak init --host <id>` (step 4 above) does two things together, and
-both are required: it seals this host's unseal key with `systemd-creds`
-under `$COFFERAK_DATA_DIR/hosts/<id>.seal`, named `systemd-creds
---name=cofferak-<id>` internally, *and* it adds a matching entry for `<id>`
-to `vault.hosts`. `cofferakd` needs both — a sealed file with no matching
-`vault.hosts` entry (or vice versa) fails to start, by design (see the
-Environment variables section above). This is why there's no standalone
-"just run `systemd-creds encrypt` by hand" step here: always provision a
-host through `cofferak init --host`/`cofferak enroll-host`, never
-`systemd-creds` directly.
+   ```sh
+   sudo cofferak enroll-service my-app --paths my-app --perm ro --data-dir /var/lib/cofferak
+   sudo systemctl restart cofferakd
+   ```
 
-If you do need to inspect or re-create the raw seal manually for
-debugging, the exact command `cofferak init --host` runs is:
+Always provision hosts through `cofferak init --host` / `cofferak enroll-host`
+rather than running `systemd-creds encrypt` by hand: the CLI also adds the
+matching `vault.hosts` entry, and the daemon refuses to start without it.
 
-```sh
-sudo systemd-creds encrypt --name="cofferak-<id>" - "/var/lib/cofferak/hosts/<id>.seal"
-```
-
-— but note this alone does **not** add the matching `vault.hosts` entry;
-use the CLI for real provisioning.
+This exact layout — root admin commands, a non-root daemon under a real
+systemd service receiving its key via `LoadCredentialEncrypted=`, and a
+write surviving a daemon restart — is what `scripts/sdk-smoke.sh` runs on
+every CI build (Linux).
 
 ## macOS (launchd)
 

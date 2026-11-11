@@ -6,18 +6,19 @@ destroyed, its disk was wiped, or its `host.seal` file (or
 `<data_dir>/hosts/<host-id>.seal`) is lost or corrupted. It uses the one
 break-glass path that does not depend on any enrolled host: the **offline
 root private key** that was printed to stdout exactly once, when the
-vault was created with `cofferak-cli init --root`, and that you (the
-operator) were expected to copy somewhere off-machine at that time — a
-password manager, a hardware token, a printed page in a safe.
+vault was created with `cofferak init --root`, and that you (the
+operator) were expected to copy to offline storage at that time — see
+[`docs/key-security.md`](key-security.md) for how to actually do that
+(and what *not* to use, e.g. a cloud-synced password manager).
 
 If you don't have that root private key, this runbook cannot help you:
 there is no other way to recover an existing vault's data-encryption key
-(DEK). Design intentionally has no "forgot my key" path — see
-[`docs/superpowers/specs/2026-11-09-cofferak-design.md`](superpowers/specs/2026-11-09-cofferak-design.md)
+(DEK). The design intentionally has no "forgot my key" path — see
+[`docs/SPEC.md`](SPEC.md) §1 and [ADR 0001](adr/0001-envelope-encryption-dual-wrapped-dek.md)
 for why.
 
 If you still have at least one enrolled host with a working `host.seal`,
-you don't need this runbook — use `cofferak-cli enroll-host` instead (see
+you don't need this runbook — use `cofferak enroll-host` instead (see
 the root [README](../README.md#commands)); it's the normal path for
 adding a host and doesn't touch the root key at all.
 
@@ -43,14 +44,14 @@ adding a host and doesn't touch the root key at all.
 
 3. **A machine to run the recovery on.** This becomes the new enrolled
    host. It needs:
-   - the `cofferak-cli` binary (built from this repository: `cargo build
-     --workspace --release`, then use `target/release/cofferak-cli`);
+   - the `cofferak` binary (built from this repository: `cargo build
+     --workspace --release`, then use `target/release/cofferak`);
    - on Linux, `systemd-creds` on `PATH`; on macOS, a user Keychain
      session (recovery seals the new host's key the same way `init
      --host`/`enroll-host` do — see the root
      [README](../README.md#why));
    - a decision for the new host's id — any string not already used by
-     an enrolled host in this vault (check with `cofferak-cli audit tail`
+     an enrolled host in this vault (check with `cofferak audit tail`
      or by inspecting `meta.json`'s host list if unsure).
 
 ## Step 1 — turn the hex key back into a 32-byte key file
@@ -87,8 +88,12 @@ Step 4 regardless of outcome.
 
 ## Step 2 — run `recover`
 
+On Linux, run it with `sudo` (sealing the new host key uses
+`systemd-creds`' root-only host scope — ADR 0009); it hands the files it
+writes back to the data directory's owner.
+
 ```bash
-cofferak-cli recover \
+cofferak recover \
   --root-key /tmp/cofferak-root.key \
   --new-host <new-host-id> \
   --data-dir <path-to-vault-data-dir>
@@ -121,9 +126,10 @@ This has:
   `meta.json` back to disk.
 
 You can now start `cofferakd` on this machine against the same
-`--data-dir` (or `$COFFERAK_DATA_DIR`) and it will unseal
-`<new-host-id>`'s key and serve requests normally — see
-[`docs/deployment.md`](deployment.md).
+`--data-dir` (or `$COFFERAK_DATA_DIR`) as host `<new-host-id>` and it will
+serve requests normally. On Linux, set `REPLACE_WITH_HOST_ID` in the unit
+to `<new-host-id>` so `LoadCredentialEncrypted=` delivers the new key —
+see [`docs/deployment.md`](deployment.md).
 
 ### If it fails instead
 
@@ -150,15 +156,17 @@ Once the new host is recovered:
 2. Existing service tokens still work unchanged — `recover` only adds a
    host, it doesn't touch `vault.services` or any stored secret.
 3. If you have other machines that also need to be enrolled hosts (for
-   redundancy), use `cofferak-cli enroll-host <id> --this-host
+   redundancy), use `cofferak enroll-host <id> --this-host
    <new-host-id>` from one of them, now that `<new-host-id>` is a valid,
    working enrolled host whose sealed blob can be unsealed.
-4. Consider rotating the DEK afterward (`cofferak-cli rotate-dek --hosts
+4. Consider rotating the DEK afterward (`cofferak rotate-dek --hosts
    <csv>`) if the loss of the old host(s) is at all suspicious (e.g.
    stolen hardware, not just failed hardware) — the old host's sealed
    blob being gone doesn't by itself prove the key material was exposed,
    but rotation is cheap insurance and invalidates any copy of the old
-   DEK wrap that might have leaked with the lost host.
+   DEK wrap that might have leaked with the lost host. Restart `cofferakd`
+   after rotating: until then it refuses writes rather than encrypting
+   under the old DEK.
 
 ## Step 4 — clean up the key file, always
 

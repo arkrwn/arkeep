@@ -12,14 +12,23 @@ jobs:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install stable Rust
-        uses: dtolnay/rust-toolchain@stable
+      # Explicit version, not @stable: rust-toolchain.toml pins this
+      # workspace to an exact toolchain, and cargo silently re-resolves
+      # to that pin for every command regardless of what's "active" —
+      # @stable only installs clippy/rustfmt for whatever current stable
+      # is, which then has neither component when the pinned version
+      # differs (exactly what broke CI before this fix: "cargo-fmt is
+      # not installed for the toolchain '1.98.1-...'").
+      - name: Install Rust (matching rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: "1.98.1"
           components: clippy, rustfmt
 
       - name: Check formatting
@@ -31,22 +40,47 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
+      # systemd-creds' host scope needs root (ADR 0009), so the regular run
+      # above skips the real seal/unseal round trip. Re-run just that test
+      # binary as root so the real backend is proven, not merely skipped.
+      - name: Test systemd-creds HostSeal as root (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          BIN="$(cargo test -p cofferak-core --test seal_linux --no-run --message-format=json \
+            | jq -r 'select(.reason == "compiler-artifact" and .executable != null) | .executable' \
+            | tail -n 1)"
+          test -x "$BIN"
+          sudo "$BIN" --nocapture 2>&1 | tee seal_linux.log
+          if grep -q "skipped" seal_linux.log; then
+            echo "seal_linux was skipped even as root" >&2
+            exit 1
+          fi
+
   sdk-smoke:
     name: sdk-smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install stable Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust (matching rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.98.1"
 
+      # Current stable Go: older linkers (e.g. 1.22) omit the LC_UUID load
+      # command that recent macOS dyld requires, so their binaries abort at
+      # launch on macos-latest. The SDK's go.mod still declares go 1.21
+      # as its minimum.
       - name: Install Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          go-version: stable
+          cache: false
 
       - name: Install Node
         uses: actions/setup-node@v4
@@ -58,3 +92,8 @@ jobs:
 
       - name: Run every SDK's smoke test against a real daemon
         run: ./scripts/sdk-smoke.sh
+
+      # openssl ships preinstalled on both ubuntu-latest and
+      # macos-latest GitHub-hosted runners.
+      - name: Run the server-mode (TLS + mutual TLS) smoke test
+        run: ./scripts/server-mode-smoke.sh

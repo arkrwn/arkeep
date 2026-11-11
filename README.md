@@ -1,15 +1,19 @@
 # cofferak
 
-A small, dependency-free secrets vault for any service on Linux or macOS —
-no HashiCorp Vault, no cloud KMS, no network service beyond a local Unix
-socket. Clone it into a project as a `cofferak/` subdirectory, or run it
-standalone.
+A small, dependency-free secrets vault for any service on Linux or macOS
+— no HashiCorp Vault, no cloud KMS. Clone it into a project as a
+`cofferak/` subdirectory, or run it standalone. By default it speaks only
+to clients on the same host, over a local Unix socket; opt in to
+**server mode** (`$COFFERAK_TLS_ADDR`, see [Server mode](#server-mode))
+and it's also reachable remotely, over TLS/mutual-TLS, with the exact
+same protocol and the exact same per-service access tokens.
 
 > **Status: feature-complete.** The crypto/format/ACL core, both
-> `HostSeal` backends, the daemon (`cofferakd`), the admin CLI
-> (`cofferak-cli`), deployment templates, and an audit log are all
-> implemented and tested. See [Commands](#commands) for the full CLI
-> surface and [Quickstart](#quickstart) to stand up a vault end to end.
+> `HostSeal` backends, the daemon (`cofferakd`), server mode (TLS/mTLS
+> over TCP), the admin CLI (`cofferak-cli`), four client SDKs, deployment
+> templates, and an audit log are all implemented and tested. See
+> [Commands](#commands) for the full CLI surface and
+> [Quickstart](#quickstart) to stand up a vault end to end.
 
 ## Why
 
@@ -20,9 +24,10 @@ that decrypts your secrets is itself sealed by the operating system's own
 secure-storage primitive — `systemd-creds` on Linux, Keychain on macOS —
 so the unseal key is never a plaintext file sitting next to the vault.
 
-- **No external dependency.** No server to run, no account to create, no
-  network call to any third-party KMS. The only two things on the wire
-  are a local Unix socket and the files on disk.
+- **No external dependency.** No third-party server to run, no account
+  to create, no call out to any third-party KMS. `cofferak` is the only
+  server involved, and it's yours — local Unix socket by default, or
+  your own TLS endpoint if you turn on server mode.
 - **One codebase, two platforms.** `cofferak-core` (crypto, on-disk
   format, ACL) is entirely platform-agnostic; only the small `HostSeal`
   trait has a platform-specific implementation, so the same logic — and
@@ -50,6 +55,60 @@ See [`docs/SPEC.md`](docs/SPEC.md) for the full design, including the
 on-disk format, the daemon's request protocol, and the disaster-recovery
 flow, and [`docs/adr/`](docs/adr/) for the point decisions behind it.
 
+## Server mode
+
+By default `cofferakd` only listens on a local Unix socket — the fastest
+and smallest-attack-surface option when every client is on the same
+host. **Server mode** is the opt-in path for when a client genuinely
+isn't: set `$COFFERAK_TLS_ADDR` (e.g. `0.0.0.0:8443`) and the daemon also
+listens on TLS-wrapped TCP, serving the *exact same* `Request`/`Response`
+protocol and the *exact same* per-service access tokens — not a second
+API to learn, not a second thing to keep in sync. See
+[ADR 0008](docs/adr/0008-server-mode-rpc-over-tls.md) for why this (RPC
+over TLS) was chosen over REST or WebSocket.
+
+```bash
+# Server side: turn on TLS alongside the existing Unix socket.
+COFFERAK_DATA_DIR=./data \
+COFFERAK_TLS_ADDR=0.0.0.0:8443 \
+COFFERAK_TLS_CERT=./server.pem \
+COFFERAK_TLS_KEY=./server.key \
+  ./target/release/cofferakd &
+
+# Optional: require a client certificate too (mutual TLS), on top of
+# the service's access token — belt and suspenders, not a replacement.
+# COFFERAK_TLS_CLIENT_CA=./ca.pem
+```
+
+| Variable | Purpose |
+|---|---|
+| `COFFERAK_TLS_ADDR` | `host:port` to listen on. Unset = server mode is off (Unix socket only). |
+| `COFFERAK_TLS_CERT` / `COFFERAK_TLS_KEY` | Server certificate + private key (PEM). Required once `COFFERAK_TLS_ADDR` is set. |
+| `COFFERAK_TLS_CLIENT_CA` | Optional. CA (PEM) to verify client certificates against — turns on mutual TLS. |
+| `COFFERAK_TLS_MAX_CONNECTIONS` | Optional. Maximum concurrent TLS connections (default `256`); connections beyond it are closed immediately. |
+
+TLS is pure-Rust (`rustls`, no OpenSSL/C dependency), **TLS 1.3-only**
+(both ends are cofferak's own code, so there's no compatibility reason to
+allow the older, weaker protocol version), with bounded request/response
+lines and a 30-second per-connection timeout — see
+[ADR 0008](docs/adr/0008-server-mode-rpc-over-tls.md)'s "Security
+hardening applied" section. Concurrent connections are capped
+(`COFFERAK_TLS_MAX_CONNECTIONS`); there is no per-client rate limit yet, so
+for an internet-facing deployment keep a firewall or per-IP-limiting
+proxy in front and prefer mTLS. **All four SDKs** support this transport
+today, each using only its own language's standard-library TLS (no
+third-party TLS dependency anywhere): Rust (`rustls`), Go
+(`crypto/tls`), Python (`ssl`), TypeScript/JavaScript (`node:tls`) — see
+each SDK's page under [`docs/sample-integration/`](docs/sample-integration/)
+for its `connect_tls`/`ConnectTLS`/`connect_tls`/`connectTls` usage.
+Proven for real, for every one of them — server-cert validation,
+hostname-mismatch rejection, and mutual-TLS's reject/accept paths
+(including a cert signed by a different, untrusted CA) — by:
+
+```bash
+./scripts/server-mode-smoke.sh
+```
+
 ## Repository layout
 
 ```
@@ -57,9 +116,11 @@ cofferak/
   cofferak-core/   # lib: crypto, on-disk format, ACL, HostSeal — no process I/O beyond disk reads/writes
   cofferakd/       # daemon: Unix-socket API, platform seal integration, audit log
   cofferak-cli/    # admin CLI: init/enroll-host/enroll-service/set/get/rm/list/rotate-dek/recover/audit tail
-  deployment/      # copy-and-edit systemd unit (Linux) and launchd plist (macOS)
-  docs/            # SPEC.md, adr/, PROGRESS.md, deployment guide, recovery
-                   # runbook, integration examples
+  sdk/           # client SDKs: rust, go, python, javascript (TypeScript)
+  deployment/    # copy-and-edit systemd unit (Linux) and launchd plist (macOS)
+  scripts/       # sdk-smoke.sh, server-mode-smoke.sh — real, run-it-yourself proof
+  docs/          # SPEC.md, adr/, PROGRESS.md, deployment guide, recovery
+                 # runbook, sample-integration/
 SDD.md             # the design/documentation practice this repo follows
 ```
 
@@ -86,11 +147,17 @@ SDD.md             # the design/documentation practice this repo follows
   they're on.
 - **`cofferakd`**: the daemon. Loads `vault.cofferak`, unseals its own host
   key, opens the append-only audit log, then serves `Get`/`Set`/`Rm`/`List`
-  requests from service tokens over a Unix socket (newline-delimited JSON).
+  requests from service tokens over a Unix socket (newline-delimited
+  JSON) and, in [server mode](#server-mode), TLS/TCP too — the same
+  protocol, same tokens, same `Daemon::handle_request` either way.
   Reads `COFFERAK_DATA_DIR` and `COFFERAK_SOCKET` at startup (falling back
   to a per-OS default — see [`docs/deployment.md`](docs/deployment.md)),
   and refuses to start rather than silently creating an empty vault if
   `vault.cofferak` or the sealed host key is missing or unreadable.
+- **Server mode** (`cofferakd::tls_server`): opt-in TLS/TCP listener
+  alongside the Unix socket, pure-Rust TLS (`rustls`), optional mutual
+  TLS. See [Server mode](#server-mode) and
+  [ADR 0008](docs/adr/0008-server-mode-rpc-over-tls.md).
 - **`cofferak-cli`** (binary name `cofferak`): the admin CLI (see
   [Commands](#commands) below) —
   vault/host bootstrap, service enrollment, `set`/`get`/`rm`/`list` over
@@ -105,8 +172,16 @@ SDD.md             # the design/documentation practice this repo follows
 
 ## Quickstart
 
-Requires a stable Rust toolchain (MSRV 1.75, pinned in
-`rust-toolchain.toml`).
+Requires a stable Rust toolchain (MSRV 1.89; CI uses the exact version
+pinned in `rust-toolchain.toml`).
+
+This quickstart runs everything as your own user, which works on macOS.
+**On Linux, run the admin commands (`init`, `enroll-*`, `rotate-dek`,
+`recover`) with `sudo`**: `systemd-creds`' host scope is root-only. For a
+real Linux install — unprivileged daemon under systemd, host key delivered
+via `LoadCredentialEncrypted=` — follow
+[`docs/deployment.md`](docs/deployment.md) and
+[ADR 0009](docs/adr/0009-linux-host-key-via-systemd-credentials.md).
 
 ```bash
 # Build everything (library, daemon, CLI).
@@ -116,7 +191,8 @@ cargo build --workspace --release
 #    is printed to stdout exactly once — copy it offline (e.g. onto a
 #    hardware token or a printed page) and never store it on a host that
 #    runs the daemon. It is the only way to recover the vault if every
-#    enrolled host is lost; see docs/recovery-runbook.md.
+#    enrolled host is lost; see docs/key-security.md (how to actually
+#    secure it) and docs/recovery-runbook.md (how to use it to recover).
 ./target/release/cofferak init --root --data-dir ./data
 
 # 2. Enroll this host. This generates the vault's DEK, wraps it for the
@@ -132,8 +208,11 @@ COFFERAK_DATA_DIR=./data COFFERAK_SOCKET=./data/cofferakd.sock \
 
 # 4. Enroll a consuming service, scoped to a path prefix. The printed
 #    token is shown exactly once — hand it to the service's own config.
+#    The daemon loads tokens at startup, so restart it afterwards.
 ./target/release/cofferak enroll-service myapp \
-  --paths myapp/ --perm rw --data-dir ./data
+  --paths myapp --perm rw --data-dir ./data
+kill %1; COFFERAK_DATA_DIR=./data COFFERAK_SOCKET=./data/cofferakd.sock \
+  ./target/release/cofferakd &
 
 # 5. Set and get a secret over the daemon's socket.
 export COFFERAK_TOKEN=<token printed by step 4>
@@ -162,34 +241,41 @@ on macOS). `set`/`get`/`rm`/`list` additionally accept `--socket <PATH>`
 | `get <path> --token <t>` | Read a secret (over the daemon socket). |
 | `rm <path> --token <t>` | Remove a secret (over the daemon socket). |
 | `list [prefix] --token <t>` | List secret paths under a prefix (over the daemon socket). |
-| `rotate-dek --hosts <csv>` | Generate a fresh DEK, re-encrypt every entry/token, and re-wrap it for the root key and the given hosts. Operates on `vault.cofferak` directly, not over the socket. |
+| `rotate-dek --hosts <csv>` | Generate a fresh DEK, re-encrypt every entry/token, and re-wrap it for the root key and the given hosts. Operates on `vault.cofferak` directly, not over the socket. Restart `cofferakd` afterwards: until then it refuses writes rather than using the stale DEK. |
 | `recover --root-key <path> --new-host <id>` | Disaster recovery: enroll a new host using the offline root private key, bypassing every enrolled host's own sealed blob. See [`docs/recovery-runbook.md`](docs/recovery-runbook.md). |
 | `audit tail [--count N]` | Print the last `N` (default 20) entries of the daemon's audit log, read directly from `<data_dir>/audit.jsonl`. |
 
 `cofferakd` itself takes no CLI flags; it reads `COFFERAK_DATA_DIR` and
-`COFFERAK_SOCKET` from the environment (same per-OS defaults as above), and
+`COFFERAK_SOCKET` from the environment (same per-OS defaults as above),
 `COFFERAK_HOST_ID` to pick which enrolled host's sealed key to use when the
 vault has more than one (unneeded, and inferred automatically, when
-there's exactly one). See [`docs/deployment.md`](docs/deployment.md) for
+there's exactly one), and `COFFERAK_TLS_*` to turn on [server
+mode](#server-mode). See [`docs/deployment.md`](docs/deployment.md) for
 running it as a systemd service (Linux) or a launchd agent (macOS),
 including the `systemd-creds`/Keychain host-key sealing steps and socket
 permissions.
 
 ## SDKs
 
-A consuming service talks to `cofferakd` over its Unix socket using the
+A consuming service talks to `cofferakd` over its Unix socket — or, in
+[server mode](#server-mode), TLS/mTLS over TCP — using the
 newline-delimited JSON protocol in [`docs/SPEC.md`](docs/SPEC.md) §6.
-Four client SDKs implement it today — each is smoke-tested for real
-against a running daemon in CI (`scripts/sdk-smoke.sh`,
-`.github/workflows/ci.yml`'s `sdk-smoke` job), not just documented:
+Four client SDKs implement it today, **all four over both transports**
+— each is smoke-tested for real against a running daemon in CI
+(`scripts/sdk-smoke.sh` for the Unix socket, `scripts/server-mode-smoke.sh`
+for TLS/mTLS including adversarial reject cases, both wired into
+`.github/workflows/ci.yml`), not just documented:
 
-| Language | Package | Example |
-|---|---|---|
-| Rust | [`sdk/rust/cofferak-sdk`](sdk/rust/cofferak-sdk) | [`docs/sample-integration/rust.md`](docs/sample-integration/rust.md) |
-| Go | [`sdk/go/cofferak`](sdk/go/cofferak) | [`docs/sample-integration/go.md`](docs/sample-integration/go.md) |
-| Python | [`sdk/python/cofferak_sdk`](sdk/python/cofferak_sdk) | [`docs/sample-integration/python.md`](docs/sample-integration/python.md) |
-| TypeScript | [`sdk/javascript/cofferak-sdk`](sdk/javascript/cofferak-sdk) | [`docs/sample-integration/typescript.md`](docs/sample-integration/typescript.md) |
-| JavaScript | same package, compiled `dist/` | [`docs/sample-integration/javascript.md`](docs/sample-integration/javascript.md) |
+| Language | Package | TLS library | Example |
+|---|---|---|---|
+| Rust | [`sdk/rust/cofferak-sdk`](sdk/rust/cofferak-sdk) | `rustls` | [`docs/sample-integration/rust.md`](docs/sample-integration/rust.md) |
+| Go | [`sdk/go/cofferak`](sdk/go/cofferak) | `crypto/tls` (stdlib) | [`docs/sample-integration/go.md`](docs/sample-integration/go.md) |
+| Python | [`sdk/python/cofferak_sdk`](sdk/python/cofferak_sdk) | `ssl` (stdlib) | [`docs/sample-integration/python.md`](docs/sample-integration/python.md) |
+| TypeScript | [`sdk/javascript/cofferak-sdk`](sdk/javascript/cofferak-sdk) | `node:tls` (stdlib) | [`docs/sample-integration/typescript.md`](docs/sample-integration/typescript.md) |
+| JavaScript | same package, compiled `dist/` | `node:tls` (stdlib) | [`docs/sample-integration/javascript.md`](docs/sample-integration/javascript.md) |
+
+No third-party TLS library anywhere — every SDK uses its own language's
+standard library for the TLS transport.
 
 ```python
 # Python, the shortest example — same shape in every SDK above.
@@ -225,11 +311,25 @@ To additionally prove every SDK against a real running daemon:
 ./scripts/sdk-smoke.sh
 ```
 
+And to prove server mode (TLS + mutual TLS) for real, including the
+mTLS reject/accept paths:
+
+```bash
+./scripts/server-mode-smoke.sh
+```
+
 ## Further reading
 
+- [`docs/comparison.md`](docs/comparison.md) — how cofferak compares to
+  `.env` files, HashiCorp Vault, Infisical, and AWS Secrets Manager,
+  and honestly, when one of those is the better fit instead.
 - [`docs/deployment.md`](docs/deployment.md) — running `cofferakd` as a
   systemd service or launchd agent, environment variables, socket
   permissions.
+- [`docs/key-security.md`](docs/key-security.md) — how to actually
+  secure the root private key `init --root` prints once: offline
+  storage options, custody splitting, what never to do with it, and
+  periodic recovery drills.
 - [`docs/recovery-runbook.md`](docs/recovery-runbook.md) — disaster
   recovery with the offline root private key, for an operator who has
   never seen this project before.
@@ -240,7 +340,8 @@ To additionally prove every SDK against a real running daemon:
   daemon's request protocol, and the disaster-recovery flow.
 - [`docs/adr/`](docs/adr/) — numbered point decisions (why envelope
   encryption, why no external vault/KMS dependency, why the `HostSeal`
-  abstraction, why `cofferakd` has a library target).
+  abstraction, why `cofferakd` has a library target, why server mode is
+  RPC-over-TLS rather than REST/WebSocket).
 - [`docs/PROGRESS.md`](docs/PROGRESS.md) — implementation status, one row
   per area, each backed by what was actually run.
 - [`SDD.md`](SDD.md) — the design/documentation practice this project

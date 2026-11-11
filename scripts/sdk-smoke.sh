@@ -4,10 +4,14 @@
 #
 # Two modes, selected by $COFFERAK_SMOKE_MODE:
 #
-#   full   (default on Linux CI): builds and runs the REAL `cofferakd` +
-#           `cofferak` CLI binaries end to end — real vault bootstrap, real
-#           HostSeal (systemd-creds), real enrolled service token loaded
-#           from the real vault file. This is the authoritative proof.
+#   full   (default on Linux with systemd-creds; needs passwordless sudo):
+#           builds and runs the REAL `cofferakd` + `cofferak` CLI binaries end
+#           to end, laid out like production (ADR 0009): admin commands run
+#           as root (real systemd-creds sealing), the daemon runs as a
+#           NON-root transient systemd service that receives its host key
+#           via LoadCredentialEncrypted=, a real enrolled service token is
+#           loaded from the real vault file, and a write is proven to
+#           survive a daemon restart (ADR 0010). The authoritative proof.
 #
 #   dev    (default on macOS / anywhere real HostSeal cross-process
 #           access isn't available — see docs/PROGRESS.md's "Known
@@ -41,14 +45,53 @@ if [[ -z "$MODE" ]]; then
   fi
 fi
 
+UNIT=""
+
 cleanup() {
+  if [[ -n "$UNIT" ]]; then
+    sudo systemctl stop "$UNIT" 2>/dev/null || true
+  fi
   if [[ -n "$DAEMON_PID" ]] && kill -0 "$DAEMON_PID" 2>/dev/null; then
     kill "$DAEMON_PID" 2>/dev/null || true
     wait "$DAEMON_PID" 2>/dev/null || true
   fi
-  rm -rf "$WORKDIR"
+  if [[ -n "$UNIT" ]]; then
+    sudo rm -rf "$WORKDIR" 2>/dev/null || true
+  else
+    rm -rf "$WORKDIR"
+  fi
 }
 trap cleanup EXIT
+
+wait_for_socket() {
+  for _ in $(seq 1 100); do
+    [[ -S "$SOCKET" ]] && return 0
+    sleep 0.1
+  done
+  echo "daemon did not create its socket in time" >&2
+  if [[ -n "$UNIT" ]]; then
+    sudo journalctl -u "$UNIT" --no-pager -n 50 >&2 || true
+  fi
+  return 1
+}
+
+# Full mode only: run the real cofferakd exactly as production does on Linux
+# (ADR 0009) — as an unprivileged user, in a systemd service whose
+# LoadCredentialEncrypted= has systemd (as root) decrypt the sealed host key
+# into $CREDENTIALS_DIRECTORY. The daemon never touches systemd-creds itself.
+start_real_daemon() {
+  rm -f "$SOCKET"
+  sudo systemd-run --quiet --collect \
+    --unit="$UNIT" \
+    --uid="$(id -u)" --gid="$(id -g)" \
+    -p "LoadCredentialEncrypted=cofferak-$HOST_ID:$DATA_DIR/hosts/$HOST_ID.seal" \
+    -p LimitCORE=0 -p NoNewPrivileges=yes \
+    --setenv=COFFERAK_DATA_DIR="$DATA_DIR" \
+    --setenv=COFFERAK_SOCKET="$SOCKET" \
+    --setenv=COFFERAK_HOST_ID="$HOST_ID" \
+    "$COFFERAKD"
+  wait_for_socket
+}
 
 echo "== mode: $MODE =="
 echo "== building workspace (release) =="
@@ -61,13 +104,26 @@ if [[ "$MODE" == "full" ]]; then
   COFFERAK="$REPO_ROOT/target/release/cofferak"
   COFFERAKD="$REPO_ROOT/target/release/cofferakd"
 
-  echo "== bootstrapping a real throwaway vault in $DATA_DIR =="
+  UNIT="cofferak-sdk-smoke-$$"
+
+  # Admin commands seal/unseal the host key, which on Linux needs root
+  # (systemd-creds' host secret is root-only; ADR 0009). They hand the
+  # files they create back to the data directory's owner afterwards.
+  echo "== bootstrapping a real throwaway vault in $DATA_DIR (admin commands as root) =="
   mkdir -p "$DATA_DIR"
-  "$COFFERAK" init --root --data-dir "$DATA_DIR"
-  "$COFFERAK" init --host "$HOST_ID" --data-dir "$DATA_DIR"
+  chmod 0700 "$DATA_DIR"
+  sudo "$COFFERAK" init --root --data-dir "$DATA_DIR"
+  sudo "$COFFERAK" init --host "$HOST_ID" --data-dir "$DATA_DIR"
 
   echo "== enrolling a real service '$SERVICE_ID' scoped to sdk-smoke =="
-  ENROLL_OUTPUT="$("$COFFERAK" enroll-service "$SERVICE_ID" --paths "sdk-smoke" --perm rw --data-dir "$DATA_DIR")"
+  ENROLL_OUTPUT="$(sudo "$COFFERAK" enroll-service "$SERVICE_ID" --paths "sdk-smoke" --perm rw --data-dir "$DATA_DIR")"
+
+  echo "== checking vault files are owned by the daemon's (non-root) user =="
+  if find "$DATA_DIR" ! -user "$(id -u)" | grep -q .; then
+    echo "files left owned by another user after admin commands:" >&2
+    find "$DATA_DIR" ! -user "$(id -u)" -exec ls -ld {} + >&2
+    exit 1
+  fi
   TOKEN="$(echo "$ENROLL_OUTPUT" | grep -E '^[0-9a-f]{64}$')"
   if [[ -z "$TOKEN" ]]; then
     echo "failed to parse the enrolled service's token from:" >&2
@@ -75,9 +131,8 @@ if [[ "$MODE" == "full" ]]; then
     exit 1
   fi
 
-  echo "== starting the real cofferakd =="
-  COFFERAK_DATA_DIR="$DATA_DIR" COFFERAK_SOCKET="$SOCKET" COFFERAK_HOST_ID="$HOST_ID" "$COFFERAKD" &
-  DAEMON_PID=$!
+  echo "== starting the real cofferakd as a non-root systemd service =="
+  start_real_daemon
 else
   TOKEN="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
   DEV_DAEMON="$REPO_ROOT/target/release/examples/dev-daemon"
@@ -87,15 +142,7 @@ else
   echo "== starting the dev-only in-memory daemon (see script header) =="
   COFFERAK_SOCKET="$SOCKET" COFFERAK_TOKEN_SECRET_HEX="$TOKEN" COFFERAK_TOKEN_PREFIX="sdk-smoke" "$DEV_DAEMON" &
   DAEMON_PID=$!
-fi
-
-for _ in $(seq 1 50); do
-  [[ -S "$SOCKET" ]] && break
-  sleep 0.1
-done
-if [[ ! -S "$SOCKET" ]]; then
-  echo "daemon did not create its socket in time" >&2
-  exit 1
+  wait_for_socket
 fi
 
 export COFFERAK_SOCKET="$SOCKET"
@@ -127,8 +174,31 @@ if ! node sdk/javascript/cofferak-sdk/examples/smoke.js "sdk-smoke/javascript" "
   FAILED=1
 fi
 
+if [[ "$MODE" == "full" && "$FAILED" -eq 0 ]]; then
+  # Durability (ADR 0010): a write acknowledged by the daemon must still be
+  # there after the daemon restarts, read back from vault.cofferak on disk.
+  echo "== durability: write, restart cofferakd, read back =="
+  "$COFFERAK" set "sdk-smoke/durable" "survives-restart" >/dev/null
+  sudo systemctl stop "$UNIT"
+  for _ in $(seq 1 50); do
+    systemctl is-active --quiet "$UNIT" || break
+    sleep 0.1
+  done
+  start_real_daemon
+  GOT="$("$COFFERAK" get "sdk-smoke/durable")"
+  if [[ "$GOT" != "survives-restart" ]]; then
+    echo "durability check FAILED: expected 'survives-restart', got '$GOT'" >&2
+    FAILED=1
+  else
+    echo "durability check passed"
+  fi
+fi
+
 if [[ "$FAILED" -ne 0 ]]; then
   echo "== one or more SDK smoke tests FAILED (mode: $MODE) ==" >&2
+  if [[ -n "$UNIT" ]]; then
+    sudo journalctl -u "$UNIT" --no-pager -n 50 >&2 || true
+  fi
   exit 1
 fi
 echo "== all SDK smoke tests passed (mode: $MODE) =="

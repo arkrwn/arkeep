@@ -10,7 +10,7 @@ from a command or test that was actually run. States: `todo`, `doing`,
 | Core crypto (envelope wrap/unwrap, AEAD entries, `KeyBytes` zeroize) | done | `cargo test -p cofferak-core crypto::` green; wrong-key/tampered-ciphertext paths return `Err`, never panic |
 | On-disk format (`vault.cofferak`, `meta.json`) | done | `cargo test -p cofferak-core format::` + integration round-trip green; truncated-file load returns `Err`, never a fresh default vault |
 | ACL / access tokens | done | `cargo test -p cofferak-core acl::` green; path-traversal and empty-path inputs denied, never panic |
-| `HostSeal`: Linux (`systemd-creds`) | done | Cross-compiled and clippy-checked for the real `x86_64-unknown-linux-gnu` target; round-trip test gated on `systemd-creds` availability |
+| `HostSeal`: Linux (`systemd-creds`) | done | Real round trip + corrupted-blob rejection run **as root** in CI (fails if skipped) — this run caught that the backend was missing systemd-creds' mandatory `- -` arguments and had never worked (fixed). Host scope is root-only, so the daemon gets its key via `LoadCredentialEncrypted=` instead (ADR 0009) |
 | `HostSeal`: macOS (Keychain) | done | Real Keychain round-trip test on macOS, cleans up its own test item, verified via `security dump-keychain` |
 | `cofferakd` daemon core + ACL enforcement | done | `cargo test -p cofferakd` green, including an 8-thread concurrency test and a corrupted-vault-refuses-to-start test |
 | Audit log | done | Append-only, survives reopen, skips malformed lines without losing other entries, partial-write-doesn't-corrupt-next-append regression test |
@@ -30,10 +30,33 @@ from a command or test that was actually run. States: `todo`, `doing`,
 | SDK: Go (`sdk/go/cofferak`) | done | Same; required an explicit `[]int` conversion workaround for `encoding/json`'s base64 default on `[]byte` — see ADR 0005/`docs/SPEC.md` §6 |
 | SDK: Python (`sdk/python/cofferak_sdk`) | done | Same, stdlib only |
 | SDK: TypeScript/JavaScript (`sdk/javascript/cofferak-sdk`) | done | Same; smoke test runs against the compiled `dist/` output, proving the JS consumption path too |
-| `sdk-smoke` CI job | done | Added to `.github/workflows/ci.yml`; `ubuntu-latest` runs "full" mode (real binaries + real `systemd-creds`), `macos-latest` runs "dev" mode (see ADR 0007) |
+| `sdk-smoke` CI job | done | `ubuntu-latest` runs "full" mode exactly like production: admin commands as root, ownership check, real `cofferakd` as a non-root transient systemd service with `LoadCredentialEncrypted=`, all four SDKs, then a write-restart-read durability check. `macos-latest` runs "dev" mode (see ADR 0007) |
+| Server mode: TLS/TCP listener in `cofferakd` (ADR 0008) | done | `./scripts/server-mode-smoke.sh`: real self-signed CA/cert generated with `openssl`, real TLS handshake, real token auth over TLS, real denied-path check — all passing, for all four SDKs |
+| Server mode: mutual TLS (`$COFFERAK_TLS_CLIENT_CA`) | done | Same script, for all four SDKs: a client with no cert, and separately a client with a cert signed by a *different, untrusted* CA, are both rejected; only a cert signed by the configured CA is accepted — all verified, not assumed |
+| Server mode: hostname verification | done | Same script, for all four SDKs: connecting with the wrong expected server name against the real server cert is rejected (defends against a MITM presenting a different, even CA-signed, cert) |
+| Server mode: Rust SDK TLS client (`Client::connect_tls`) | done | `sdk/rust/cofferak-sdk/examples/smoke_tls.rs`, run for real by `scripts/server-mode-smoke.sh` |
+| Server mode: Go SDK TLS client (`ConnectTLS`, `crypto/tls`) | done | `sdk/go/cofferak/examples/smoke_tls/main.go`; TLS 1.3 pinned via `MinVersion`/`MaxVersion`, fresh `x509.NewCertPool()` (never `SystemCertPool()`) |
+| Server mode: Python SDK TLS client (`Client.connect_tls`, `ssl`) | done | `sdk/python/cofferak_sdk/examples/smoke_tls.py`; `PROTOCOL_TLS_CLIENT`'s secure defaults kept, `load_default_certs()` never called |
+| Server mode: TypeScript/JavaScript SDK TLS client (`Client.connectTls`, `node:tls`) | done | `sdk/javascript/cofferak-sdk/examples/smoke_tls.js`, run against the compiled `dist/` output; `rejectUnauthorized` never disabled |
+| Server mode security hardening (post-review, both passes) | done | TLS 1.3-only in every SDK, not just the daemon; bounded request/response lines in the daemon *and* every SDK's own response reading (a hostile daemon could flood a client too); 30s per-connection I/O timeout on the daemon and every SDK's TLS client; no public-root-CA fallback in any SDK. See ADR 0008's "Security hardening applied" section |
+
+| Durable daemon writes (ADR 0010) | done | Was a real data-loss bug: `set`/`rm` were memory-only and lost on restart while clients got `ok`. Now written through atomically under the vault lock before `ok`; `cofferakd/tests/daemon_persistence.rs` (6 tests incl. re-keyed vault, unwritable vault, concurrent CLI edit) + restart check in `sdk-smoke` |
+| Atomic vault writes + single writer lock (ADR 0010) | done | `format.rs` tests: no temp files left, mode `0600`, lock excludes concurrent holders, oversized length prefix → `Corrupt` |
+| Linux non-root daemon (ADR 0009) | done | Unit uses `LoadCredentialEncrypted=`; CLI chowns files back to the data-dir owner after root admin commands; proven by `sdk-smoke` full mode in CI |
+| Id validation (host/service) | done | `acl::validate_id` in CLI and daemon; traversal/separator/option-like ids rejected (unit tests) |
+| Server mode: connection limit | done | At most `$COFFERAK_TLS_MAX_CONNECTIONS` (default 256) concurrent TLS connections; extra connections are closed immediately (unit-tested limiter) |
 
 ## Known gaps / open items
 
+- **No per-client rate limiting on server mode.** Concurrent connections
+  are capped (`$COFFERAK_TLS_MAX_CONNECTIONS`) and every connection has a
+  30s I/O timeout, but one client may use all slots. For an
+  internet-facing deployment, keep a firewall or a proxy with per-IP
+  limits in front of `$COFFERAK_TLS_ADDR`, and prefer mTLS.
+- **Token/DEK changes need a daemon restart.** `enroll-service`,
+  `rotate-dek` and re-enrolling the daemon's own host take effect on
+  restart; after `rotate-dek` the running daemon refuses writes (never
+  writes under the stale DEK) until restarted. No hot reload yet.
 - **macOS Keychain cross-process access (ADR 0007, open, not yet fixed).**
   `cofferakd` reading a sealed key that `cofferak init --host` (a different
   binary) created hangs waiting on an authorization step that can't
@@ -48,9 +71,6 @@ from a command or test that was actually run. States: `todo`, `doing`,
   `enroll-host` correctly re-wraps the DEK for additional hosts on disk;
   nothing starts one daemon that serves more than one of those hosts at
   once (not currently a goal — see `docs/SPEC.md` §9).
-- `cofferak-cli/src/main.rs` and a few of its test files reach `cofferakd`'s
-  `protocol`/`daemon`/`audit` modules via `#[path]` rather than
-  `cofferakd::...` directly (ADR 0004) — a scoped-out cleanup, not a defect.
 - A handful of intermediate key buffers (recovered DEK bytes before
   copying into a `[u8;32]`, in both `HostSeal` backends) are not wrapped
   in the `zeroize`-on-drop `KeyBytes` type. Low risk (short-lived,

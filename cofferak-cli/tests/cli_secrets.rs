@@ -2,19 +2,12 @@
 //! real Unix socket, served by a real `cofferakd::Daemon`) and
 //! `rotate-dek` (a local `vault.cofferak` rewrite) support.
 //!
-//! `cofferak-cli` has no library target, and `cofferakd` has neither a
-//! library target nor a `pub` server-loop function — both are
-//! binary-only crates. This file pulls in the exact source files it
-//! needs directly via `#[path]`, mirroring the convention already used
-//! by `cli_init.rs`/`cli_enroll.rs` (for `cofferak-cli`'s own
-//! `src/commands/*.rs`) and by `cofferakd/tests/daemon_integration.rs`
-//! (for `cofferakd`'s own `protocol`/`audit`/`daemon` modules). All of
-//! these are declared as siblings at this test binary's crate root, so
-//! each file's own `crate::`/`super::` paths resolve exactly as they do
-//! in their real binary (`commands/secrets.rs`'s `use crate::protocol`
-//! and `use crate::client::Client`, `commands/enroll.rs`'s
-//! `use super::init::...`, and `cofferakd/src/daemon.rs`'s
-//! `use crate::protocol`/`use crate::audit`).
+//! `cofferak-cli` has no library target, so this file pulls in the CLI
+//! source files it needs (`src/client.rs`, `src/commands/*.rs`) via
+//! `#[path]`. The daemon-side `protocol`/`audit`/`daemon` modules come
+//! from the real `cofferakd` library crate, re-exported at this test's crate
+//! root so the CLI files' `crate::protocol` paths resolve to the same
+//! types the `Daemon` uses.
 //!
 //! The socket server itself (bind a `UnixListener`, spawn one thread per
 //! connection, decode/dispatch/encode each line through
@@ -24,21 +17,18 @@
 //! import; this is the "real `UnixListener` thread serving
 //! `Daemon::handle_request`" the task brief calls for, not a mock.
 
-#[path = "../../cofferakd/src/audit.rs"]
-mod audit;
+use cofferakd::audit;
 #[allow(dead_code)] // each test binary uses only a subset of these shared source modules
 #[path = "../src/client.rs"]
 mod client;
-#[path = "../../cofferakd/src/daemon.rs"]
-mod daemon;
+use cofferakd::daemon;
 #[allow(dead_code)] // each test binary uses only a subset of these shared source modules
 #[path = "../src/commands/enroll.rs"]
 mod enroll;
 #[allow(dead_code)] // each test binary uses only a subset of these shared source modules
 #[path = "../src/commands/init.rs"]
 mod init;
-#[path = "../../cofferakd/src/protocol.rs"]
-mod protocol;
+use cofferakd::protocol;
 #[allow(dead_code)] // each test binary uses only a subset of these shared source modules
 #[path = "../src/commands/secrets.rs"]
 mod secrets;
@@ -84,7 +74,9 @@ impl HostSeal for FakeHostSeal {
 
     fn unseal(&self, blob: &SealedBlob) -> Result<[u8; 32], SealError> {
         if blob.0.len() != 33 || blob.0[0] != self.tag {
-            return Err(SealError::Invalid);
+            return Err(SealError::Invalid(
+                "fake seal: marker/tag mismatch".to_string(),
+            ));
         }
         let mut key = [0u8; 32];
         for (i, b) in blob.0[1..].iter().enumerate() {

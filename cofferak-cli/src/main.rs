@@ -1,16 +1,11 @@
 mod client;
 mod commands;
 
-// `cofferakd` is a binary-only crate (no library target), so the wire
-// protocol `client` speaks is compiled directly into *this* binary via
-// `#[path]` — the same convention this workspace already uses for
-// sharing a sibling binary crate's modules (see every integration test
-// under `tests/`, and `commands/enroll.rs`'s doc comment for the
-// in-crate version of the same trick).
-#[path = "../../cofferakd/src/protocol.rs"]
-mod protocol;
+// The wire protocol `client` speaks, from `cofferakd`'s library target
+// (ADR 0004) — one shared definition, not a second copy.
+use cofferakd::protocol;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
@@ -20,8 +15,88 @@ use commands::enroll::{run_enroll_host_with_seal, run_enroll_service};
 use commands::init::{current_host_seal, run_init_host, run_init_root};
 use commands::recover::run_recover;
 use commands::secrets::{run_get, run_list, run_rm, run_rotate_dek, run_set};
-use cofferak_core::acl::Permission;
+use cofferak_core::acl::{validate_id, Permission};
+use cofferak_core::format::VaultLock;
 use cofferak_core::seal::HostSeal;
+
+/// Exit with a usage error unless `id` is a valid host/service id
+/// (`acl::validate_id`): ids become file paths and OS credential names.
+fn require_valid_id(kind: &str, id: &str) {
+    if let Err(e) = validate_id(kind, id) {
+        eprintln!("cofferak: {e}");
+        std::process::exit(2);
+    }
+}
+
+/// Run a vault admin command (anything that reads-modifies-writes
+/// `vault.cofferak`) under the vault's exclusive lock — the same lock the
+/// daemon takes before persisting a `set`/`rm` (ADR 0010) — so the two can
+/// never interleave and drop each other's changes. Afterwards, hand any
+/// files the command created back to the data directory's owner (see
+/// [`match_data_dir_owner`]).
+fn with_admin_lock<T>(data_dir: &Path, f: impl FnOnce() -> T) -> T {
+    let lock = if data_dir.is_dir() {
+        match VaultLock::acquire(&data_dir.join("vault.cofferak")) {
+            Ok(lock) => Some(lock),
+            Err(e) => {
+                eprintln!(
+                    "cofferak: could not lock the vault in {}: {e}",
+                    data_dir.display()
+                );
+                std::process::exit(1);
+            }
+        }
+    } else {
+        // No data dir yet means no vault and nothing else writing one;
+        // `init --root` creates it, every other command reports
+        // "no vault found".
+        None
+    };
+    let out = f();
+    match_data_dir_owner(data_dir);
+    drop(lock);
+    out
+}
+
+/// On Linux, admin commands that seal or unseal host keys must run as root
+/// (ADR 0009: `systemd-creds`' host secret is root-only), but the daemon
+/// runs unprivileged as the data directory's owner (e.g. `cofferak`). So after
+/// an admin command, any vault file not owned by the data directory's owner
+/// is `lchown`ed to it. A no-op when the files already match (the common
+/// non-root case); failures are ignored because a non-root caller can't
+/// chown and doesn't need to.
+#[cfg(unix)]
+fn match_data_dir_owner(data_dir: &Path) {
+    use std::os::unix::fs::MetadataExt;
+
+    let Ok(dir_meta) = std::fs::metadata(data_dir) else {
+        return;
+    };
+    let (uid, gid) = (dir_meta.uid(), dir_meta.gid());
+    let mut paths = vec![
+        data_dir.join("vault.cofferak"),
+        data_dir.join("vault.cofferak.lock"),
+        data_dir.join("meta.json"),
+        data_dir.join("hosts"),
+    ];
+    if let Ok(entries) = std::fs::read_dir(data_dir.join("hosts")) {
+        paths.extend(entries.flatten().map(|e| e.path()));
+    }
+    for path in paths {
+        let Ok(meta) = std::fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if meta.file_type().is_symlink() {
+            continue;
+        }
+        if meta.uid() != uid || meta.gid() != gid {
+            let _ = std::os::unix::fs::lchown(&path, Some(uid), Some(gid));
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn match_data_dir_owner(_data_dir: &Path) {}
 
 /// `cofferak-cli`: administer a cofferak vault (init, enroll, ...).
 #[derive(Parser)]
@@ -294,7 +369,7 @@ fn resolve_socket_path(cli_socket: Option<PathBuf>) -> PathBuf {
 fn connect_or_exit(socket: &std::path::Path) -> Client {
     Client::connect(socket).unwrap_or_else(|e| {
         eprintln!(
-            "cofferak-cli: could not connect to daemon at {}: {e}",
+            "cofferak: could not connect to daemon at {}: {e}",
             socket.display()
         );
         std::process::exit(1);
@@ -309,61 +384,69 @@ fn main() {
             let data_dir = resolve_data_dir(args.data_dir);
 
             match (args.root, args.host) {
-                (true, None) => match run_init_root(&data_dir) {
+                (true, None) => match with_admin_lock(&data_dir, || run_init_root(&data_dir)) {
                     Ok(fingerprint) => {
                         println!("vault initialized; root public key fingerprint: {fingerprint}");
                     }
                     Err(e) => {
-                        eprintln!("cofferak-cli: init --root failed: {e}");
+                        eprintln!("cofferak: init --root failed: {e}");
                         std::process::exit(1);
                     }
                 },
-                (false, Some(host_id)) => match run_init_host(&data_dir, &host_id) {
-                    Ok(()) => {
-                        println!("host '{host_id}' enrolled");
+                (false, Some(host_id)) => {
+                    require_valid_id("host", &host_id);
+                    match with_admin_lock(&data_dir, || run_init_host(&data_dir, &host_id)) {
+                        Ok(()) => {
+                            println!("host '{host_id}' enrolled");
+                        }
+                        Err(e) => {
+                            eprintln!("cofferak: init --host failed: {e}");
+                            std::process::exit(1);
+                        }
                     }
-                    Err(e) => {
-                        eprintln!("cofferak-cli: init --host failed: {e}");
-                        std::process::exit(1);
-                    }
-                },
+                }
                 (true, Some(_)) => {
                     // Unreachable in practice: clap's `conflicts_with`
                     // rejects `--root` together with `--host` before we get
                     // here, but handled explicitly rather than panicking.
-                    eprintln!("cofferak-cli: pass exactly one of --root or --host");
+                    eprintln!("cofferak: pass exactly one of --root or --host");
                     std::process::exit(2);
                 }
                 (false, None) => {
-                    eprintln!("cofferak-cli: pass one of --root or --host <id>");
+                    eprintln!("cofferak: pass one of --root or --host <id>");
                     std::process::exit(2);
                 }
             }
         }
         Command::EnrollHost(args) => {
             let data_dir = resolve_data_dir(args.data_dir);
+            require_valid_id("host", &args.this_host_id);
+            require_valid_id("host", &args.new_host_id);
 
             let this_host_seal = current_host_seal(&args.this_host_id);
             let new_host_seal = current_host_seal(&args.new_host_id);
 
-            match run_enroll_host_with_seal(
-                &data_dir,
-                &args.this_host_id,
-                &args.new_host_id,
-                this_host_seal.as_ref(),
-                new_host_seal.as_ref(),
-            ) {
+            match with_admin_lock(&data_dir, || {
+                run_enroll_host_with_seal(
+                    &data_dir,
+                    &args.this_host_id,
+                    &args.new_host_id,
+                    this_host_seal.as_ref(),
+                    new_host_seal.as_ref(),
+                )
+            }) {
                 Ok(()) => {
                     println!("host '{}' enrolled", args.new_host_id);
                 }
                 Err(e) => {
-                    eprintln!("cofferak-cli: enroll-host failed: {e}");
+                    eprintln!("cofferak: enroll-host failed: {e}");
                     std::process::exit(1);
                 }
             }
         }
         Command::EnrollService(args) => {
             let data_dir = resolve_data_dir(args.data_dir);
+            require_valid_id("service", &args.service_id);
 
             let prefixes: Vec<String> = args
                 .paths
@@ -372,13 +455,19 @@ fn main() {
                 .filter(|s| !s.is_empty())
                 .map(String::from)
                 .collect();
+            if prefixes.is_empty() {
+                eprintln!("cofferak: --paths must list at least one non-empty path prefix");
+                std::process::exit(2);
+            }
 
-            match run_enroll_service(
-                &data_dir,
-                &args.service_id,
-                prefixes,
-                args.perm.into_permission(),
-            ) {
+            match with_admin_lock(&data_dir, || {
+                run_enroll_service(
+                    &data_dir,
+                    &args.service_id,
+                    prefixes,
+                    args.perm.into_permission(),
+                )
+            }) {
                 Ok(token) => {
                     // This is the one deliberate point where the CLI
                     // exposes a service's secret: the operator needs it to
@@ -397,7 +486,7 @@ fn main() {
                     );
                 }
                 Err(e) => {
-                    eprintln!("cofferak-cli: enroll-service failed: {e}");
+                    eprintln!("cofferak: enroll-service failed: {e}");
                     std::process::exit(1);
                 }
             }
@@ -407,7 +496,7 @@ fn main() {
             match run_set(&client, &args.token, &args.path, args.value.into_bytes()) {
                 Ok(()) => println!("ok"),
                 Err(e) => {
-                    eprintln!("cofferak-cli: set failed: {e}");
+                    eprintln!("cofferak: set failed: {e}");
                     std::process::exit(1);
                 }
             }
@@ -424,7 +513,7 @@ fn main() {
                     let _ = std::io::stdout().write_all(b"\n");
                 }
                 Err(e) => {
-                    eprintln!("cofferak-cli: get failed: {e}");
+                    eprintln!("cofferak: get failed: {e}");
                     std::process::exit(1);
                 }
             }
@@ -434,7 +523,7 @@ fn main() {
             match run_rm(&client, &args.token, &args.path) {
                 Ok(()) => println!("removed"),
                 Err(e) => {
-                    eprintln!("cofferak-cli: rm failed: {e}");
+                    eprintln!("cofferak: rm failed: {e}");
                     std::process::exit(1);
                 }
             }
@@ -448,7 +537,7 @@ fn main() {
                     }
                 }
                 Err(e) => {
-                    eprintln!("cofferak-cli: list failed: {e}");
+                    eprintln!("cofferak: list failed: {e}");
                     std::process::exit(1);
                 }
             }
@@ -462,34 +551,38 @@ fn main() {
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .map(|id| {
+                    require_valid_id("host", id);
                     let seal: Box<dyn HostSeal> = current_host_seal(id);
                     (id.to_string(), seal)
                 })
                 .collect();
 
-            match run_rotate_dek(&data_dir, &hosts) {
+            match with_admin_lock(&data_dir, || run_rotate_dek(&data_dir, &hosts)) {
                 Ok(()) => println!("DEK rotated"),
                 Err(e) => {
-                    eprintln!("cofferak-cli: rotate-dek failed: {e}");
+                    eprintln!("cofferak: rotate-dek failed: {e}");
                     std::process::exit(1);
                 }
             }
         }
         Command::Recover(args) => {
             let data_dir = resolve_data_dir(args.data_dir);
+            require_valid_id("host", &args.new_host_id);
             let new_host_seal = current_host_seal(&args.new_host_id);
 
-            match run_recover(
-                &data_dir,
-                &args.root_key,
-                &args.new_host_id,
-                new_host_seal.as_ref(),
-            ) {
+            match with_admin_lock(&data_dir, || {
+                run_recover(
+                    &data_dir,
+                    &args.root_key,
+                    &args.new_host_id,
+                    new_host_seal.as_ref(),
+                )
+            }) {
                 Ok(()) => {
                     println!("host '{}' recovered via offline root key", args.new_host_id);
                 }
                 Err(e) => {
-                    eprintln!("cofferak-cli: recover failed: {e}");
+                    eprintln!("cofferak: recover failed: {e}");
                     std::process::exit(1);
                 }
             }
@@ -506,7 +599,7 @@ fn main() {
                         }
                     }
                     Err(e) => {
-                        eprintln!("cofferak-cli: audit tail failed: {e}");
+                        eprintln!("cofferak: audit tail failed: {e}");
                         std::process::exit(1);
                     }
                 }
