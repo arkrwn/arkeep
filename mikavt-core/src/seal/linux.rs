@@ -1,9 +1,11 @@
 //! Linux `HostSeal` backend: shells out to the real `systemd-creds` binary.
 //!
-//! `systemd-creds encrypt --name=<name>` reads raw key bytes on stdin and
-//! writes a sealed credential blob to stdout; `systemd-creds decrypt
-//! --name=<name>` is the inverse, reading a blob on stdin and writing the
-//! raw key bytes to stdout. The `name` is bound into the seal by
+//! `systemd-creds encrypt --name=<name> - -` reads raw key bytes on stdin
+//! and writes a sealed credential blob to stdout; `systemd-creds decrypt
+//! --name=<name> - -` is the inverse, reading a blob on stdin and writing
+//! the raw key bytes to stdout. (The two `-` positional arguments — input
+//! and output — are mandatory: without them systemd-creds exits with
+//! "Too few arguments.") The `name` is bound into the seal by
 //! `systemd-creds` itself, so decrypting with a different name (or a
 //! tampered blob) fails.
 
@@ -57,9 +59,9 @@ impl SystemdCredsSeal {
         if !output.status.success() || output.stdout.is_empty() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let detail = if stderr.trim().is_empty() {
-                format!("exit status {}", output.status)
+                format!("systemd-creds {}", output.status)
             } else {
-                format!("exit status {}: {}", output.status, stderr.trim())
+                format!("systemd-creds {}: {}", output.status, stderr.trim())
             };
             return Err(SealError::Invalid(detail));
         }
@@ -70,13 +72,23 @@ impl SystemdCredsSeal {
 
 impl HostSeal for SystemdCredsSeal {
     fn seal(&self, key: &[u8; 32]) -> Result<SealedBlob, SealError> {
-        let args = vec!["encrypt".to_string(), format!("--name={}", self.name)];
+        let args = vec![
+            "encrypt".to_string(),
+            format!("--name={}", self.name),
+            "-".to_string(),
+            "-".to_string(),
+        ];
         let stdout = self.run(&args, key)?;
         Ok(SealedBlob(stdout))
     }
 
     fn unseal(&self, blob: &SealedBlob) -> Result<[u8; 32], SealError> {
-        let args = vec!["decrypt".to_string(), format!("--name={}", self.name)];
+        let args = vec![
+            "decrypt".to_string(),
+            format!("--name={}", self.name),
+            "-".to_string(),
+            "-".to_string(),
+        ];
         let stdout = self.run(&args, &blob.0)?;
 
         if stdout.len() != 32 {

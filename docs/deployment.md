@@ -78,7 +78,7 @@ The unit template:
 ### How the daemon gets its host key (ADR 0009)
 
 `mikavt init --host <id>` seals this host's 32-byte key with
-`systemd-creds encrypt --name=mikavt-<id>` into
+`systemd-creds encrypt --name=mikavt-<id> - -` into
 `$MIKAVT_DATA_DIR/hosts/<id>.seal`. systemd-creds' host scope encrypts
 against `/var/lib/systemd/credential.secret` (and the TPM2 if present),
 which only root can use — so **admin commands that seal or unseal a host
