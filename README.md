@@ -429,6 +429,9 @@ other users could read it with `ps`.
 | `list [prefix]` | List secret paths under a prefix (over the daemon socket). |
 | `rotate-dek --hosts <csv>` | Generate a fresh DEK, re-encrypt every entry/token, and re-wrap it for the root key and the given hosts. Operates on `vault.cofferak` directly, not over the socket. Restart `cofferakd` afterwards: until then it refuses writes rather than using the stale DEK. |
 | `recover --root-key <path> --new-host <id>` | Disaster recovery: enroll a new host using the offline root private key (the saved armored block), bypassing every enrolled host's own sealed blob. See [`docs/recovery-runbook.md`](docs/recovery-runbook.md). |
+| `backup --dir <d> [--keep N]` | Copy the encrypted vault into `<d>` and keep the newest N copies. No key needed, so it runs from a timer. See [backup.md](docs/backup.md). |
+| `doctor [--backup-dir <d>]` | Health check: vault, this host, daemon, backups. Exit code 0 ok, 1 warnings, 2 problem. |
+| `accept-restore` | After restoring an older backup on purpose, accept it (rollback protection otherwise refuses it). |
 | `audit tail [--count N]` | Print the last `N` (default 20) entries of the daemon's audit log, read directly from `<data_dir>/audit.jsonl`. |
 | `daemon` | Run the daemon in the foreground (same code as `cofferakd`). Use this on macOS; see [deployment](docs/deployment.md#macos-launchd). |
 | `import-env <file\|-> --prefix <p>` | Import a `.env` file (each `KEY=value` → `<p>/KEY`); `--dry-run`, `--overwrite`. |
@@ -491,6 +494,17 @@ keeps exactly one. Neither kind holds machine-specific keys, both work
 between Linux and macOS, and a running daemon picks up imports
 immediately ([ADR 0012](docs/adr/0012-import-export-and-live-reload.md),
 [ADR 0013](docs/adr/0013-coffer-identities-and-peer-transfers.md)).
+
+## Backups and health
+
+```bash
+cofferak backup --dir /var/backups/cofferak --keep 30    # encrypted copy, no key needed
+cofferak doctor --backup-dir /var/backups/cofferak       # exit 0 ok, 1 warnings, 2 problem
+```
+
+If the vault file is deleted while the daemon runs, the daemon writes back
+its last verified copy and logs an alert. Daily timer templates for systemd
+and launchd, and restore steps, are in [docs/backup.md](docs/backup.md).
 
 ## SDKs
 

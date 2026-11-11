@@ -191,7 +191,10 @@ fn write_is_refused_and_not_applied_when_the_vault_was_rekeyed_on_disk() {
 fn write_is_refused_and_not_applied_when_disk_write_fails() {
     let f = fixture("unwritable");
     let mut d = persistent_daemon(&f);
+    // A directory where the vault file should be: unreadable and
+    // unwritable as a vault (a plain deletion is restored, see below).
     std::fs::remove_file(&f.vault_path).unwrap();
+    std::fs::create_dir(&f.vault_path).unwrap();
 
     let resp = set(&mut d, "app/B", b"value");
     assert!(matches!(resp, Response::Err(_)), "got {resp:?}");
@@ -390,4 +393,24 @@ fn an_older_copy_put_back_is_refused() {
     assert_eq!(anchor, Some(3));
     let on_disk = VaultFile::load(&f.vault_path).unwrap();
     assert!(on_disk.verify(&DEK, anchor).is_err());
+}
+
+#[test]
+fn a_deleted_vault_is_restored_from_the_daemons_verified_copy() {
+    let f = fixture("selfheal");
+    let mut d = persistent_daemon(&f);
+    assert_eq!(set(&mut d, "app/A", b"kept"), Response::Ok);
+    let before = std::fs::read(&f.vault_path).unwrap();
+
+    std::fs::remove_file(&f.vault_path).unwrap();
+    // The next request notices and writes the last verified copy back.
+    assert_eq!(get(&mut d, "app/A"), Response::Value(b"kept".to_vec()));
+    assert_eq!(std::fs::read(&f.vault_path).unwrap(), before);
+
+    // Writes keep working, and a write right after a deletion restores too.
+    std::fs::remove_file(&f.vault_path).unwrap();
+    assert_eq!(set(&mut d, "app/B", b"new"), Response::Ok);
+    let disk = VaultFile::load(&f.vault_path).unwrap();
+    assert!(disk.entries.contains_key("app/A") && disk.entries.contains_key("app/B"));
+    assert_eq!(disk.verify(&DEK, None), Ok(()));
 }

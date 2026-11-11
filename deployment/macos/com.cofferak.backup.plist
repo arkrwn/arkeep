@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd agent template: a daily encrypted backup of the vault (ADR 0018).
+
+  Copies vault.cofferak, which is already encrypted, so it needs no key and
+  never asks for Touch ID. Copy to ~/Library/LaunchAgents/, replace every
+  REPLACE_WITH_USER, then load it:
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.cofferak.backup.plist
+  Point the directory at an external disk or a synced folder if you can.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.cofferak.backup</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/cofferak</string>
+        <string>backup</string>
+        <string>--dir</string>
+        <string>/Users/REPLACE_WITH_USER/Backups/cofferak</string>
+        <string>--keep</string>
+        <string>30</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>COFFERAK_DATA_DIR</key>
+        <string>/Users/REPLACE_WITH_USER/Library/Application Support/cofferak</string>
+    </dict>
+    <!-- Every day at 03:15. launchd runs a missed job when the Mac wakes. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>15</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/Users/REPLACE_WITH_USER/Library/Logs/cofferak-backup.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/REPLACE_WITH_USER/Library/Logs/cofferak-backup.log</string>
+</dict>
+</plist>

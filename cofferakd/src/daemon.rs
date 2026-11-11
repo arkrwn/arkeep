@@ -84,6 +84,10 @@ struct Persistence {
     stamp: Option<FileStamp>,
     /// Set once a re-keyed vault has been reported, to log it only once.
     rekey_reported: bool,
+    /// The exact bytes of the newest vault this daemon verified or wrote.
+    /// If `vault.cofferak` is deleted while the daemon runs, it is written
+    /// back from here (ADR 0018).
+    last_good: Vec<u8>,
     /// Newest vault generation this daemon has loaded or written (ADR
     /// 0015). A file with a lower generation is an older copy.
     generation_seen: u64,
@@ -199,12 +203,14 @@ impl Daemon {
         generation_seen: u64,
     ) -> Self {
         let stamp = file_stamp(&vault_path);
+        let last_good = std::fs::read(&vault_path).unwrap_or_default();
         self.persistence = Some(Persistence {
             vault_path,
             host_id,
             host_wrap,
             stamp,
             rekey_reported: false,
+            last_good,
             generation_seen,
             integrity_failure: None,
         });
@@ -221,10 +227,21 @@ impl Daemon {
             return;
         };
         let now = file_stamp(&p.vault_path);
-        if now.is_none() || now == p.stamp {
+        if now.is_none() {
+            restore_if_deleted(p);
             return;
         }
-        let disk = match VaultFile::load(&p.vault_path) {
+        if now == p.stamp {
+            return;
+        }
+        let bytes = match std::fs::read(&p.vault_path) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("cofferakd: vault changed on disk but could not be read: {e}");
+                return;
+            }
+        };
+        let disk = match VaultFile::from_bytes(&bytes) {
             Ok(v) => v,
             Err(e) => {
                 eprintln!("cofferakd: vault changed on disk but could not be reloaded: {e}");
@@ -253,6 +270,7 @@ impl Daemon {
         }
         p.stamp = now;
         p.generation_seen = p.generation_seen.max(disk.generation);
+        p.last_good = bytes;
         self.tokens = token_index(load_tokens(&disk, &self.dek));
         self.entries = disk.entries;
     }
@@ -311,6 +329,9 @@ impl Daemon {
         };
         let _lock =
             VaultLock::acquire(&p.vault_path).map_err(|e| format!("could not lock vault: {e}"))?;
+        if file_stamp(&p.vault_path).is_none() {
+            restore_if_deleted(p);
+        }
         let mut disk = VaultFile::load(&p.vault_path)
             .map_err(|e| format!("could not re-read vault before writing: {e}"))?;
         if let Some(why) = &p.integrity_failure {
@@ -334,8 +355,12 @@ impl Daemon {
             }
         }
         disk.seal(&self.dek);
-        disk.save(&p.vault_path)
+        let bytes = disk
+            .to_bytes()
+            .map_err(|e| format!("could not encode vault: {e}"))?;
+        cofferak_core::format::write_atomic(&p.vault_path, &bytes)
             .map_err(|e| format!("could not write vault: {e}"))?;
+        p.last_good = bytes;
         // Our own write must not look like an external change.
         p.stamp = file_stamp(&p.vault_path);
         p.generation_seen = disk.generation;
@@ -497,6 +522,41 @@ pub fn audit_safe(path: &str) -> String {
         }
     }
     out
+}
+
+/// `vault.cofferak` is gone while the daemon runs (deleted by mistake, or
+/// on purpose without stopping the daemon first): write back the newest
+/// verified copy, loudly. The copy is authentic and current, so nothing is
+/// lost and the rollback anchor still matches.
+fn restore_if_deleted(p: &mut Persistence) {
+    if p.last_good.is_empty() {
+        return;
+    }
+    match std::fs::symlink_metadata(&p.vault_path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        _ => return,
+    }
+    let Ok(_lock) = VaultLock::acquire(&p.vault_path) else {
+        return;
+    };
+    if std::fs::symlink_metadata(&p.vault_path).is_ok() {
+        return; // recreated meanwhile (an admin command restored it)
+    }
+    match cofferak_core::format::write_atomic(&p.vault_path, &p.last_good) {
+        Ok(()) => {
+            eprintln!(
+                "cofferakd: ALERT: {} was deleted; restored it from this daemon's last verified copy. \
+                 Stop the daemon first if you remove a vault on purpose.",
+                p.vault_path.display()
+            );
+            p.stamp = file_stamp(&p.vault_path);
+        }
+        Err(e) => eprintln!(
+            "cofferakd: ALERT: {} was deleted and could not be restored: {e}. \
+             Serving from memory, writes will fail.",
+            p.vault_path.display()
+        ),
+    }
 }
 
 #[cfg(test)]
