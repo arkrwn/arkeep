@@ -23,11 +23,22 @@ pub struct AuditLog {
     path: PathBuf,
 }
 
+/// New audit files are created with mode 0600.
+fn owner_only(opts: &mut OpenOptions) -> &mut OpenOptions {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    opts
+}
+
 impl AuditLog {
     /// Opens (creating if needed) the audit file at `path`.
     pub fn open(path: &Path) -> io::Result<Self> {
         // Create the file up front so a bad path or permission problem surfaces here.
-        OpenOptions::new().append(true).create(true).open(path)?;
+        // Owner-only: entries name services and paths, which are metadata worth hiding.
+        owner_only(OpenOptions::new().append(true).create(true)).open(path)?;
         Ok(Self {
             path: path.to_path_buf(),
         })
@@ -35,11 +46,8 @@ impl AuditLog {
 
     /// Appends one entry as a single JSON line.
     pub fn append(&self, entry: &AuditEntry) -> io::Result<()> {
-        let mut file = OpenOptions::new()
-            .read(true)
-            .append(true)
-            .create(true)
-            .open(&self.path)?;
+        let mut file =
+            owner_only(OpenOptions::new().read(true).append(true).create(true)).open(&self.path)?;
         let mut line = Vec::new();
         // If a previous write was cut short, the file ends mid-line. Terminate that
         // fragment first so the new entry starts on its own line instead of being

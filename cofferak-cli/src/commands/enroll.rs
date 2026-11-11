@@ -92,8 +92,7 @@ pub fn run_enroll_host_with_seal(
         .seal(&new_host_key)
         .map_err(|e| CliError::Io(std::io::Error::other(e)))?;
 
-    std::fs::create_dir_all(data_dir.join("hosts"))?;
-    std::fs::write(host_seal_path(data_dir, new_host_id), &sealed.0)?;
+    super::init::write_host_seal(data_dir, new_host_id, &sealed.0)?;
 
     vault.hosts.insert(
         new_host_id.to_string(),

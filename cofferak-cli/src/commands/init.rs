@@ -159,6 +159,24 @@ pub(crate) fn host_seal_path(data_dir: &Path, host_id: &str) -> PathBuf {
 
 /// Generate a fresh random 32-byte key (used for both the vault DEK and a
 /// host's unseal key) using the OS CSPRNG.
+/// Create `data_dir/hosts` (mode 0700) if needed.
+pub(crate) fn ensure_hosts_dir(data_dir: &Path) -> std::io::Result<()> {
+    let mut b = std::fs::DirBuilder::new();
+    b.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        b.mode(0o700);
+    }
+    b.create(data_dir.join("hosts"))
+}
+
+/// Write a sealed host-key blob atomically with mode 0600.
+pub(crate) fn write_host_seal(data_dir: &Path, host_id: &str, blob: &[u8]) -> std::io::Result<()> {
+    ensure_hosts_dir(data_dir)?;
+    cofferak_core::format::write_atomic(&host_seal_path(data_dir, host_id), blob)
+}
+
 pub(crate) fn random_key() -> [u8; 32] {
     use rand_core::{OsRng, RngCore};
     let mut buf = [0u8; 32];
@@ -282,8 +300,7 @@ pub fn run_init_host_with_seal(
         .seal(&host_key)
         .map_err(|e| CliError::Io(std::io::Error::other(e)))?;
 
-    std::fs::create_dir_all(data_dir.join("hosts"))?;
-    std::fs::write(host_seal_path(data_dir, host_id), &sealed.0)?;
+    write_host_seal(data_dir, host_id, &sealed.0)?;
 
     vault.hosts.insert(
         host_id.to_string(),

@@ -132,6 +132,11 @@ enum Command {
     /// Inspect the daemon's audit log (local, offline — not a request over
     /// the socket).
     Audit(AuditArgs),
+    /// Run the daemon in the foreground (same code as `cofferakd`).
+    /// Configured by the COFFERAK_* environment variables. On macOS use
+    /// this rather than `cofferakd`: the Keychain lets the `cofferak` binary
+    /// read the host key it sealed without an authorization prompt.
+    Daemon,
 }
 
 #[derive(Args)]
@@ -191,11 +196,22 @@ struct EnrollServiceArgs {
 struct SetArgs {
     /// Secret path to write.
     path: String,
-    /// Value to store, taken as raw UTF-8 bytes of this argument.
-    value: String,
+    /// Value to store, as the raw bytes of this argument. Convenient for
+    /// non-sensitive tests only: a command-line argument is visible to
+    /// other processes and lands in shell history. Prefer `--stdin` or
+    /// `--from-file`.
+    #[arg(conflicts_with_all = ["stdin", "from_file"], required_unless_present_any = ["stdin", "from_file"])]
+    value: Option<String>,
+    /// Read the value from standard input (exact bytes, up to EOF), e.g.
+    /// `cofferak set app/KEY --stdin < secret.txt` or a hidden prompt.
+    #[arg(long, conflicts_with = "from_file")]
+    stdin: bool,
+    /// Read the value from a file (exact bytes), e.g. an SSH private key.
+    #[arg(long, value_name = "FILE")]
+    from_file: Option<PathBuf>,
     /// Service access token (hex-encoded secret). Defaults to
     /// `$COFFERAK_TOKEN` if set.
-    #[arg(long, env = "COFFERAK_TOKEN")]
+    #[arg(long, env = "COFFERAK_TOKEN", hide_env_values = true)]
     token: String,
     /// Daemon Unix socket path. Defaults to the platform socket path, or
     /// `$COFFERAK_SOCKET` if set.
@@ -207,9 +223,13 @@ struct SetArgs {
 struct GetArgs {
     /// Secret path to read.
     path: String,
+    /// Write the value to this file (exact bytes, created with mode 0600)
+    /// instead of standard output.
+    #[arg(long, short = 'o', value_name = "FILE")]
+    output: Option<PathBuf>,
     /// Service access token (hex-encoded secret). Defaults to
     /// `$COFFERAK_TOKEN` if set.
-    #[arg(long, env = "COFFERAK_TOKEN")]
+    #[arg(long, env = "COFFERAK_TOKEN", hide_env_values = true)]
     token: String,
     /// Daemon Unix socket path. Defaults to the platform socket path, or
     /// `$COFFERAK_SOCKET` if set.
@@ -223,7 +243,7 @@ struct RmArgs {
     path: String,
     /// Service access token (hex-encoded secret). Defaults to
     /// `$COFFERAK_TOKEN` if set.
-    #[arg(long, env = "COFFERAK_TOKEN")]
+    #[arg(long, env = "COFFERAK_TOKEN", hide_env_values = true)]
     token: String,
     /// Daemon Unix socket path. Defaults to the platform socket path, or
     /// `$COFFERAK_SOCKET` if set.
@@ -241,7 +261,7 @@ struct ListArgs {
     prefix: String,
     /// Service access token (hex-encoded secret). Defaults to
     /// `$COFFERAK_TOKEN` if set.
-    #[arg(long, env = "COFFERAK_TOKEN")]
+    #[arg(long, env = "COFFERAK_TOKEN", hide_env_values = true)]
     token: String,
     /// Daemon Unix socket path. Defaults to the platform socket path, or
     /// `$COFFERAK_SOCKET` if set.
@@ -365,6 +385,69 @@ fn resolve_socket_path(cli_socket: Option<PathBuf>) -> PathBuf {
         .unwrap_or_else(default_socket_path)
 }
 
+/// Largest value `set` accepts. The wire protocol encodes bytes as a JSON
+/// array (up to 4 characters per byte) inside a 16 MiB line, so 3 MiB
+/// leaves headroom; secrets, keys and certificates are far smaller.
+const MAX_SECRET_BYTES: usize = 3 * 1024 * 1024;
+
+/// The value for `set`, from the positional argument, `--stdin` or
+/// `--from-file`, held in zeroize-on-drop memory.
+fn read_set_value(args: &SetArgs) -> Result<zeroize::Zeroizing<Vec<u8>>, String> {
+    use std::io::Read;
+    let bytes = if args.stdin {
+        let mut buf = Vec::new();
+        std::io::stdin()
+            .take(MAX_SECRET_BYTES as u64 + 1)
+            .read_to_end(&mut buf)
+            .map_err(|e| format!("reading standard input: {e}"))?;
+        buf
+    } else if let Some(path) = &args.from_file {
+        let meta = std::fs::metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        if meta.len() > MAX_SECRET_BYTES as u64 {
+            return Err(format!(
+                "{} is {} bytes; the maximum secret size is {MAX_SECRET_BYTES} bytes",
+                path.display(),
+                meta.len()
+            ));
+        }
+        std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?
+    } else {
+        args.value.clone().unwrap_or_default().into_bytes()
+    };
+    if bytes.len() > MAX_SECRET_BYTES {
+        return Err(format!(
+            "the maximum secret size is {MAX_SECRET_BYTES} bytes"
+        ));
+    }
+    Ok(zeroize::Zeroizing::new(bytes))
+}
+
+/// Write a `get` result: to `output` (exact bytes, mode 0600) if given,
+/// otherwise to stdout. On a terminal a trailing newline is added for
+/// readability; when piped or redirected, the exact stored bytes are
+/// written (so `cofferak get k | ssh-add -` gets the key byte for byte).
+fn write_get_value(value: &[u8], output: Option<&Path>) -> std::io::Result<()> {
+    use std::io::{IsTerminal, Write};
+    if let Some(path) = output {
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        let mut f = opts.open(path)?;
+        f.write_all(value)?;
+        return f.sync_all();
+    }
+    let mut out = std::io::stdout().lock();
+    out.write_all(value)?;
+    if out.is_terminal() && !value.ends_with(b"\n") {
+        out.write_all(b"\n")?;
+    }
+    out.flush()
+}
+
 /// Connect to the daemon at `socket`, or print a clear error and exit.
 fn connect_or_exit(socket: &std::path::Path) -> Client {
     Client::connect(socket).unwrap_or_else(|e| {
@@ -376,8 +459,24 @@ fn connect_or_exit(socket: &std::path::Path) -> Client {
     })
 }
 
+/// Restore the default SIGPIPE action for normal CLI commands, so
+/// `cofferak list | head -1` exits quietly like any Unix tool instead of
+/// panicking on "Broken pipe". Not used for `cofferak daemon`: a server
+/// must keep SIGPIPE ignored so a disconnecting client can't kill it.
+fn default_sigpipe() {
+    #[cfg(unix)]
+    // SAFETY: setting a signal disposition to SIG_DFL at startup, before any
+    // threads exist, has no memory-safety implications.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+}
+
 fn main() {
     let cli = Cli::parse();
+    if !matches!(cli.command, Command::Daemon) {
+        default_sigpipe();
+    }
 
     match cli.command {
         Command::Init(args) => {
@@ -492,8 +591,12 @@ fn main() {
             }
         }
         Command::Set(args) => {
+            let value = read_set_value(&args).unwrap_or_else(|e| {
+                eprintln!("cofferak: set failed: {e}");
+                std::process::exit(1);
+            });
             let client = connect_or_exit(&resolve_socket_path(args.socket));
-            match run_set(&client, &args.token, &args.path, args.value.into_bytes()) {
+            match run_set(&client, &args.token, &args.path, value.to_vec()) {
                 Ok(()) => println!("ok"),
                 Err(e) => {
                     eprintln!("cofferak: set failed: {e}");
@@ -505,12 +608,11 @@ fn main() {
             let client = connect_or_exit(&resolve_socket_path(args.socket));
             match run_get(&client, &args.token, &args.path) {
                 Ok(value) => {
-                    use std::io::Write;
-                    // The value is arbitrary bytes, not necessarily UTF-8
-                    // text, so write it raw rather than assuming it can
-                    // be formatted as a `String`.
-                    let _ = std::io::stdout().write_all(&value);
-                    let _ = std::io::stdout().write_all(b"\n");
+                    let value = zeroize::Zeroizing::new(value);
+                    if let Err(e) = write_get_value(&value, args.output.as_deref()) {
+                        eprintln!("cofferak: get failed: {e}");
+                        std::process::exit(1);
+                    }
                 }
                 Err(e) => {
                     eprintln!("cofferak: get failed: {e}");
@@ -587,6 +689,7 @@ fn main() {
                 }
             }
         }
+        Command::Daemon => cofferakd::server::run(),
         Command::Audit(args) => match args.command {
             AuditCommand::Tail(tail_args) => {
                 let data_dir = resolve_data_dir(tail_args.data_dir);

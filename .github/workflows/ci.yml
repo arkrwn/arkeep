@@ -90,6 +90,11 @@ jobs:
       # python3 ships preinstalled on both ubuntu-latest and macos-latest
       # GitHub-hosted runners.
 
+      # The README "Quickstart" commands, run as written, so the
+      # documented steps can't drift from what actually works.
+      - name: README quickstart check
+        run: ./scripts/quickstart-check.sh
+
       - name: Run every SDK's smoke test against a real daemon
         run: ./scripts/sdk-smoke.sh
 

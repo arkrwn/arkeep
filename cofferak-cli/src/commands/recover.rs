@@ -27,7 +27,7 @@ use cofferak_core::crypto::{unwrap_dek_for_root, wrap_dek_for_host, KeyBytes, Ro
 use cofferak_core::format::{VaultFile, VaultMeta};
 use cofferak_core::seal::HostSeal;
 
-use super::init::{host_seal_path, meta_path, random_key, vault_path, CliError};
+use super::init::{meta_path, random_key, vault_path, CliError};
 
 /// Recover a vault using the offline root private key stored at
 /// `root_privkey_path`, enrolling `new_host_id` with a freshly generated
@@ -89,8 +89,7 @@ pub fn run_recover(
         .seal(&new_host_key)
         .map_err(|e| CliError::Io(std::io::Error::other(e)))?;
 
-    std::fs::create_dir_all(data_dir.join("hosts"))?;
-    std::fs::write(host_seal_path(data_dir, new_host_id), &sealed.0)?;
+    super::init::write_host_seal(data_dir, new_host_id, &sealed.0)?;
 
     vault.hosts.insert(
         new_host_id.to_string(),

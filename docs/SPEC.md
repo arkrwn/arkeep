@@ -21,6 +21,11 @@ Does not protect against: root on an already-unsealed live host reading
 process memory, or loss/disclosure of the creator's offline root private
 key.
 
+Not secret by design: secret *paths* (e.g. `myapp/DB_PASSWORD`), service
+and host ids, value sizes and timestamps. They are the vault's index and
+appear in `vault.cofferak`, `meta.json` and the audit log; only values
+(and service tokens) are encrypted. Don't put secrets in path names.
+
 ## 2. Key hierarchy (envelope encryption — ADR 0001, crypto v2 ADR 0011)
 
 - **Root keypair** (X25519 + ML-KEM-1024): generated once (`cofferak init
@@ -137,9 +142,14 @@ negotiated parameters.
 ## 7. CLI surface (current)
 
 `init --root|--host`, `enroll-host`, `enroll-service`, `set|get|rm|list`
-(over the socket), `rotate-dek` (direct file, atomic write-temp-then-rename),
-`recover --root-key` (disaster recovery, zero-side-effect on failure),
-`audit tail`. Admin commands run under the vault lock; on Linux the ones
+(over the socket; `set` takes the value from `--stdin`, `--from-file` or an
+argument, `get -o` writes exact bytes to a `0600` file), `rotate-dek`
+(direct file, atomic write-temp-then-rename), `recover --root-key`
+(disaster recovery, zero-side-effect on failure), `audit tail`, and
+`daemon` (runs the daemon in the foreground; the same code as `cofferakd`,
+used on macOS so the Keychain serves the host key to the binary that sealed
+it, ADR 0007). Values are limited to 3 MiB. `--token` falls back to
+`$COFFERAK_TOKEN`, whose value is never shown in `--help`. Admin commands run under the vault lock; on Linux the ones
 that touch a host key need root, and they hand created files back to the
 data directory's owner. Restart `cofferakd` after `enroll-service`,
 `rotate-dek`, or re-enrolling its host: tokens and the DEK are loaded at

@@ -19,4 +19,5 @@
 pub mod audit;
 pub mod daemon;
 pub mod protocol;
+pub mod server;
 pub mod tls_server;
