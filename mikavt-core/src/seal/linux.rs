@@ -1,9 +1,11 @@
 //! Linux `HostSeal` backend: shells out to the real `systemd-creds` binary.
 //!
-//! `systemd-creds encrypt --name=<name>` reads raw key bytes on stdin and
-//! writes a sealed credential blob to stdout; `systemd-creds decrypt
-//! --name=<name>` is the inverse, reading a blob on stdin and writing the
-//! raw key bytes to stdout. The `name` is bound into the seal by
+//! `systemd-creds encrypt --name=<name> - -` reads raw key bytes on stdin
+//! and writes a sealed credential blob to stdout; `systemd-creds decrypt
+//! --name=<name> - -` is the inverse, reading a blob on stdin and writing
+//! the raw key bytes to stdout. (The two `-` positional arguments — input
+//! and output — are mandatory: without them systemd-creds exits with
+//! "Too few arguments.") The `name` is bound into the seal by
 //! `systemd-creds` itself, so decrypting with a different name (or a
 //! tampered blob) fails.
 
@@ -31,7 +33,13 @@ impl SystemdCredsSeal {
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            // Captured (not discarded) so a real failure — most commonly
+            // "Permission denied" reading the root-only host secret when
+            // this process isn't root, see docs/adr/0009 — is visible in
+            // the returned error instead of a bare "Invalid" that leaves
+            // the caller guessing. systemd-creds's own stderr is
+            // operational diagnostics, never the key material itself.
+            .stderr(Stdio::piped())
             .spawn()
             .map_err(|_| SealError::Unavailable)?;
 
@@ -49,7 +57,13 @@ impl SystemdCredsSeal {
         let output = child.wait_with_output()?;
 
         if !output.status.success() || output.stdout.is_empty() {
-            return Err(SealError::Invalid);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let detail = if stderr.trim().is_empty() {
+                format!("systemd-creds {}", output.status)
+            } else {
+                format!("systemd-creds {}: {}", output.status, stderr.trim())
+            };
+            return Err(SealError::Invalid(detail));
         }
 
         Ok(output.stdout)
@@ -58,17 +72,30 @@ impl SystemdCredsSeal {
 
 impl HostSeal for SystemdCredsSeal {
     fn seal(&self, key: &[u8; 32]) -> Result<SealedBlob, SealError> {
-        let args = vec!["encrypt".to_string(), format!("--name={}", self.name)];
+        let args = vec![
+            "encrypt".to_string(),
+            format!("--name={}", self.name),
+            "-".to_string(),
+            "-".to_string(),
+        ];
         let stdout = self.run(&args, key)?;
         Ok(SealedBlob(stdout))
     }
 
     fn unseal(&self, blob: &SealedBlob) -> Result<[u8; 32], SealError> {
-        let args = vec!["decrypt".to_string(), format!("--name={}", self.name)];
+        let args = vec![
+            "decrypt".to_string(),
+            format!("--name={}", self.name),
+            "-".to_string(),
+            "-".to_string(),
+        ];
         let stdout = self.run(&args, &blob.0)?;
 
         if stdout.len() != 32 {
-            return Err(SealError::Invalid);
+            return Err(SealError::Invalid(format!(
+                "systemd-creds decrypt returned {} bytes, expected 32",
+                stdout.len()
+            )));
         }
 
         let mut key = [0u8; 32];

@@ -42,8 +42,11 @@ pub enum SealError {
     Unavailable,
     /// The sealing facility ran but its output cannot be trusted: a
     /// non-zero exit status, empty output, or output that otherwise fails
-    /// to decrypt/validate.
-    Invalid,
+    /// to decrypt/validate. Carries whatever diagnostic detail the backend
+    /// captured (e.g. the subprocess's stderr) — never secret key material,
+    /// only the backend's own operational error text — so a caller isn't
+    /// left guessing between, say, "wrong name" and "permission denied."
+    Invalid(String),
     /// An I/O error occurred while talking to the sealing facility (e.g.
     /// writing to its stdin or reading its stdout).
     Io(std::io::Error),
@@ -53,10 +56,10 @@ impl fmt::Display for SealError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SealError::Unavailable => write!(f, "host seal backend is unavailable"),
-            SealError::Invalid => {
+            SealError::Invalid(detail) => {
                 write!(
                     f,
-                    "host seal backend rejected input or produced invalid output"
+                    "host seal backend rejected input or produced invalid output: {detail}"
                 )
             }
             SealError::Io(e) => write!(f, "I/O error talking to host seal backend: {e}"),
@@ -68,7 +71,7 @@ impl std::error::Error for SealError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             SealError::Io(e) => Some(e),
-            SealError::Unavailable | SealError::Invalid => None,
+            SealError::Unavailable | SealError::Invalid(_) => None,
         }
     }
 }

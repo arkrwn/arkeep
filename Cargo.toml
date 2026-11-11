@@ -5,5 +5,5 @@ members = ["mikavt-core", "mikavtd", "mikavt-cli", "sdk/rust/mikavt-sdk"]
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.75"
+rust-version = "1.89"
 license = "Apache-2.0"

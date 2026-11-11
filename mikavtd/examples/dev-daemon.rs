@@ -14,9 +14,14 @@
 //! 64 lowercase hex chars), and `MIKAVT_TOKEN_PREFIX` (required) from the
 //! environment. Exits as soon as it has bound the socket by printing
 //! `ready` to stdout, then serves forever until killed.
+//!
+//! Also starts the server-mode TLS/TCP listener (ADR 0008) if
+//! `MIKAVT_TLS_ADDR` (+ `MIKAVT_TLS_CERT`/`MIKAVT_TLS_KEY`, optionally
+//! `MIKAVT_TLS_CLIENT_CA`) is set — the same opt-in env vars `main.rs`
+//! reads, serving the same `daemon` over both transports at once.
 
 use std::collections::BTreeMap;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufReader, Write};
 use std::net::Shutdown;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::{Arc, Mutex};
@@ -78,6 +83,20 @@ fn main() {
 
     let daemon = Arc::new(Mutex::new(Daemon::new(dek, vault, tokens, audit)));
 
+    // Server mode (ADR 0008), same as the real `main.rs`: additive, only
+    // if $MIKAVT_TLS_ADDR is set. Lets scripts/sdk-smoke.sh prove the
+    // TLS/TCP transport too without needing the real HostSeal-backed
+    // binary (see this file's module doc and ADR 0007 for why that's
+    // not always possible non-interactively on macOS).
+    match mikavtd::tls_server::resolve() {
+        Ok(Some(tls_config)) => mikavtd::tls_server::start(tls_config, Arc::clone(&daemon)),
+        Ok(None) => {}
+        Err(msg) => {
+            eprintln!("dev-daemon: {msg}");
+            std::process::exit(1);
+        }
+    }
+
     let _ = std::fs::remove_file(&socket_path);
     let listener = UnixListener::bind(&socket_path).unwrap_or_else(|e| {
         eprintln!("dev-daemon: could not bind socket at {socket_path}: {e}");
@@ -103,8 +122,9 @@ fn handle_connection(stream: UnixStream, daemon: Arc<Mutex<Daemon>>) {
     let mut line = Vec::new();
 
     loop {
-        line.clear();
-        match reader.read_until(b'\n', &mut line) {
+        // Bounded, matching the real main.rs/tls_server.rs — see
+        // protocol::read_line_bounded's doc comment.
+        match mikavtd::protocol::read_line_bounded(&mut reader, &mut line) {
             Ok(0) => break,
             Ok(_) => {}
             Err(_) => break,

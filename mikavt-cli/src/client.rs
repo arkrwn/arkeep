@@ -1,14 +1,9 @@
 //! Thin Unix-socket client speaking `mikavtd`'s newline-delimited JSON
 //! protocol ([`crate::protocol`]).
 //!
-//! `mikavtd` is a binary-only crate (no library target), so its
-//! `protocol` module is compiled directly into *this* binary via
-//! `#[path]` in `main.rs` — the same convention this workspace already
-//! uses for sharing a sibling binary crate's modules without promoting it
-//! to a library crate (see every integration test under `tests/`, and
-//! `commands/enroll.rs`'s doc comment for the analogous in-crate version
-//! of this trick). `main.rs`'s `mod protocol` declaration is what makes
-//! `crate::protocol` resolve here.
+//! The protocol types come from `mikavtd`'s library target (ADR 0004),
+//! re-exported as `crate::protocol` by `main.rs`, so the CLI and the
+//! daemon share one definition.
 //!
 //! [`Client::send`] opens a fresh [`UnixStream`] per call rather than
 //! holding a long-lived connection open. This is the simplest correct

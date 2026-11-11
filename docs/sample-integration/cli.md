@@ -3,14 +3,17 @@
 ## 1. One-time setup: root key, first host, a consuming service
 
 ```bash
-# Once, by the creator, on their own machine or the first host:
-mikavt init --root --data-dir /var/lib/mikavt
+# Once, by the creator, on the first host. On Linux these need root
+# (systemd-creds' host scope is root-only; see docs/adr/0009).
+sudo mikavt init --root --data-dir /var/lib/mikavt
 # prints the root private key ONCE — copy it offline now, it is never shown again
 
-mikavt init --host my-server-01 --data-dir /var/lib/mikavt
+sudo mikavt init --host my-server-01 --data-dir /var/lib/mikavt
 
-# Enroll a consuming service and capture its one-time token:
-mikavt enroll-service azmika --paths azmika --perm rw --data-dir /var/lib/mikavt
+# Enroll a consuming service and capture its one-time token, then restart
+# the daemon so it loads the new token:
+sudo mikavt enroll-service azmika --paths azmika --perm rw --data-dir /var/lib/mikavt
+sudo systemctl restart mikavtd
 # prints a hex token ONCE — deliver it to that service the same sealed
 # way you deliver the host unseal key (systemd LoadCredentialEncrypted /
 # launchd + Keychain), never as a plaintext env var in a committed file.

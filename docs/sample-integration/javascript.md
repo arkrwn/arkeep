@@ -36,3 +36,22 @@ This exact flow is what
 runs for real in CI (`scripts/sdk-smoke.sh`), against the actual compiled
 `dist/` output — proving the JavaScript consumption path, not just the
 TypeScript source.
+
+## Server mode (TLS / mutual TLS)
+
+```js
+const client = Client.connectTls({
+  addr: "mikavt.example.internal:8443",
+  serverName: "mikavt.example.internal",
+  caCertPath: "/path/to/ca.pem",
+  // clientCertPath/clientKeyPath: set both together only if the server
+  // requires mutual TLS ($MIKAVT_TLS_CLIENT_CA).
+});
+```
+
+Same hardening as the [TypeScript page](typescript.md#server-mode-tls--mutual-tls)
+(TLS 1.3 only, no public-root fallback, `rejectUnauthorized` never
+disabled) — this is the same compiled code. Proven for real against the
+compiled `dist/` output by
+[`sdk/javascript/mikavt-sdk/examples/smoke_tls.js`](../../sdk/javascript/mikavt-sdk/examples/smoke_tls.js),
+run by `scripts/server-mode-smoke.sh`.
