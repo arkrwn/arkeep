@@ -124,11 +124,24 @@ TOKEN="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
 DEV_DAEMON="$REPO_ROOT/target/release/examples/dev-daemon"
 
 echo "== mTLS is mandatory: server mode without a client CA must refuse to start =="
-if COFFERAK_SOCKET="$WORKDIR/no-ca.sock" COFFERAK_TOKEN_SECRET_HEX="$TOKEN" \
-   COFFERAK_TOKEN_PREFIX="sdk-smoke" COFFERAK_TLS_ADDR="$TLS_ADDR" \
-   COFFERAK_TLS_CERT="$WORKDIR/server.pem" COFFERAK_TLS_KEY="$WORKDIR/server.key" \
-   timeout 10 "$DEV_DAEMON" >"$WORKDIR/no-ca.log" 2>&1; then
-  echo "server mode started without COFFERAK_TLS_CLIENT_CA; it must refuse" >&2
+# Portable "must exit on its own within 10s" (macOS has no `timeout`).
+COFFERAK_SOCKET="$WORKDIR/no-ca.sock" COFFERAK_TOKEN_SECRET_HEX="$TOKEN" \
+COFFERAK_TOKEN_PREFIX="sdk-smoke" COFFERAK_TLS_ADDR="$TLS_ADDR" \
+COFFERAK_TLS_CERT="$WORKDIR/server.pem" COFFERAK_TLS_KEY="$WORKDIR/server.key" \
+  "$DEV_DAEMON" >"$WORKDIR/no-ca.log" 2>&1 &
+NO_CA_PID=$!
+for _ in $(seq 1 100); do
+  kill -0 "$NO_CA_PID" 2>/dev/null || break
+  sleep 0.1
+done
+if kill -0 "$NO_CA_PID" 2>/dev/null; then
+  kill "$NO_CA_PID" 2>/dev/null || true
+  echo "server mode kept running without COFFERAK_TLS_CLIENT_CA; it must refuse" >&2
+  cat "$WORKDIR/no-ca.log" >&2
+  exit 1
+fi
+if wait "$NO_CA_PID"; then
+  echo "daemon exited successfully without COFFERAK_TLS_CLIENT_CA; it must fail" >&2
   cat "$WORKDIR/no-ca.log" >&2
   exit 1
 fi
