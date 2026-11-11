@@ -31,6 +31,9 @@ mod init;
 #[allow(dead_code)] // each test binary uses only a subset of these shared source modules
 #[path = "../src/commands/integrity.rs"]
 mod integrity;
+#[allow(dead_code)]
+#[path = "../src/presence.rs"]
+mod presence;
 use cofferakd::protocol;
 #[allow(dead_code)] // each test binary uses only a subset of these shared source modules
 #[path = "../src/commands/secrets.rs"]

@@ -124,7 +124,7 @@ piped or redirected it writes the stored bytes exactly.
 
 Values are encrypted; **path names are not** (they're the vault's index
 and appear in the audit log), so never put a secret in a path. Values can
-be up to 3 MiB.
+be up to 1 MiB.
 
 ## 5. Replace `.env` files and secrets in config
 

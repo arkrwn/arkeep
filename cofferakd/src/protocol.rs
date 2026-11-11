@@ -45,6 +45,16 @@ pub fn encode(msg: &impl Serialize) -> Vec<u8> {
     bytes
 }
 
+/// Encode `response` for the wire and wipe the plaintext value it carried.
+/// The caller wipes the returned bytes after sending them.
+pub fn respond(response: Response) -> Vec<u8> {
+    let out = encode(&response);
+    if let Response::Value(mut v) = response {
+        zeroize::Zeroize::zeroize(&mut v);
+    }
+    out
+}
+
 /// Parse a single request line.
 pub fn decode_request(line: &[u8]) -> Result<Request, serde_json::Error> {
     serde_json::from_slice(line)

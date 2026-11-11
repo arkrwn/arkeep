@@ -24,7 +24,7 @@ pub use linux::SystemdCredsSeal;
 mod macos;
 
 #[cfg(target_os = "macos")]
-pub use macos::KeychainSeal;
+pub use macos::{KeychainAnchorMirror, KeychainSeal};
 
 /// An opaque, host-sealed blob produced by a [`HostSeal`] implementation.
 ///

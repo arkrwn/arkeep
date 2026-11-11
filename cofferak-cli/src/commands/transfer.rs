@@ -350,7 +350,54 @@ pub enum ImportKey<'a> {
     /// A peer transfer (`CFKEXPT2`), opened with this coffer's identity.
     /// `from` optionally pins the expected sender by its public identity
     /// instead of requiring it to be a stored peer.
-    Identity { from: Option<IdentityPublic> },
+    Identity {
+        from: Option<IdentityPublic>,
+        /// Accept a transfer older than [`MAX_TRANSFER_AGE_SECS`].
+        allow_old: bool,
+    },
+}
+
+/// Peer transfers older than this are refused unless `--allow-old`.
+pub const MAX_TRANSFER_AGE_SECS: i64 = 30 * 24 * 3600;
+
+/// Line added to a stored peer's (encrypted) record: when the newest
+/// transfer accepted from it was made, and its SHA-256, so the same or an
+/// older transfer can't be replayed (ADR 0017).
+const LAST_TRANSFER: &str = "last-transfer: ";
+
+fn peer_last_transfer(vault: &VaultFile, dek: &[u8; 32], name: &str) -> Option<(i64, String)> {
+    let enc = vault.peers.get(name)?;
+    let plain = Zeroizing::new(decrypt_entry(dek, &Aad::peer(name), enc).ok()?);
+    let text = std::str::from_utf8(&plain).ok()?;
+    let rest = text.lines().find_map(|l| l.strip_prefix(LAST_TRANSFER))?;
+    let (ts, hash) = rest.split_once(' ')?;
+    Some((ts.parse().ok()?, hash.to_string()))
+}
+
+fn record_peer_transfer(
+    vault: &mut VaultFile,
+    dek: &[u8; 32],
+    name: &str,
+    peer: &IdentityPublic,
+    created_at: i64,
+    hash: &str,
+) {
+    let text = format!(
+        "{}\n{LAST_TRANSFER}{created_at} {hash}",
+        peer.to_text().trim_end()
+    );
+    vault.peers.insert(
+        name.to_string(),
+        encrypt_entry(dek, &Aad::peer(name), text.as_bytes()),
+    );
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::Digest;
+    sha2::Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 /// True if `bytes` is a peer transfer rather than a passphrase bundle.
@@ -459,7 +506,7 @@ pub fn run_import_with_seal(
         ImportKey::Passphrase(p) => {
             bundle::open(bundle_bytes, p).map_err(|e| invalid(e.to_string()))?
         }
-        ImportKey::Identity { from } => {
+        ImportKey::Identity { from, allow_old } => {
             let Some(_) = vault.identity else {
                 return Err(invalid(
                     "this coffer has no identity yet, so nothing can have been sent to it; \
@@ -470,6 +517,7 @@ pub fn run_import_with_seal(
             let (sender, b) =
                 identity::open_transfer(bundle_bytes, &me).map_err(|e| invalid(e.to_string()))?;
             let fp = sender.fingerprint();
+            let pinned_sender = from.is_some();
             let peer_name = match from {
                 Some(pinned) if pinned.fingerprint() == fp => "(pinned with --from)".to_string(),
                 Some(_) => {
@@ -490,6 +538,26 @@ pub fn run_import_with_seal(
                         ))
                     })?,
             };
+            let age = now_unix() - b.created_at;
+            if age > MAX_TRANSFER_AGE_SECS && !allow_old {
+                return Err(invalid(format!(
+                    "this transfer was made {} days ago; transfers older than 30 days are refused \
+                     in case they are a replay. If you expected it, re-run with --allow-old",
+                    age / 86400
+                )));
+            }
+            if !pinned_sender {
+                let hash = sha256_hex(bundle_bytes);
+                if let Some((last_ts, last_hash)) = peer_last_transfer(&vault, &dek, &peer_name) {
+                    if b.created_at < last_ts || (b.created_at == last_ts && hash == last_hash) {
+                        return Err(invalid(format!(
+                            "this transfer from peer '{peer_name}' was already imported, or is older \
+                             than one already imported; refusing a possible replay"
+                        )));
+                    }
+                }
+                record_peer_transfer(&mut vault, &dek, &peer_name, &sender, b.created_at, &hash);
+            }
             report.from_peer = Some(peer_name);
             b
         }

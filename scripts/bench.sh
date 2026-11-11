@@ -11,6 +11,8 @@
 #
 # Usage: ./scripts/bench.sh [requests]
 set -euo pipefail
+# Unattended run: hosts created here must not ask for Touch ID (macOS).
+export COFFERAK_NO_USER_PRESENCE=1
 
 cd "$(dirname "$0")/.."
 REPO_ROOT="$(pwd)"
@@ -42,7 +44,7 @@ openssl req -x509 -new -sha384 -key "$WORKDIR/ca.key" -days 1 -subj "/CN=coffera
   -out "$WORKDIR/ca.pem" 2>/dev/null
 printf 'subjectAltName=DNS:%s\n' "$SERVER_NAME" > "$WORKDIR/ext.cnf"
 sign server "$SERVER_NAME" "$WORKDIR/ext.cnf"
-sign client cofferak-bench-client
+sign client sdk-smoke-service   # named after the service its token belongs to (ADR 0017)
 
 cargo build --release --quiet -p cofferak-core --example crypto_bench
 cargo build --release --quiet -p cofferakd --example dev-daemon

@@ -51,10 +51,42 @@ pub struct KeychainSeal {
     pub account: String,
 }
 
+/// Appended to the key in the Keychain item when the host was created to
+/// require user presence (Touch ID or the login password) before admin
+/// commands may use it. The flag lives in the Keychain item itself, which
+/// only cofferak can write, not in the data directory.
+const PRESENCE_FLAG: u8 = 0x01;
+
+impl KeychainSeal {
+    /// Store `key`, recording whether admin commands must confirm user
+    /// presence before using it (see [`KeychainSeal::presence_required`]).
+    pub fn seal_with_presence(
+        &self,
+        key: &[u8; 32],
+        require_presence: bool,
+    ) -> Result<SealedBlob, SealError> {
+        let mut value = key.to_vec();
+        if require_presence {
+            value.push(PRESENCE_FLAG);
+        }
+        let r = set_generic_password(&self.service, &self.account, &value).map_err(map_sf_error);
+        value.iter_mut().for_each(|b| *b = 0);
+        r?;
+        Ok(SealedBlob(SEALED_MARKER.to_vec()))
+    }
+
+    /// Whether this host's key was stored with the user-presence flag.
+    pub fn presence_required(&self) -> Result<bool, SealError> {
+        let mut bytes = get_generic_password(&self.service, &self.account).map_err(map_sf_error)?;
+        let required = bytes.len() == 33 && bytes[32] == PRESENCE_FLAG;
+        bytes.iter_mut().for_each(|b| *b = 0);
+        Ok(required)
+    }
+}
+
 impl HostSeal for KeychainSeal {
     fn seal(&self, key: &[u8; 32]) -> Result<SealedBlob, SealError> {
-        set_generic_password(&self.service, &self.account, key).map_err(map_sf_error)?;
-        Ok(SealedBlob(SEALED_MARKER.to_vec()))
+        self.seal_with_presence(key, false)
     }
 
     fn unseal(&self, blob: &SealedBlob) -> Result<[u8; 32], SealError> {
@@ -64,17 +96,20 @@ impl HostSeal for KeychainSeal {
             ));
         }
 
-        let bytes = get_generic_password(&self.service, &self.account).map_err(map_sf_error)?;
+        let mut bytes = get_generic_password(&self.service, &self.account).map_err(map_sf_error)?;
 
-        if bytes.len() != 32 {
+        let valid = bytes.len() == 32 || (bytes.len() == 33 && bytes[32] == PRESENCE_FLAG);
+        if !valid {
+            let n = bytes.len();
+            bytes.iter_mut().for_each(|b| *b = 0);
             return Err(SealError::Invalid(format!(
-                "Keychain item was {} bytes, expected 32",
-                bytes.len()
+                "Keychain item was {n} bytes, expected 32"
             )));
         }
 
         let mut key = [0u8; 32];
-        key.copy_from_slice(&bytes);
+        key.copy_from_slice(&bytes[..32]);
+        bytes.iter_mut().for_each(|b| *b = 0);
         Ok(key)
     }
 }
@@ -89,5 +124,25 @@ fn map_sf_error(e: SfError) -> SealError {
         ERR_SEC_ITEM_NOT_FOUND => SealError::Invalid("Keychain item not found".to_string()),
         ERR_SEC_INTERACTION_NOT_ALLOWED | ERR_SEC_NOT_AVAILABLE => SealError::Unavailable,
         _ => SealError::Io(std::io::Error::other(format!("keychain error: {e}"))),
+    }
+}
+
+/// macOS anchor mirror (ADR 0017): each host's anchor is also kept in the
+/// Keychain (service `cofferak-anchor`), which a restore of the data
+/// directory from a backup doesn't touch.
+pub struct KeychainAnchorMirror;
+
+impl crate::format::AnchorMirror for KeychainAnchorMirror {
+    fn read(&self, host_id: &str) -> std::io::Result<Option<Vec<u8>>> {
+        match get_generic_password("cofferak-anchor", host_id) {
+            Ok(b) => Ok(Some(b)),
+            Err(e) if e.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(None),
+            Err(e) => Err(std::io::Error::other(format!("keychain error: {e}"))),
+        }
+    }
+
+    fn write(&self, host_id: &str, bytes: &[u8]) -> std::io::Result<()> {
+        set_generic_password("cofferak-anchor", host_id, bytes)
+            .map_err(|e| std::io::Error::other(format!("keychain error: {e}")))
     }
 }

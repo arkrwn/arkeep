@@ -27,6 +27,8 @@
 # this script is the single source of truth for "the SDKs actually
 # work," not a claim in a doc.
 set -euo pipefail
+# Unattended run: hosts created here must not ask for Touch ID (macOS).
+export COFFERAK_NO_USER_PRESENCE=1
 
 cd "$(dirname "$0")/.."
 REPO_ROOT="$(pwd)"
@@ -59,6 +61,7 @@ cleanup() {
   fi
   if [[ -n "$KEYCHAIN_ITEM" ]]; then
     security delete-generic-password -s cofferak -a "$KEYCHAIN_ITEM" >/dev/null 2>&1 || true
+    security delete-generic-password -s cofferak-anchor -a "$KEYCHAIN_ITEM" >/dev/null 2>&1 || true
   fi
   if [[ -n "$UNIT" ]]; then
     sudo rm -rf "$WORKDIR" 2>/dev/null || true

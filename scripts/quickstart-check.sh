@@ -5,6 +5,8 @@
 # replaced by a pipe, and names are suffixed so it never touches a real
 # vault. Used by CI on ubuntu-latest and macos-latest.
 set -euo pipefail
+# Unattended run: hosts created here must not ask for Touch ID (macOS).
+export COFFERAK_NO_USER_PRESENCE=1
 
 cd "$(dirname "$0")/.."
 cargo build --release --quiet
@@ -22,7 +24,9 @@ cleanup() {
   [[ -n "$DPID" ]] && kill "$DPID" 2>/dev/null || true
   if [[ "$OS" == "Darwin" ]]; then
     security delete-generic-password -s cofferak -a "$HOST" >/dev/null 2>&1 || true
+    security delete-generic-password -s cofferak-anchor -a "$HOST" >/dev/null 2>&1 || true
     security delete-generic-password -s cofferak -a "qsb-$$" >/dev/null 2>&1 || true
+    security delete-generic-password -s cofferak-anchor -a "qsb-$$" >/dev/null 2>&1 || true
   fi
   sudo -n rm -rf "$WORK" 2>/dev/null || rm -rf "$WORK"
 }
@@ -84,7 +88,8 @@ step "7. export the vault to an encrypted bundle and import it back"
 printf 'correct horse battery staple\n' > "$WORK/pass"
 $ADMIN export -o "$WORK/backup.cfk" --passphrase-file "$WORK/pass"
 if LC_ALL=C grep -a -q 'p@ss' "$WORK/backup.cfk"; then echo "plaintext in bundle" >&2; exit 1; fi
-$ADMIN import "$WORK/backup.cfk" --passphrase-file "$WORK/pass" --dry-run | grep -q "0 new, 0 replaced, 5 kept"
+OUT="$($ADMIN import "$WORK/backup.cfk" --passphrase-file "$WORK/pass" --dry-run)"
+grep -q "0 new, 0 replaced, 5 kept" <<<"$OUT"
 
 step "8. coffer-to-coffer transfer with identities (no passphrase), both directions"
 B_DIR="$WORK/vault-b"; B_HOST="qsb-$$"
@@ -96,13 +101,27 @@ $ADMIN identity -o "$WORK/a.id" >/dev/null
 $ADMIN_B identity -o "$WORK/b.id" >/dev/null
 $ADMIN peer add b "$WORK/b.id" >/dev/null
 $ADMIN_B peer add a "$WORK/a.id" >/dev/null
-$ADMIN export --to b --prefix myapp/env -o "$WORK/a2b.cfk" | grep -q "for peer 'b'"
-$ADMIN_B import "$WORK/a2b.cfk" | grep -q "from peer 'a' (signature verified): secrets 3 new"
+OUT="$($ADMIN export --to b --prefix myapp/env -o "$WORK/a2b.cfk")"
+grep -q "for peer 'b'" <<<"$OUT"
+OUT="$($ADMIN_B import "$WORK/a2b.cfk")"
+grep -q "from peer 'a' (signature verified): secrets 3 new" <<<"$OUT"
 $ADMIN_B export --to a -o "$WORK/b2a.cfk" >/dev/null
-$ADMIN import "$WORK/b2a.cfk" | grep -q "from peer 'b' (signature verified): secrets 0 new, 0 replaced, 3 kept"
+OUT="$($ADMIN import "$WORK/b2a.cfk")"
+grep -q "from peer 'b' (signature verified): secrets 0 new, 0 replaced, 3 kept" <<<"$OUT"
 # A file made for B must not open on A, and B must refuse an untrusted sender.
 if $ADMIN import "$WORK/a2b.cfk" 2>/dev/null; then echo "A imported a bundle addressed to B" >&2; exit 1; fi
+if $ADMIN_B import "$WORK/a2b.cfk" 2>/dev/null; then echo "B accepted the same transfer twice (replay)" >&2; exit 1; fi
 $ADMIN_B peer rm a >/dev/null
 if $ADMIN_B import "$WORK/a2b.cfk" 2>/dev/null; then echo "B accepted an untrusted sender" >&2; exit 1; fi
+
+step "9. an older copy of the vault put back is refused, accept-restore accepts it on purpose"
+cp "$COFFERAK_DATA_DIR/vault.cofferak" "$WORK/old.cofferak"
+printf 'newer' | cofferak set myapp/ROLLBACK --stdin
+cp "$WORK/old.cofferak" "$COFFERAK_DATA_DIR/vault.cofferak.restore"
+mv "$COFFERAK_DATA_DIR/vault.cofferak.restore" "$COFFERAK_DATA_DIR/vault.cofferak"
+[[ "$(cofferak get myapp/ROLLBACK)" == "newer" ]]   # the daemon keeps the last verified state
+if printf x | cofferak set myapp/AFTER --stdin 2>/dev/null; then echo "daemon wrote over an older copy" >&2; exit 1; fi
+RESTORE_OUT="$($ADMIN accept-restore)"   # captured: grep -q in a pipe can SIGPIPE the writer
+grep -q "accepted the restored vault" <<<"$RESTORE_OUT"
 
 echo "== README quickstart: all steps passed ($OS)"

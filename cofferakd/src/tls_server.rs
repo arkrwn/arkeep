@@ -25,7 +25,7 @@ use rustls::server::WebPkiClientVerifier;
 use rustls::{RootCertStore, ServerConfig, ServerConnection, StreamOwned};
 
 use crate::daemon::Daemon;
-use crate::protocol::{decode_request, encode, Response};
+use crate::protocol::{decode_request, Response};
 
 /// What `$COFFERAK_TLS_ADDR` and friends resolved to, if server mode is
 /// enabled. Returned by [`resolve`] so the caller can report a clear
@@ -38,6 +38,12 @@ pub struct TlsServerConfig {
     pub client_ca_path: String,
     /// Maximum concurrent TLS connections (`$COFFERAK_TLS_MAX_CONNECTIONS`).
     pub max_connections: usize,
+    /// PEM certificate revocation lists (`$COFFERAK_TLS_CRL`, comma
+    /// separated). Revoked client certificates fail the handshake.
+    pub crl_paths: Vec<String>,
+    /// Require each token to be used only with its own service's client
+    /// certificate (default on, `$COFFERAK_TLS_BIND_SERVICE=0` turns it off).
+    pub bind_service: bool,
 }
 
 /// Reads the `COFFERAK_TLS_*` environment variables. Returns `Ok(None)` if
@@ -65,12 +71,32 @@ pub fn resolve() -> Result<Option<TlsServerConfig>, String> {
             .ok()
             .as_deref(),
     )?;
+    let crl_paths = std::env::var("COFFERAK_TLS_CRL")
+        .ok()
+        .map(|v| {
+            v.split(',')
+                .map(|p| p.trim().to_string())
+                .filter(|p| !p.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    let bind_service = match std::env::var("COFFERAK_TLS_BIND_SERVICE").as_deref() {
+        Err(_) | Ok("") | Ok("1") => true,
+        Ok("0") => false,
+        Ok(other) => {
+            return Err(format!(
+                "COFFERAK_TLS_BIND_SERVICE must be 0 or 1, not {other:?}"
+            ))
+        }
+    };
     Ok(Some(TlsServerConfig {
         addr,
         cert_path,
         key_path,
         client_ca_path,
         max_connections,
+        crl_paths,
+        bind_service,
     }))
 }
 
@@ -142,7 +168,19 @@ fn build_server_config(config: &TlsServerConfig) -> Result<Arc<ServerConfig>, St
     if roots.is_empty() {
         return Err(format!("no CA certificate found in {ca_path}"));
     }
+    let mut crls = Vec::new();
+    for path in &config.crl_paths {
+        let file = std::fs::File::open(path).map_err(|e| format!("opening CRL {path}: {e}"))?;
+        let found: Vec<_> = rustls_pemfile::crls(&mut BufReader::new(file))
+            .collect::<Result<_, _>>()
+            .map_err(|e| format!("parsing CRL {path}: {e}"))?;
+        if found.is_empty() {
+            return Err(format!("no CRL found in {path}"));
+        }
+        crls.extend(found);
+    }
     let verifier = WebPkiClientVerifier::builder_with_provider(Arc::new(roots), provider.clone())
+        .with_crls(crls)
         .build()
         .map_err(|e| format!("building client cert verifier: {e}"))?;
 
@@ -181,6 +219,7 @@ pub fn start(config: TlsServerConfig, daemon: Arc<Mutex<Daemon>>) {
     );
 
     let limiter = ConnectionLimiter::new(config.max_connections);
+    let bind_service = config.bind_service;
     std::thread::spawn(move || {
         for stream in listener.incoming() {
             let Ok(tcp) = stream else { continue };
@@ -200,7 +239,7 @@ pub fn start(config: TlsServerConfig, daemon: Arc<Mutex<Daemon>>) {
                 let _deadline = tcp.try_clone().ok().map(|s| {
                     crate::protocol::enforce_deadline(s, crate::protocol::CONNECTION_DEADLINE)
                 });
-                handle_tls_connection(tcp, server_config, daemon);
+                handle_tls_connection(tcp, server_config, daemon, bind_service);
             });
         }
     });
@@ -264,6 +303,7 @@ fn handle_tls_connection(
     tcp: TcpStream,
     server_config: Arc<ServerConfig>,
     daemon: Arc<Mutex<Daemon>>,
+    bind_service: bool,
 ) {
     // Network-reachable, unlike the Unix socket — bound how long one
     // stalled/slow client can hold a thread. A client that connects and
@@ -301,18 +341,64 @@ fn handle_tls_connection(
             continue;
         }
 
+        // The handshake has completed by the time a request line was read,
+        // so the verified client certificate is available.
+        let cert_names = if bind_service {
+            Some(
+                reader
+                    .get_ref()
+                    .conn
+                    .peer_certificates()
+                    .and_then(|c| c.first())
+                    .map(|c| certificate_names(c.as_ref()))
+                    .unwrap_or_default(),
+            )
+        } else {
+            None
+        };
         let response = match decode_request(&line) {
-            Ok(req) => daemon
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .handle_request(req),
+            Ok(req) => {
+                let mut d = daemon
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                match &cert_names {
+                    Some(names) => d.handle_request_for_certificate(req, names),
+                    None => d.handle_request(req),
+                }
+            }
             Err(_) => Response::Err("malformed request".to_string()),
         };
 
-        if reader.get_mut().write_all(&encode(&response)).is_err() {
+        let mut out = crate::protocol::respond(response);
+        let sent = reader.get_mut().write_all(&out);
+        zeroize::Zeroize::zeroize(&mut out);
+        zeroize::Zeroize::zeroize(&mut line);
+        if sent.is_err() {
             break;
         }
     }
+}
+
+/// The names a client certificate is issued to: its subject common names
+/// and DNS subject alternative names.
+pub fn certificate_names(der: &[u8]) -> Vec<String> {
+    use x509_parser::prelude::*;
+    let Ok((_, cert)) = X509Certificate::from_der(der) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = cert
+        .subject()
+        .iter_common_name()
+        .filter_map(|cn| cn.as_str().ok().map(str::to_string))
+        .collect();
+    if let Ok(Some(san)) = cert.subject_alternative_name() {
+        for n in &san.value.general_names {
+            if let GeneralName::DNSName(d) = n {
+                names.push(d.to_string());
+            }
+        }
+    }
+    names
 }
 
 #[cfg(test)]
