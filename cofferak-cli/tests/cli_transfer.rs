@@ -263,6 +263,7 @@ fn bundle_moves_every_secret_and_token_to_another_vault() {
         &bytes,
         transfer::ImportKey::Passphrase(PASS),
         false,
+        true,
         false,
     )
     .unwrap();
@@ -282,6 +283,7 @@ fn bundle_moves_every_secret_and_token_to_another_vault() {
         &FakeHostSeal { tag: 2 },
         &bytes,
         transfer::ImportKey::Passphrase(PASS),
+        true,
         true,
         false,
     )
@@ -319,6 +321,7 @@ fn import_dry_run_and_wrong_passphrase_change_nothing() {
         transfer::ImportKey::Passphrase(PASS),
         false,
         true,
+        true,
     )
     .unwrap();
     assert_eq!(r.entries_added, 1);
@@ -335,6 +338,7 @@ fn import_dry_run_and_wrong_passphrase_change_nothing() {
         &bytes,
         transfer::ImportKey::Passphrase(b"not the passphrase!"),
         false,
+        true,
         false,
     )
     .unwrap_err();
@@ -536,6 +540,7 @@ fn peer_transfer_moves_secrets_both_ways_and_reencrypts_under_the_receivers_key(
         &bytes,
         transfer::ImportKey::Identity { from: None },
         false,
+        true,
         false,
     )
     .unwrap();
@@ -564,6 +569,7 @@ fn peer_transfer_moves_secrets_both_ways_and_reencrypts_under_the_receivers_key(
         &back,
         transfer::ImportKey::Identity { from: None },
         false,
+        true,
         false,
     )
     .unwrap();
@@ -607,6 +613,7 @@ fn transfers_from_untrusted_coffers_or_for_other_coffers_are_refused() {
         &forged,
         transfer::ImportKey::Identity { from: None },
         false,
+        true,
         false,
     )
     .unwrap_err();
@@ -632,6 +639,7 @@ fn transfers_from_untrusted_coffers_or_for_other_coffers_are_refused() {
         &for_srv,
         transfer::ImportKey::Identity { from: None },
         false,
+        true,
         false,
     )
     .unwrap_err();
@@ -686,6 +694,7 @@ fn identity_and_peers_survive_dek_rotation() {
         &bytes,
         transfer::ImportKey::Identity { from: None },
         false,
+        true,
         false,
     )
     .unwrap();
@@ -710,4 +719,98 @@ fn peer_names_are_validated_and_self_or_duplicate_trust_refused() {
     assert!(!transfer::run_peer_rm_with_seal(&a, "h", &FakeHostSeal { tag: 1 }, "b").unwrap());
     cleanup(&a);
     cleanup(&b);
+}
+
+#[test]
+fn tokens_in_a_bundle_are_not_imported_unless_asked() {
+    let (src, _) = vault_with("tsrc", 1, &[("app/A", b"1")]);
+    let (dst, _) = vault_with("tdst", 2, &[]);
+    // Remove the destination's own "app" service so the bundle's would be new.
+    let (bytes, _) = transfer::run_export_with_seal(
+        &src,
+        "h",
+        &FakeHostSeal { tag: 1 },
+        PASS,
+        FAST,
+        &transfer::Selection::everything(),
+    )
+    .unwrap();
+    let r = transfer::run_import_with_seal(
+        &dst,
+        "h",
+        &FakeHostSeal { tag: 2 },
+        &bytes,
+        transfer::ImportKey::Passphrase(PASS),
+        false,
+        false,
+        false,
+    )
+    .unwrap();
+    assert!(r.tokens_withheld);
+    assert_eq!((r.services_added, r.services_replaced), (0, 0));
+    assert_eq!(r.tokens_offered.len(), 1);
+    assert_eq!(r.entries_added, 1);
+    cleanup(&src);
+    cleanup(&dst);
+}
+
+#[test]
+fn bundles_with_invalid_paths_or_ids_are_rejected_whole() {
+    use cofferak_core::bundle::{seal_with_iterations, Bundle, BundleEntry};
+    let (dst, _) = vault_with("bad", 2, &[]);
+    for bad in ["", "/etc/x", "a//b", "a/../b", "a/./b", "line\nbreak"] {
+        let b = Bundle {
+            created_at: 0,
+            source_fingerprint: String::new(),
+            entries: vec![BundleEntry {
+                path: bad.into(),
+                value: b"v".to_vec(),
+                version: 1,
+                updated_at: 0,
+            }],
+            services: vec![],
+        };
+        let bytes = seal_with_iterations(&b, PASS, FAST).unwrap();
+        let before = std::fs::read(vault_path(&dst)).unwrap();
+        let e = transfer::run_import_with_seal(
+            &dst,
+            "h",
+            &FakeHostSeal { tag: 2 },
+            &bytes,
+            transfer::ImportKey::Passphrase(PASS),
+            false,
+            false,
+            false,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(e, CliError::Invalid(ref m) if m.contains("invalid path")),
+            "{bad:?}: {e}"
+        );
+        assert_eq!(std::fs::read(vault_path(&dst)).unwrap(), before);
+    }
+    let b = Bundle {
+        created_at: 0,
+        source_fingerprint: String::new(),
+        entries: vec![],
+        services: vec![AccessToken {
+            service_id: "../evil".into(),
+            prefixes: vec!["app".into()],
+            permission: Permission::ReadWrite,
+            secret: [1; 32],
+        }],
+    };
+    let bytes = seal_with_iterations(&b, PASS, FAST).unwrap();
+    assert!(transfer::run_import_with_seal(
+        &dst,
+        "h",
+        &FakeHostSeal { tag: 2 },
+        &bytes,
+        transfer::ImportKey::Passphrase(PASS),
+        false,
+        true,
+        false,
+    )
+    .is_err());
+    cleanup(&dst);
 }

@@ -61,38 +61,73 @@ fn with_admin_lock<T>(data_dir: &Path, f: impl FnOnce() -> T) -> T {
 /// On Linux, admin commands that seal or unseal host keys must run as root
 /// (ADR 0009: `systemd-creds`' host secret is root-only), but the daemon
 /// runs unprivileged as the data directory's owner (e.g. `cofferak`). So after
-/// an admin command, any vault file not owned by the data directory's owner
-/// is `lchown`ed to it. A no-op when the files already match (the common
-/// non-root case); failures are ignored because a non-root caller can't
-/// chown and doesn't need to.
+/// an admin command run as root, the vault files are handed back to the
+/// data directory's owner.
+///
+/// The data directory is writable by that (less trusted) owner, so this must
+/// never be steerable outside it: the directory and its `hosts/` folder are
+/// opened with `O_NOFOLLOW`, ownership is changed with `fchownat(...,
+/// AT_SYMLINK_NOFOLLOW)` relative to those opened directories, and only the
+/// known file names are touched. A symlinked `hosts/` or file is skipped.
 #[cfg(unix)]
 fn match_data_dir_owner(data_dir: &Path) {
-    use std::os::unix::fs::MetadataExt;
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
 
-    let Ok(dir_meta) = std::fs::metadata(data_dir) else {
+    // SAFETY: geteuid has no preconditions.
+    if unsafe { libc::geteuid() } != 0 {
+        return;
+    }
+    let open_dir = |dirfd: libc::c_int, name: &[u8]| -> Option<libc::c_int> {
+        let c = CString::new(name).ok()?;
+        // SAFETY: c is a valid NUL-terminated path; flags refuse symlinks.
+        let fd = unsafe {
+            libc::openat(
+                dirfd,
+                c.as_ptr(),
+                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            )
+        };
+        (fd >= 0).then_some(fd)
+    };
+    let Some(dfd) = open_dir(libc::AT_FDCWD, data_dir.as_os_str().as_bytes()) else {
         return;
     };
-    let (uid, gid) = (dir_meta.uid(), dir_meta.gid());
-    let mut paths = vec![
-        data_dir.join("vault.cofferak"),
-        data_dir.join("vault.cofferak.lock"),
-        data_dir.join("meta.json"),
-        data_dir.join("hosts"),
-    ];
-    if let Ok(entries) = std::fs::read_dir(data_dir.join("hosts")) {
-        paths.extend(entries.flatten().map(|e| e.path()));
+    // SAFETY: zeroed stat is a valid out-parameter for fstat.
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    if unsafe { libc::fstat(dfd, &mut st) } != 0 {
+        unsafe { libc::close(dfd) };
+        return;
     }
-    for path in paths {
-        let Ok(meta) = std::fs::symlink_metadata(&path) else {
-            continue;
-        };
-        if meta.file_type().is_symlink() {
-            continue;
+    let (uid, gid) = (st.st_uid, st.st_gid);
+    let chown_at = |dirfd: libc::c_int, name: &str| {
+        if let Ok(c) = CString::new(name) {
+            // SAFETY: valid C string; AT_SYMLINK_NOFOLLOW never follows a link.
+            unsafe { libc::fchownat(dirfd, c.as_ptr(), uid, gid, libc::AT_SYMLINK_NOFOLLOW) };
         }
-        if meta.uid() != uid || meta.gid() != gid {
-            let _ = std::os::unix::fs::lchown(&path, Some(uid), Some(gid));
-        }
+    };
+    for name in [
+        "vault.cofferak",
+        "vault.cofferak.lock",
+        "meta.json",
+        "hosts",
+    ] {
+        chown_at(dfd, name);
     }
+    if let Some(hfd) = open_dir(dfd, b"hosts") {
+        if let Ok(entries) = std::fs::read_dir(data_dir.join("hosts")) {
+            for e in entries.flatten() {
+                let name = e.file_name();
+                let Some(name) = name.to_str() else { continue };
+                let known = name.ends_with(".seal") || name.ends_with(".anchor");
+                if known && !name.contains('/') && !name.starts_with('.') {
+                    chown_at(hfd, name);
+                }
+            }
+        }
+        unsafe { libc::close(hfd) };
+    }
+    unsafe { libc::close(dfd) };
 }
 
 #[cfg(not(unix))]
@@ -337,9 +372,14 @@ struct ExportEnvArgs {
 #[derive(Args)]
 struct RunArgs {
     /// Prefix whose direct children become environment variables
-    /// (repeatable; later prefixes override earlier ones).
+    /// (repeatable, later prefixes override earlier ones).
     #[arg(long, required = true)]
     prefix: Vec<String>,
+    /// Allow a variable that is refused by default because it changes how
+    /// programs load or run code (e.g. PATH, LD_PRELOAD, NODE_OPTIONS).
+    /// Repeatable.
+    #[arg(long, value_name = "NAME")]
+    allow_env: Vec<String>,
     /// Pass COFFERAK_TOKEN on to the command (default: removed, so the
     /// command gets its secrets but not the token).
     #[arg(long)]
@@ -401,6 +441,11 @@ struct ImportArgs {
     /// (instead of requiring the sender to be a stored peer).
     #[arg(long, value_name = "IDENTITY_FILE")]
     from: Option<PathBuf>,
+    /// Also import the service tokens the bundle carries (each grants
+    /// access to this vault; review them with --dry-run first). Without
+    /// this flag only secrets are imported.
+    #[arg(long)]
+    with_tokens: bool,
     /// Vault data directory. Defaults to `$COFFERAK_DATA_DIR` / the platform data dir.
     #[arg(long, value_name = "DIR")]
     data_dir: Option<PathBuf>,
@@ -609,16 +654,9 @@ fn read_set_value(args: &SetArgs) -> Result<zeroize::Zeroizing<Vec<u8>>, String>
 fn write_get_value(value: &[u8], output: Option<&Path>) -> std::io::Result<()> {
     use std::io::{IsTerminal, Write};
     if let Some(path) = output {
-        let mut opts = std::fs::OpenOptions::new();
-        opts.write(true).create(true).truncate(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            opts.mode(0o600);
-        }
-        let mut f = opts.open(path)?;
-        f.write_all(value)?;
-        return f.sync_all();
+        // A fresh 0600 file renamed into place: never follows a symlink at
+        // `path` and never writes into an existing file someone else made.
+        return cofferak_core::format::write_atomic(path, value);
     }
     let mut out = std::io::stdout().lock();
     out.write_all(value)?;
@@ -992,6 +1030,18 @@ fn cmd_run(args: RunArgs) {
         eprintln!("cofferak: run: skipped {s}");
     }
     let mut cmd = std::process::Command::new(&args.command[0]);
+    let vars: Vec<_> = vars
+        .into_iter()
+        .filter(|(k, _)| {
+            let refused = dangerous_env(k) && !args.allow_env.iter().any(|a| a == k);
+            if refused {
+                eprintln!(
+                    "cofferak: run: refused {k}: it changes how programs load or run code (use --allow-env {k} if you really mean it)"
+                );
+            }
+            !refused
+        })
+        .collect();
     cmd.args(&args.command[1..]);
     if !args.keep_token {
         cmd.env_remove("COFFERAK_TOKEN");
@@ -1216,6 +1266,7 @@ fn cmd_import(args: ImportArgs) {
                 &bytes,
                 key,
                 args.overwrite,
+                args.with_tokens,
                 args.dry_run,
             )
         })
@@ -1247,6 +1298,20 @@ fn cmd_import(args: ImportArgs) {
     }
     for s in &r.services_skipped {
         println!("  = service {s} (exists, kept)");
+    }
+    if args.dry_run || r.tokens_withheld {
+        for (id, prefixes, perm) in &r.tokens_offered {
+            println!(
+                "  token in bundle: service {id}, {perm} on {}",
+                prefixes.join(", ")
+            );
+        }
+    }
+    if r.tokens_withheld {
+        println!(
+            "{} service token(s) in the bundle were NOT imported: each would grant access to this vault; re-run with --with-tokens to import them",
+            r.tokens_offered.len()
+        );
     }
     if !args.dry_run {
         println!("re-encrypted under this coffer's own key; a running daemon picks the changes up automatically");
@@ -1281,7 +1346,7 @@ fn cmd_identity(args: IdentityArgs) {
         id.to_text()
     );
     if let Some(out) = &args.out {
-        std::fs::write(out, &text)
+        cofferak_core::format::write_atomic(out, text.as_bytes())
             .unwrap_or_else(|e| fail("identity", format!("{}: {e}", out.display())));
         give_to_sudo_user(out);
         println!("wrote this coffer's public identity to {}", out.display());
@@ -1367,4 +1432,54 @@ fn cmd_accept_restore(args: DataDirArgs) {
         ),
     }
     println!("restart the daemon so it serves the restored vault");
+}
+
+/// Environment variables `cofferak run` won't set unless explicitly
+/// allowed: anyone able to write the prefix could otherwise make the
+/// started program load or execute their code.
+fn dangerous_env(name: &str) -> bool {
+    const EXACT: &[&str] = &[
+        "PATH",
+        "IFS",
+        "ENV",
+        "BASH_ENV",
+        "SHELLOPTS",
+        "BASHOPTS",
+        "PS4",
+        "PROMPT_COMMAND",
+        "NODE_OPTIONS",
+        "NODE_PATH",
+        "PYTHONSTARTUP",
+        "PYTHONPATH",
+        "PYTHONHOME",
+        "PYTHONINSPECT",
+        "PERL5OPT",
+        "PERL5LIB",
+        "PERLLIB",
+        "RUBYOPT",
+        "RUBYLIB",
+        "JAVA_TOOL_OPTIONS",
+        "_JAVA_OPTIONS",
+        "JDK_JAVA_OPTIONS",
+        "CLASSPATH",
+        "GIT_SSH",
+        "GIT_SSH_COMMAND",
+        "GIT_EXEC_PATH",
+        "GIT_CONFIG_GLOBAL",
+        "SSH_ASKPASS",
+        "SUDO_ASKPASS",
+        "EDITOR",
+        "VISUAL",
+        "PAGER",
+        "LESSOPEN",
+        "HOME",
+        "TMPDIR",
+        "SHELL",
+        "COFFERAK_TOKEN",
+    ];
+    EXACT.contains(&name)
+        || name.starts_with("LD_")
+        || name.starts_with("DYLD_")
+        || name.starts_with("BASH_FUNC_")
+        || name.starts_with("COFFERAK_")
 }

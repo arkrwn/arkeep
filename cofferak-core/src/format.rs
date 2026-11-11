@@ -469,7 +469,9 @@ impl VaultLock {
         #[cfg(unix)]
         {
             use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
+            // Never follow a symlink planted at the lock path: admin commands
+            // run as root, and the data directory belongs to the daemon user.
+            options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
         }
         let file = options.open(std::path::PathBuf::from(lock_name))?;
         file.lock()?;
@@ -863,6 +865,18 @@ mod tests {
             let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
             assert_eq!(mode, 0o600, "vault file must not be group/world readable");
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn vault_lock_refuses_a_symlinked_lock_file() {
+        let dir = temp_path("lock-symlink");
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("target-file");
+        std::os::unix::fs::symlink(&target, dir.join("vault.cofferak.lock")).unwrap();
+        assert!(VaultLock::acquire(&dir.join("vault.cofferak")).is_err());
+        assert!(!target.exists(), "the symlink target must not be created");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

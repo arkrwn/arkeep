@@ -149,6 +149,7 @@ pub fn parse(input: &str) -> Result<Vec<EnvVar>, ParseError> {
                         '"' => Some('"'),
                         '\\' => Some('\\'),
                         '$' => Some('$'),
+                        '`' => Some('`'),
                         _ => None,
                     };
                     if let Some(e) = esc {
@@ -216,6 +217,7 @@ pub fn quote(value: &str) -> String {
             '\\' => s.push_str("\\\\"),
             '"' => s.push_str("\\\""),
             '$' => s.push_str("\\$"),
+            '`' => s.push_str("\\`"),
             '\n' => s.push_str("\\n"),
             '\r' => s.push_str("\\r"),
             '\t' => s.push_str("\\t"),
@@ -344,6 +346,7 @@ UNKNOWN_ESCAPE="keep \q as is"
             "with spaces and = signs",
             "quotes \" and ' and `backticks`",
             "dollar $HOME ${X} and \\ backslash",
+            "backtick `rm -rf /` and $(id)",
             "multi\nline\r\nvalue\twith tab",
             "# looks like a comment",
             "unicode ünïcødé 🔐",
@@ -370,5 +373,25 @@ UNKNOWN_ESCAPE="keep \q as is"
         for bad in ["", "1A", "A-B", "A.B", "A B", "ÄB"] {
             assert!(!is_valid_key(bad), "{bad}");
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sourcing_the_output_in_a_shell_never_runs_commands() {
+        let marker = std::env::temp_dir().join(format!("cfk-dotenv-{}", std::process::id()));
+        let _ = std::fs::remove_file(&marker);
+        let value = format!(
+            "`touch {m}` $(touch {m}) ${{X}} \\ \"",
+            m = marker.display()
+        );
+        let file = format([("V", value.as_str())]);
+        assert!(quote("`x`").contains("\\`"));
+        let out = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!("{file}\nprintf %s \"$V\""))
+            .output()
+            .unwrap();
+        assert!(!marker.exists(), "a command in the value was executed");
+        assert_eq!(String::from_utf8(out.stdout).unwrap(), value);
     }
 }

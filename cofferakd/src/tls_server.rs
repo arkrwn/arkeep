@@ -195,6 +195,11 @@ pub fn start(config: TlsServerConfig, daemon: Arc<Mutex<Daemon>>) {
             let server_config = Arc::clone(&server_config);
             std::thread::spawn(move || {
                 let _slot = slot;
+                // A hard deadline covering the handshake and the request: a
+                // client trickling bytes can't hold a slot indefinitely.
+                let _deadline = tcp.try_clone().ok().map(|s| {
+                    crate::protocol::enforce_deadline(s, crate::protocol::CONNECTION_DEADLINE)
+                });
                 handle_tls_connection(tcp, server_config, daemon);
             });
         }
@@ -297,7 +302,10 @@ fn handle_tls_connection(
         }
 
         let response = match decode_request(&line) {
-            Ok(req) => daemon.lock().unwrap().handle_request(req),
+            Ok(req) => daemon
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .handle_request(req),
             Err(_) => Response::Err("malformed request".to_string()),
         };
 

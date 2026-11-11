@@ -37,8 +37,25 @@ pub fn run_audit_tail(log_path: &Path, n: usize) -> Result<Vec<AuditEntry>, CliE
 /// Format one audit entry as a single line for `audit tail`'s stdout
 /// output: `<ts> <service_id> <action> <path> <result>`.
 pub fn format_audit_entry(entry: &AuditEntry) -> String {
+    // Escape control characters on output too: the log file may predate
+    // the daemon's own escaping, or have been edited.
+    let clean = |s: &str| -> String {
+        s.chars()
+            .flat_map(|c| {
+                if c.is_control() {
+                    c.escape_default().collect::<Vec<_>>()
+                } else {
+                    vec![c]
+                }
+            })
+            .collect()
+    };
     format!(
         "{} {} {} {} {}",
-        entry.ts, entry.service_id, entry.action, entry.path, entry.result
+        entry.ts,
+        clean(&entry.service_id),
+        clean(&entry.action),
+        clean(&entry.path),
+        clean(&entry.result)
     )
 }

@@ -463,7 +463,7 @@ cofferak import-env .env --prefix myapp/env            # from a .env file
 cofferak export-env --prefix myapp/env -o app.env      # back to a .env file
 
 cofferak export -o backup.cfk                          # old machine: encrypted bundle, passphrase-protected
-cofferak import backup.cfk                             # new machine (any OS): secrets and app tokens restored
+cofferak import backup.cfk --with-tokens               # new machine (any OS): secrets and app tokens restored
 
 cofferak export --to server --prefix myapp -o x.cfk    # between paired coffers: no passphrase, only the
 cofferak import x.cfk                                  # server can open it, and it verifies who sent it
@@ -543,7 +543,7 @@ End-to-end scripts (all run in CI on Linux and macOS):
 ./scripts/sdk-smoke.sh            # real CLI + daemon + sealing, all four SDKs, restart durability
 ./scripts/server-mode-smoke.sh    # mutual TLS accept/reject in all four SDKs, downgrade refusals
 ./scripts/bench.sh                # performance numbers (docs/benchmarks.md)
-./scripts/gen-certs.sh DIR NAME [CLIENT...]   # helper: P-384 CA, server and client certs
+./scripts/gen-certs.sh DIR NAME [CLIENT...]   # helper: P-384 CA, server and client certs (REUSE_CA=1 to add certs from an existing CA)
 ```
 
 ## Further reading
