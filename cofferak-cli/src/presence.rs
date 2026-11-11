@@ -7,8 +7,7 @@
 //! the login password before the host key is used. The daemon does not ask:
 //! it only serves requests that carry a valid service token.
 
-#![cfg_attr(not(target_os = "macos"), allow(dead_code, unused_imports))]
-
+#[cfg(target_os = "macos")]
 use cofferak_core::seal::{HostSeal, SealError, SealedBlob};
 
 /// Set to `1` when creating a host (`init --host`, `enroll-host`,
