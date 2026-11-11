@@ -163,7 +163,8 @@ fn run_recover_with_wrong_root_key_returns_bad_root_key_and_leaves_vault_unchang
     let result = run_recover(&dir, &key_path, "host-recovered", &new_seal);
     assert!(matches!(result, Err(CliError::BadRootKey)), "{result:?}");
 
-    let vault_bytes_after = std::fs::read(vault_path(&dir)).expect("vault.cofferak should still exist");
+    let vault_bytes_after =
+        std::fs::read(vault_path(&dir)).expect("vault.cofferak should still exist");
     assert_eq!(
         vault_bytes_before, vault_bytes_after,
         "a failed recovery must not modify vault.cofferak"
@@ -193,7 +194,8 @@ fn run_recover_with_random_garbage_key_bytes_returns_bad_root_key_and_leaves_vau
     let result = run_recover(&dir, &key_path, "host-recovered", &new_seal);
     assert!(matches!(result, Err(CliError::BadRootKey)), "{result:?}");
 
-    let vault_bytes_after = std::fs::read(vault_path(&dir)).expect("vault.cofferak should still exist");
+    let vault_bytes_after =
+        std::fs::read(vault_path(&dir)).expect("vault.cofferak should still exist");
     assert_eq!(
         vault_bytes_before, vault_bytes_after,
         "a failed recovery must not modify vault.cofferak"
@@ -239,7 +241,8 @@ fn run_recover_against_vault_with_no_dek_yet_returns_vault_missing_and_leaves_va
     let result = run_recover(&dir, &key_path, "host-recovered", &seal);
     assert!(matches!(result, Err(CliError::VaultMissing)), "{result:?}");
 
-    let vault_bytes_after = std::fs::read(vault_path(&dir)).expect("vault.cofferak should still exist");
+    let vault_bytes_after =
+        std::fs::read(vault_path(&dir)).expect("vault.cofferak should still exist");
     assert_eq!(
         vault_bytes_before, vault_bytes_after,
         "a failed recovery must not modify vault.cofferak"

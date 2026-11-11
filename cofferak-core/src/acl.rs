@@ -115,10 +115,7 @@ mod tests {
 
     #[test]
     fn path_under_prefix_is_allowed() {
-        assert!(path_allowed(
-            &prefixes(&["myapp"]),
-            "myapp/OPENAI_API_KEY"
-        ));
+        assert!(path_allowed(&prefixes(&["myapp"]), "myapp/OPENAI_API_KEY"));
     }
 
     #[test]

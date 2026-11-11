@@ -79,7 +79,8 @@ fn run_init_root_creates_vault_and_meta_with_zero_hosts() {
 
     let fingerprint = run_init_root(&dir).expect("init --root should succeed on an empty dir");
 
-    let vault = VaultFile::load(&dir.join("vault.cofferak")).expect("vault.cofferak should be readable");
+    let vault =
+        VaultFile::load(&dir.join("vault.cofferak")).expect("vault.cofferak should be readable");
     assert!(vault.hosts.is_empty());
     assert!(vault.root_wrap.is_none());
 
@@ -96,8 +97,8 @@ fn run_init_root_twice_returns_vault_exists_without_overwriting() {
     let dir = temp_dir("root-twice");
 
     run_init_root(&dir).expect("first init --root should succeed");
-    let vault_bytes_before =
-        std::fs::read(dir.join("vault.cofferak")).expect("vault.cofferak should exist after first init");
+    let vault_bytes_before = std::fs::read(dir.join("vault.cofferak"))
+        .expect("vault.cofferak should exist after first init");
 
     let result = run_init_root(&dir);
     assert!(matches!(result, Err(CliError::VaultExists)));
@@ -132,7 +133,8 @@ fn run_init_host_with_seal_enrolls_first_host() {
     let seal = FakeHostSeal;
     run_init_host_with_seal(&dir, "host-a", &seal).expect("first host enrollment should succeed");
 
-    let vault = VaultFile::load(&dir.join("vault.cofferak")).expect("vault.cofferak should be readable");
+    let vault =
+        VaultFile::load(&dir.join("vault.cofferak")).expect("vault.cofferak should be readable");
     assert_eq!(vault.hosts.len(), 1);
     assert!(vault.hosts.contains_key("host-a"));
     assert!(
@@ -158,7 +160,8 @@ fn run_init_host_with_seal_same_host_id_twice_returns_host_already_enrolled() {
     let result = run_init_host_with_seal(&dir, "host-a", &seal);
     assert!(matches!(result, Err(CliError::HostAlreadyEnrolled)));
 
-    let vault = VaultFile::load(&dir.join("vault.cofferak")).expect("vault.cofferak should be readable");
+    let vault =
+        VaultFile::load(&dir.join("vault.cofferak")).expect("vault.cofferak should be readable");
     assert_eq!(
         vault.hosts.len(),
         1,
@@ -184,7 +187,8 @@ fn run_init_host_with_seal_second_distinct_host_returns_root_wrap_already_set() 
     let result = run_init_host_with_seal(&dir, "host-b", &seal);
     assert!(matches!(result, Err(CliError::RootWrapAlreadySet)));
 
-    let vault = VaultFile::load(&dir.join("vault.cofferak")).expect("vault.cofferak should be readable");
+    let vault =
+        VaultFile::load(&dir.join("vault.cofferak")).expect("vault.cofferak should be readable");
     assert_eq!(
         vault.hosts.len(),
         1,

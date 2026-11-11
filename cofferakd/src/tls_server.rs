@@ -49,8 +49,11 @@ pub fn resolve() -> Result<Option<TlsServerConfig>, String> {
     let key_path = std::env::var("COFFERAK_TLS_KEY")
         .map_err(|_| "COFFERAK_TLS_ADDR is set but COFFERAK_TLS_KEY is not".to_string())?;
     let client_ca_path = std::env::var("COFFERAK_TLS_CLIENT_CA").ok();
-    let max_connections =
-        parse_max_connections(std::env::var("COFFERAK_TLS_MAX_CONNECTIONS").ok().as_deref())?;
+    let max_connections = parse_max_connections(
+        std::env::var("COFFERAK_TLS_MAX_CONNECTIONS")
+            .ok()
+            .as_deref(),
+    )?;
     Ok(Some(TlsServerConfig {
         addr,
         cert_path,

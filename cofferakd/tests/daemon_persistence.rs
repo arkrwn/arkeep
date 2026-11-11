@@ -9,7 +9,9 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use cofferak_core::acl::{AccessToken, Permission};
-use cofferak_core::crypto::{decrypt_entry, encrypt_entry, generate_root_keypair, wrap_dek_for_host};
+use cofferak_core::crypto::{
+    decrypt_entry, encrypt_entry, generate_root_keypair, wrap_dek_for_host,
+};
 use cofferak_core::format::VaultFile;
 use cofferakd::audit::AuditLog;
 use cofferakd::daemon::{token_key, Daemon};

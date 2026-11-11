@@ -93,7 +93,8 @@ fn run_enroll_host_with_seal_adds_second_host_with_identical_dek() {
     run_enroll_host_with_seal(&dir, "host-a", "host-b", &seal_a, &seal_b)
         .expect("enrolling a second host should succeed");
 
-    let vault = VaultFile::load(&dir.join("vault.cofferak")).expect("vault.cofferak should be readable");
+    let vault =
+        VaultFile::load(&dir.join("vault.cofferak")).expect("vault.cofferak should be readable");
     assert_eq!(vault.hosts.len(), 2);
     assert!(vault.hosts.contains_key("host-a"));
     assert!(vault.hosts.contains_key("host-b"));
@@ -133,7 +134,8 @@ fn run_enroll_host_with_seal_rejects_already_enrolled_new_host_id() {
     let result = run_enroll_host_with_seal(&dir, "host-a", "host-b", &seal_a, &seal_b);
     assert!(matches!(result, Err(CliError::HostAlreadyEnrolled)));
 
-    let vault = VaultFile::load(&dir.join("vault.cofferak")).expect("vault.cofferak should be readable");
+    let vault =
+        VaultFile::load(&dir.join("vault.cofferak")).expect("vault.cofferak should be readable");
     assert_eq!(
         vault.hosts.len(),
         2,
@@ -177,7 +179,8 @@ fn run_enroll_service_with_seal_stores_retrievable_token() {
     assert_eq!(token.prefixes, prefixes);
     assert_eq!(token.permission, permission);
 
-    let vault = VaultFile::load(&dir.join("vault.cofferak")).expect("vault.cofferak should be readable");
+    let vault =
+        VaultFile::load(&dir.join("vault.cofferak")).expect("vault.cofferak should be readable");
     let stored = vault
         .services
         .get("service-x")

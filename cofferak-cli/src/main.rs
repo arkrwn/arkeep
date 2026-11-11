@@ -10,14 +10,14 @@ use std::path::{Path, PathBuf};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use client::Client;
+use cofferak_core::acl::{validate_id, Permission};
+use cofferak_core::format::VaultLock;
+use cofferak_core::seal::HostSeal;
 use commands::audit::{format_audit_entry, run_audit_tail};
 use commands::enroll::{run_enroll_host_with_seal, run_enroll_service};
 use commands::init::{current_host_seal, run_init_host, run_init_root};
 use commands::recover::run_recover;
 use commands::secrets::{run_get, run_list, run_rm, run_rotate_dek, run_set};
-use cofferak_core::acl::{validate_id, Permission};
-use cofferak_core::format::VaultLock;
-use cofferak_core::seal::HostSeal;
 
 /// Exit with a usage error unless `id` is a valid host/service id
 /// (`acl::validate_id`): ids become file paths and OS credential names.

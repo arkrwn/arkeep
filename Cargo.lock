@@ -179,6 +179,54 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 
 [[package]]
+name = "cofferak-cli"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "clap",
+ "cofferak-core",
+ "cofferakd",
+ "rand_core",
+]
+
+[[package]]
+name = "cofferak-core"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm-siv",
+ "bincode",
+ "rand_core",
+ "security-framework",
+ "serde",
+ "serde_json",
+ "sha2",
+ "x25519-dalek",
+ "zeroize",
+]
+
+[[package]]
+name = "cofferak-sdk"
+version = "0.1.0"
+dependencies = [
+ "rustls",
+ "rustls-pemfile",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "cofferakd"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "cofferak-core",
+ "rustls",
+ "rustls-pemfile",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "colorchoice"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -336,54 +384,6 @@ name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
-
-[[package]]
-name = "cofferak-cli"
-version = "0.1.0"
-dependencies = [
- "bincode",
- "clap",
- "cofferak-core",
- "cofferakd",
- "rand_core",
-]
-
-[[package]]
-name = "cofferak-core"
-version = "0.1.0"
-dependencies = [
- "aes-gcm-siv",
- "bincode",
- "rand_core",
- "security-framework",
- "serde",
- "serde_json",
- "sha2",
- "x25519-dalek",
- "zeroize",
-]
-
-[[package]]
-name = "cofferak-sdk"
-version = "0.1.0"
-dependencies = [
- "rustls",
- "rustls-pemfile",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "cofferakd"
-version = "0.1.0"
-dependencies = [
- "bincode",
- "cofferak-core",
- "rustls",
- "rustls-pemfile",
- "serde",
- "serde_json",
-]
 
 [[package]]
 name = "once_cell"
