@@ -21,6 +21,12 @@ Does not protect against: root on an already-unsealed live host reading
 process memory, or loss/disclosure of the creator's offline root private
 key.
 
+Integrity (ADR 0015): the whole vault carries an HMAC-SHA384 keyed from
+the DEK and a generation counter, and each host keeps an authenticated
+anchor of the newest generation it has seen, so edits made without the DEK
+and older copies are refused. Limit: replacing both the vault and the
+anchor with an older matching pair is only caught by a running daemon.
+
 Not secret by design: secret *paths* (e.g. `myapp/DB_PASSWORD`), service
 and host ids, value sizes and timestamps. They are the vault's index and
 appear in `vault.cofferak`, `meta.json` and the audit log; only values

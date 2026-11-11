@@ -157,6 +157,11 @@ pub fn run_rotate_dek(
         })
         .ok_or(CliError::HostNotFound)?;
     let old_dek = KeyBytes::new(old_dek);
+    for (host_id, _) in &host_keys {
+        if vault.hosts.contains_key(host_id) {
+            super::integrity::check(data_dir, host_id, &vault, &old_dek)?;
+        }
+    }
 
     let new_dek = KeyBytes::new(random_key());
 
@@ -210,14 +215,10 @@ pub fn run_rotate_dek(
         );
     }
 
-    // Atomic rewrite: see module doc comment. Serialize to a temp file in
-    // the same directory as `vault.cofferak` (so the rename below is on the
-    // same filesystem), then rename over the real path.
-    let bytes = bincode::serialize(&vault)
-        .map_err(|e| CliError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
-    let tmp_path = data_dir.join("vault.cofferak.tmp");
-    std::fs::write(&tmp_path, &bytes)?;
-    std::fs::rename(&tmp_path, &vpath)?;
+    // Sealed under the new DEK, atomic write; every rotated host's anchor
+    // is rewritten under the new DEK too.
+    let hosts: Vec<&str> = host_keys.iter().map(|(h, _)| h.as_str()).collect();
+    super::integrity::commit(data_dir, &hosts, &mut vault, &new_dek)?;
 
     Ok(())
 }

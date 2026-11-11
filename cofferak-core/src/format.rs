@@ -38,6 +38,34 @@ pub enum FormatError {
     UnsupportedVersion(u16),
 }
 
+/// The vault file failed an integrity check (ADR 0015).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IntegrityError {
+    /// The file was edited outside cofferak: its integrity code doesn't
+    /// match (entries, services, hosts or peers added, removed or swapped).
+    Tampered,
+    /// The file is an older copy than the newest one this host has seen.
+    Rollback { found: u64, expected_at_least: u64 },
+}
+
+impl fmt::Display for IntegrityError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            IntegrityError::Tampered => write!(
+                f,
+                "vault.cofferak was modified outside cofferak (integrity check failed)"
+            ),
+            IntegrityError::Rollback { found, expected_at_least } => write!(
+                f,
+                "vault.cofferak is an older copy (generation {found}, this host has seen {expected_at_least}); \
+                 if you restored a backup on purpose, run `cofferak accept-restore`"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for IntegrityError {}
+
 impl fmt::Display for FormatError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -97,6 +125,26 @@ pub struct VaultFile {
     /// under the DEK (associated data `cofferak/v2/peer\0<name>`) so an
     /// attacker who can write the file can't add a peer.
     pub peers: BTreeMap<String, EncryptedEntry>,
+    /// Incremented on every sealed write; compared with this host's
+    /// anchor to detect an older copy being put back (ADR 0015).
+    pub generation: u64,
+    /// HMAC-SHA384 over the whole vault (with this field empty), keyed from
+    /// the DEK. Empty until the first sealed write.
+    pub mac: Vec<u8>,
+}
+
+/// Vault format version 3 (before generation and integrity code).
+#[derive(Deserialize)]
+struct VaultFileV3 {
+    _version: u16,
+    created_at: i64,
+    root_pubkey: RootPublicKey,
+    root_wrap: Option<DekWrapRoot>,
+    hosts: BTreeMap<String, DekWrapHost>,
+    services: BTreeMap<String, EncryptedEntry>,
+    entries: BTreeMap<String, VaultEntry>,
+    identity: Option<EncryptedEntry>,
+    peers: BTreeMap<String, EncryptedEntry>,
 }
 
 /// Vault format version 2 (before identities and peers), read and
@@ -126,7 +174,63 @@ impl VaultFile {
             entries: BTreeMap::new(),
             identity: None,
             peers: BTreeMap::new(),
+            generation: 0,
+            mac: Vec::new(),
         }
+    }
+
+    fn mac_key(dek: &[u8; 32]) -> aws_lc_rs::hmac::Key {
+        let mut k = zeroize::Zeroizing::new([0u8; 48]);
+        hkdf::Hkdf::<sha2::Sha384>::new(None, dek)
+            .expand(b"cofferak/v2/vault-mac", &mut k[..])
+            .expect("48 bytes is a valid HKDF-SHA384 length");
+        aws_lc_rs::hmac::Key::new(aws_lc_rs::hmac::HMAC_SHA384, &k[..])
+    }
+
+    fn mac_input(&self) -> Vec<u8> {
+        let mut copy = self.clone();
+        copy.mac = Vec::new();
+        bincode_options()
+            .serialize(&copy)
+            .expect("an in-memory vault always encodes")
+    }
+
+    /// Prepare for a write: bump `generation` and recompute the integrity
+    /// code under `dek`. Call right before [`save`](Self::save) whenever
+    /// the DEK is available (every write except `init --root`).
+    pub fn seal(&mut self, dek: &[u8; 32]) {
+        self.generation = self.generation.saturating_add(1);
+        self.mac = Vec::new();
+        let tag = aws_lc_rs::hmac::sign(&Self::mac_key(dek), &self.mac_input());
+        self.mac = tag.as_ref().to_vec();
+    }
+
+    /// Check the integrity code under `dek`, and the generation against
+    /// `anchor` (the newest generation this host has seen, if any).
+    ///
+    /// A vault that has never been sealed (generation 0, no code: created
+    /// by `init --root` or upgraded from an older format) is accepted only
+    /// while the host has no anchor above 0, so stripping the code from a
+    /// sealed vault is caught.
+    pub fn verify(&self, dek: &[u8; 32], anchor: Option<u64>) -> Result<(), IntegrityError> {
+        if self.mac.is_empty() {
+            if self.generation != 0 {
+                return Err(IntegrityError::Tampered);
+            }
+        } else if aws_lc_rs::hmac::verify(&Self::mac_key(dek), &self.mac_input(), &self.mac)
+            .is_err()
+        {
+            return Err(IntegrityError::Tampered);
+        }
+        if let Some(seen) = anchor {
+            if self.generation < seen {
+                return Err(IntegrityError::Rollback {
+                    found: self.generation,
+                    expected_at_least: seen,
+                });
+            }
+        }
+        Ok(())
     }
 
     /// Serialize this vault with `bincode` and write it to `path`
@@ -162,6 +266,24 @@ impl VaultFile {
             VAULT_FORMAT_VERSION => bincode_options()
                 .deserialize(&bytes)
                 .map_err(|_| FormatError::Corrupt),
+            3 => {
+                let v3: VaultFileV3 = bincode_options()
+                    .deserialize(&bytes)
+                    .map_err(|_| FormatError::Corrupt)?;
+                Ok(VaultFile {
+                    version: VAULT_FORMAT_VERSION,
+                    created_at: v3.created_at,
+                    root_pubkey: v3.root_pubkey,
+                    root_wrap: v3.root_wrap,
+                    hosts: v3.hosts,
+                    services: v3.services,
+                    entries: v3.entries,
+                    identity: v3.identity,
+                    peers: v3.peers,
+                    generation: 0,
+                    mac: Vec::new(),
+                })
+            }
             // Format 2 has the same layout minus the identity/peers fields:
             // upgrade it in memory; the next save writes format 3.
             2 => {
@@ -178,6 +300,8 @@ impl VaultFile {
                     entries: v2.entries,
                     identity: None,
                     peers: BTreeMap::new(),
+                    generation: 0,
+                    mac: Vec::new(),
                 })
             }
             other => Err(FormatError::UnsupportedVersion(other)),
@@ -188,8 +312,74 @@ impl VaultFile {
 /// The `vault.cofferak` format version this build writes. Version 2 is
 /// crypto format v2 (ADR 0011): hybrid post-quantum root wrap and
 /// context-bound ciphertexts; version 3 adds the coffer identity and
-/// trusted peers (ADR 0013). Version 2 files are read and upgraded.
-pub const VAULT_FORMAT_VERSION: u16 = 3;
+/// trusted peers (ADR 0013), version 4 adds the generation counter and
+/// whole-file integrity code (ADR 0015). Versions 2 and 3 are read and
+/// upgraded.
+pub const VAULT_FORMAT_VERSION: u16 = 4;
+
+/// Path of `host_id`'s anchor file: the newest vault generation this host
+/// has written or accepted (ADR 0015).
+pub fn anchor_path(data_dir: &Path, host_id: &str) -> std::path::PathBuf {
+    data_dir.join("hosts").join(format!("{host_id}.anchor"))
+}
+
+fn anchor_tag(dek: &[u8; 32], host_id: &str, generation: u64) -> aws_lc_rs::hmac::Tag {
+    let mut k = zeroize::Zeroizing::new([0u8; 48]);
+    hkdf::Hkdf::<sha2::Sha384>::new(None, dek)
+        .expand(b"cofferak/v2/anchor", &mut k[..])
+        .expect("valid length");
+    let key = aws_lc_rs::hmac::Key::new(aws_lc_rs::hmac::HMAC_SHA384, &k[..]);
+    let mut msg = host_id.as_bytes().to_vec();
+    msg.push(0);
+    msg.extend_from_slice(&generation.to_le_bytes());
+    aws_lc_rs::hmac::sign(&key, &msg)
+}
+
+/// Read `host_id`'s anchor. `Ok(None)` if there is none yet; an anchor
+/// whose code doesn't verify under `dek` is reported as tampering.
+pub fn read_anchor(
+    data_dir: &Path,
+    host_id: &str,
+    dek: &[u8; 32],
+) -> Result<Option<u64>, IntegrityError> {
+    let bytes = match std::fs::read(anchor_path(data_dir, host_id)) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err(IntegrityError::Tampered),
+    };
+    if bytes.len() != 8 + 48 {
+        return Err(IntegrityError::Tampered);
+    }
+    let generation = u64::from_le_bytes(bytes[..8].try_into().expect("8 bytes"));
+    let tag = anchor_tag(dek, host_id, generation);
+    if tag.as_ref() != &bytes[8..] {
+        return Err(IntegrityError::Tampered);
+    }
+    Ok(Some(generation))
+}
+
+/// Record `generation` as `host_id`'s anchor (atomic write, mode 0600).
+pub fn write_anchor(
+    data_dir: &Path,
+    host_id: &str,
+    dek: &[u8; 32],
+    generation: u64,
+) -> std::io::Result<()> {
+    let hosts = data_dir.join("hosts");
+    if !hosts.is_dir() {
+        let mut b = std::fs::DirBuilder::new();
+        b.recursive(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            b.mode(0o700);
+        }
+        b.create(&hosts)?;
+    }
+    let mut bytes = generation.to_le_bytes().to_vec();
+    bytes.extend_from_slice(anchor_tag(dek, host_id, generation).as_ref());
+    write_atomic(&anchor_path(data_dir, host_id), &bytes)
+}
 
 /// Upper bound on a `vault.cofferak` file, enforced on both encode and decode.
 pub const MAX_VAULT_BYTES: u64 = 256 * 1024 * 1024;
@@ -490,6 +680,120 @@ mod tests {
         assert_eq!(loaded.entries, v.entries);
         assert_eq!(loaded.hosts, v.hosts);
         assert!(loaded.identity.is_none() && loaded.peers.is_empty());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    const DEK: [u8; 32] = [0x7Au8; 32];
+
+    #[test]
+    fn sealed_vault_verifies_and_any_edit_is_detected() {
+        let mut v = sample_vault_with_root_wrap_some();
+        v.seal(&DEK);
+        assert_eq!(v.generation, 1);
+        assert_eq!(v.verify(&DEK, Some(1)), Ok(()));
+
+        let mut removed = v.clone();
+        removed.entries.clear();
+        assert_eq!(removed.verify(&DEK, None), Err(IntegrityError::Tampered));
+
+        let mut swapped = v.clone();
+        swapped.services.clear();
+        assert_eq!(swapped.verify(&DEK, None), Err(IntegrityError::Tampered));
+
+        let mut gen_edit = v.clone();
+        gen_edit.generation = 99;
+        assert_eq!(gen_edit.verify(&DEK, None), Err(IntegrityError::Tampered));
+
+        // Stripping the code from a sealed vault is caught too.
+        let mut stripped = v.clone();
+        stripped.mac.clear();
+        assert_eq!(stripped.verify(&DEK, None), Err(IntegrityError::Tampered));
+        stripped.generation = 0;
+        assert!(matches!(
+            stripped.verify(&DEK, Some(1)),
+            Err(IntegrityError::Rollback { found: 0, .. })
+        ));
+
+        // A different DEK can't vouch for it.
+        assert_eq!(v.verify(&[1u8; 32], None), Err(IntegrityError::Tampered));
+    }
+
+    #[test]
+    fn older_copies_are_reported_as_rollback() {
+        let mut v = sample_vault_with_root_wrap_some();
+        v.seal(&DEK);
+        let old = v.clone();
+        v.seal(&DEK);
+        v.seal(&DEK);
+        assert_eq!(v.verify(&DEK, Some(3)), Ok(()));
+        assert_eq!(
+            old.verify(&DEK, Some(3)),
+            Err(IntegrityError::Rollback {
+                found: 1,
+                expected_at_least: 3
+            })
+        );
+        // A fresh, never-sealed vault is fine on a host with no anchor yet.
+        let fresh = sample_vault_with_root_wrap_none();
+        assert_eq!(fresh.verify(&DEK, None), Ok(()));
+    }
+
+    #[test]
+    fn anchors_round_trip_and_reject_edits() {
+        let dir = temp_path("anchor-dir");
+        std::fs::create_dir_all(dir.join("hosts")).unwrap();
+        assert_eq!(read_anchor(&dir, "h", &DEK), Ok(None));
+        write_anchor(&dir, "h", &DEK, 42).unwrap();
+        assert_eq!(read_anchor(&dir, "h", &DEK), Ok(Some(42)));
+        // Lowering the number without the key is detected.
+        let mut bytes = std::fs::read(anchor_path(&dir, "h")).unwrap();
+        bytes[..8].copy_from_slice(&1u64.to_le_bytes());
+        std::fs::write(anchor_path(&dir, "h"), &bytes).unwrap();
+        assert_eq!(read_anchor(&dir, "h", &DEK), Err(IntegrityError::Tampered));
+        // An anchor is bound to its host id.
+        write_anchor(&dir, "h", &DEK, 5).unwrap();
+        std::fs::copy(anchor_path(&dir, "h"), anchor_path(&dir, "other")).unwrap();
+        assert_eq!(
+            read_anchor(&dir, "other", &DEK),
+            Err(IntegrityError::Tampered)
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn version_3_vaults_load_and_upgrade() {
+        #[derive(Serialize)]
+        struct V3<'a> {
+            version: u16,
+            created_at: i64,
+            root_pubkey: &'a RootPublicKey,
+            root_wrap: &'a Option<DekWrapRoot>,
+            hosts: &'a BTreeMap<String, DekWrapHost>,
+            services: &'a BTreeMap<String, EncryptedEntry>,
+            entries: &'a BTreeMap<String, VaultEntry>,
+            identity: &'a Option<EncryptedEntry>,
+            peers: &'a BTreeMap<String, EncryptedEntry>,
+        }
+        let v = sample_vault_with_root_wrap_some();
+        let bytes = bincode_options()
+            .serialize(&V3 {
+                version: 3,
+                created_at: v.created_at,
+                root_pubkey: &v.root_pubkey,
+                root_wrap: &v.root_wrap,
+                hosts: &v.hosts,
+                services: &v.services,
+                entries: &v.entries,
+                identity: &v.identity,
+                peers: &v.peers,
+            })
+            .unwrap();
+        let path = temp_path("v3.cofferak");
+        std::fs::write(&path, bytes).unwrap();
+        let loaded = VaultFile::load(&path).unwrap();
+        assert_eq!(loaded.version, VAULT_FORMAT_VERSION);
+        assert_eq!((loaded.generation, loaded.mac.len()), (0, 0));
+        assert_eq!(loaded.entries, v.entries);
         let _ = std::fs::remove_file(&path);
     }
 

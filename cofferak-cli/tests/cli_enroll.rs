@@ -11,9 +11,12 @@
 #[allow(dead_code)] // each test binary uses only a subset of these shared source modules
 #[path = "../src/commands/enroll.rs"]
 mod enroll;
-#[allow(dead_code)] // each test binary uses only a subset of these shared source modules
+#[allow(dead_code)]
 #[path = "../src/commands/init.rs"]
 mod init;
+#[allow(dead_code)] // each test binary uses only a subset of these shared source modules
+#[path = "../src/commands/integrity.rs"]
+mod integrity;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
