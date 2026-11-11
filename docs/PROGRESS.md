@@ -75,6 +75,10 @@ from a command or test that was actually run. States: `todo`, `doing`,
   trusts the binary that created the host-key item by code identity, so
   after installing a new `cofferak` build macOS may show one "allow"
   prompt (choose Always Allow). Reads are silent otherwise (ADR 0007).
+- **Not yet a Vault replacement for Kubernetes clusters.** No shared
+  state across nodes, no ServiceAccount authentication, no pod delivery,
+  no HA, no dynamic secrets, no independent audit. The plan is in
+  [ADR 0014](adr/0014-kubernetes-and-fleet-roadmap.md).
 - One `cofferakd` process serves exactly one host (`$COFFERAK_HOST_ID`); it
   does not load-balance or proxy across multiple enrolled hosts.
   `enroll-host` correctly re-wraps the DEK for additional hosts on disk;
