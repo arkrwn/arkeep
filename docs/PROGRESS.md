@@ -24,7 +24,7 @@ from a command or test that was actually run. States: `todo`, `doing`,
 | End-to-end lifecycle test | done | Real `Daemon`/`UnixListener` socket round-trip (not an in-process shortcut) for init → enroll → set/get → deny → audit |
 | CI (fmt, clippy, test on ubuntu + macos, on every push and PR) | done | `.github/workflows/ci.yml`; `cargo fmt --all -- --check` / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo test --workspace` all clean in a fresh clone |
 | Packaging (README, LICENSE pack, recovery runbook) | done | Apache-2.0 + NOTICE/TRADEMARK/CLA; fresh `git clone` → `cargo build --workspace --release` → `cargo test --workspace` passed with no other context |
-| Rename `cofferak` → `cofferak` | done | Full workspace rebuild + `cargo test --workspace` + `cargo clippy -D warnings` green after the rename; binary name is `cofferak` |
+| Project name `cofferak` | done | Full workspace rebuild + `cargo test --workspace` + `cargo clippy -D warnings` green; binary names are `cofferak` (CLI) and `cofferakd` (daemon) |
 | Real per-host DEK reconstruction + token loading in `cofferakd` (ADR 0006) | done | Was a real, previously-unexercised bug (daemon denied every request, always) — fixed; `./scripts/sdk-smoke.sh` (full mode, Linux) now runs the real `cofferak`/`cofferakd` binaries end to end and passes |
 | SDK: Rust (`sdk/rust/cofferak-sdk`) | done | `sdk-smoke` passes locally and is wired into CI |
 | SDK: Go (`sdk/go/cofferak`) | done | Same; required an explicit `[]int` conversion workaround for `encoding/json`'s base64 default on `[]byte` — see ADR 0005/`docs/SPEC.md` §6 |

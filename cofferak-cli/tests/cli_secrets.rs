@@ -464,7 +464,8 @@ fn run_rotate_dek_with_an_unenrolled_host_fails_without_panicking_or_rotating() 
         "rotating against an unenrolled host must fail, not succeed"
     );
 
-    let vault_bytes_after = std::fs::read(vault_path(&dir)).expect("vault.cofferak should still exist");
+    let vault_bytes_after =
+        std::fs::read(vault_path(&dir)).expect("vault.cofferak should still exist");
     assert_eq!(
         vault_bytes_before, vault_bytes_after,
         "a failed rotation must not modify vault.cofferak"
