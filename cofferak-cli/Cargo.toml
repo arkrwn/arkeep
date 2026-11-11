@@ -4,7 +4,9 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "cofferak command-line interface"
+description = "cofferak admin CLI: vault setup, host and service enrollment, secrets, DEK rotation, recovery and audit"
+repository.workspace = true
+homepage.workspace = true
 
 [[bin]]
 name = "cofferak"
