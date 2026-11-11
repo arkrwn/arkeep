@@ -89,6 +89,54 @@ dependencies = [
 ]
 
 [[package]]
+name = "arkeep-cli"
+version = "0.1.0"
+dependencies = [
+ "arkeep-core",
+ "arkeepd",
+ "bincode",
+ "clap",
+ "rand_core",
+]
+
+[[package]]
+name = "arkeep-core"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm-siv",
+ "bincode",
+ "rand_core",
+ "security-framework",
+ "serde",
+ "serde_json",
+ "sha2",
+ "x25519-dalek",
+ "zeroize",
+]
+
+[[package]]
+name = "arkeep-sdk"
+version = "0.1.0"
+dependencies = [
+ "rustls",
+ "rustls-pemfile",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "arkeepd"
+version = "0.1.0"
+dependencies = [
+ "arkeep-core",
+ "bincode",
+ "rustls",
+ "rustls-pemfile",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "bincode"
 version = "1.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -336,54 +384,6 @@ name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
-
-[[package]]
-name = "mikavt-cli"
-version = "0.1.0"
-dependencies = [
- "bincode",
- "clap",
- "mikavt-core",
- "mikavtd",
- "rand_core",
-]
-
-[[package]]
-name = "mikavt-core"
-version = "0.1.0"
-dependencies = [
- "aes-gcm-siv",
- "bincode",
- "rand_core",
- "security-framework",
- "serde",
- "serde_json",
- "sha2",
- "x25519-dalek",
- "zeroize",
-]
-
-[[package]]
-name = "mikavt-sdk"
-version = "0.1.0"
-dependencies = [
- "rustls",
- "rustls-pemfile",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "mikavtd"
-version = "0.1.0"
-dependencies = [
- "bincode",
- "mikavt-core",
- "rustls",
- "rustls-pemfile",
- "serde",
- "serde_json",
-]
 
 [[package]]
 name = "once_cell"

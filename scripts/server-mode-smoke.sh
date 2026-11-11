@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Proves server mode (ADR 0008) for real, for every SDK that implements
 # it: generates a real self-signed CA + server certificate with
-# openssl, starts mikavtd/examples/dev-daemon.rs listening on both the
+# openssl, starts arkeepd/examples/dev-daemon.rs listening on both the
 # Unix socket AND TLS/TCP, then runs each SDK's TLS smoke test against
 # the real TLS listener over a real TLS handshake — including a battery
 # of adversarial cases (wrong hostname, no client cert, a client cert
@@ -13,10 +13,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 REPO_ROOT="$(pwd)"
 WORKDIR="$(mktemp -d)"
-SOCKET="$WORKDIR/mikavtd.sock"
+SOCKET="$WORKDIR/arkeepd.sock"
 TLS_PORT=18943
 TLS_ADDR="127.0.0.1:$TLS_PORT"
-SERVER_NAME="mikavt-smoke-test"
+SERVER_NAME="arkeep-smoke-test"
 DAEMON_PID=""
 
 # Languages whose SDK supports the TLS/TCP transport today (ADR 0008 /
@@ -35,24 +35,24 @@ cleanup() {
 trap cleanup EXIT
 
 # Runs one language's TLS smoke example with the given TLS parameters.
-# Every SDK reads the same env var names (MIKAVT_TLS_ADDR,
-# MIKAVT_TLS_SERVER_NAME, MIKAVT_TLS_CA, MIKAVT_TLS_CLIENT_CERT,
-# MIKAVT_TLS_CLIENT_KEY, MIKAVT_TOKEN) — that consistency is what lets
+# Every SDK reads the same env var names (ARKEEP_TLS_ADDR,
+# ARKEEP_TLS_SERVER_NAME, ARKEEP_TLS_CA, ARKEEP_TLS_CLIENT_CERT,
+# ARKEEP_TLS_CLIENT_KEY, ARKEEP_TOKEN) — that consistency is what lets
 # this one function drive all four without per-language special-casing
 # beyond which binary/interpreter actually runs.
 run_tls_smoke() {
   local lang="$1" allowed="$2" denied="$3" server_name="$4" client_cert="${5:-}" client_key="${6:-}"
-  export MIKAVT_TLS_ADDR="$TLS_ADDR"
-  export MIKAVT_TLS_SERVER_NAME="$server_name"
-  export MIKAVT_TLS_CA="$WORKDIR/ca.pem"
-  export MIKAVT_TLS_CLIENT_CERT="$client_cert"
-  export MIKAVT_TLS_CLIENT_KEY="$client_key"
-  export MIKAVT_TOKEN="$TOKEN"
+  export ARKEEP_TLS_ADDR="$TLS_ADDR"
+  export ARKEEP_TLS_SERVER_NAME="$server_name"
+  export ARKEEP_TLS_CA="$WORKDIR/ca.pem"
+  export ARKEEP_TLS_CLIENT_CERT="$client_cert"
+  export ARKEEP_TLS_CLIENT_KEY="$client_key"
+  export ARKEEP_TOKEN="$TOKEN"
   case "$lang" in
-    rust) cargo run --release --example smoke_tls -p mikavt-sdk -- "$allowed" "$denied" ;;
-    go) (cd sdk/go/mikavt && go run ./examples/smoke_tls "$allowed" "$denied") ;;
-    python) python3 sdk/python/mikavt_sdk/examples/smoke_tls.py "$allowed" "$denied" ;;
-    javascript) node sdk/javascript/mikavt-sdk/examples/smoke_tls.js "$allowed" "$denied" ;;
+    rust) cargo run --release --example smoke_tls -p arkeep-sdk -- "$allowed" "$denied" ;;
+    go) (cd sdk/go/arkeep && go run ./examples/smoke_tls "$allowed" "$denied") ;;
+    python) python3 sdk/python/arkeep_sdk/examples/smoke_tls.py "$allowed" "$denied" ;;
+    javascript) node sdk/javascript/arkeep-sdk/examples/smoke_tls.js "$allowed" "$denied" ;;
     *) echo "run_tls_smoke: unknown language '$lang'" >&2; return 1 ;;
   esac
 }
@@ -76,7 +76,7 @@ expect_tls_rejected() {
 
 echo "== generating a self-signed CA + server cert for $SERVER_NAME =="
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
-  -subj "/CN=mikavt-smoke-ca" \
+  -subj "/CN=arkeep-smoke-ca" \
   -keyout "$WORKDIR/ca.key" -out "$WORKDIR/ca.pem" 2>/dev/null
 
 openssl req -newkey rsa:2048 -nodes \
@@ -99,12 +99,12 @@ TOKEN="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
 DEV_DAEMON="$REPO_ROOT/target/release/examples/dev-daemon"
 
 echo "== starting the dev-only daemon with server mode (TLS) enabled =="
-MIKAVT_SOCKET="$SOCKET" \
-MIKAVT_TOKEN_SECRET_HEX="$TOKEN" \
-MIKAVT_TOKEN_PREFIX="sdk-smoke" \
-MIKAVT_TLS_ADDR="$TLS_ADDR" \
-MIKAVT_TLS_CERT="$WORKDIR/server.pem" \
-MIKAVT_TLS_KEY="$WORKDIR/server.key" \
+ARKEEP_SOCKET="$SOCKET" \
+ARKEEP_TOKEN_SECRET_HEX="$TOKEN" \
+ARKEEP_TOKEN_PREFIX="sdk-smoke" \
+ARKEEP_TLS_ADDR="$TLS_ADDR" \
+ARKEEP_TLS_CERT="$WORKDIR/server.pem" \
+ARKEEP_TLS_KEY="$WORKDIR/server.key" \
   "$DEV_DAEMON" &
 DAEMON_PID=$!
 
@@ -138,7 +138,7 @@ DAEMON_PID=""
 
 echo "== generating a client cert signed by the same CA, for mutual TLS =="
 openssl req -newkey rsa:2048 -nodes \
-  -subj "/CN=mikavt-smoke-client" \
+  -subj "/CN=arkeep-smoke-client" \
   -keyout "$WORKDIR/client.key" -out "$WORKDIR/client.csr" 2>/dev/null
 openssl x509 -req -in "$WORKDIR/client.csr" \
   -CA "$WORKDIR/ca.pem" -CAkey "$WORKDIR/ca.key" -CAcreateserial \
@@ -156,13 +156,13 @@ openssl x509 -req -in "$WORKDIR/rogue-client.csr" \
   -days 1 -out "$WORKDIR/rogue-client.pem" 2>/dev/null
 
 echo "== starting the dev-only daemon again, this time requiring client certs (mTLS) =="
-MIKAVT_SOCKET="$SOCKET" \
-MIKAVT_TOKEN_SECRET_HEX="$TOKEN" \
-MIKAVT_TOKEN_PREFIX="sdk-smoke" \
-MIKAVT_TLS_ADDR="$TLS_ADDR" \
-MIKAVT_TLS_CERT="$WORKDIR/server.pem" \
-MIKAVT_TLS_KEY="$WORKDIR/server.key" \
-MIKAVT_TLS_CLIENT_CA="$WORKDIR/ca.pem" \
+ARKEEP_SOCKET="$SOCKET" \
+ARKEEP_TOKEN_SECRET_HEX="$TOKEN" \
+ARKEEP_TOKEN_PREFIX="sdk-smoke" \
+ARKEEP_TLS_ADDR="$TLS_ADDR" \
+ARKEEP_TLS_CERT="$WORKDIR/server.pem" \
+ARKEEP_TLS_KEY="$WORKDIR/server.key" \
+ARKEEP_TLS_CLIENT_CA="$WORKDIR/ca.pem" \
   "$DEV_DAEMON" &
 DAEMON_PID=$!
 for _ in $(seq 1 50); do

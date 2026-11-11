@@ -1,0 +1,21 @@
+[package]
+name = "arkeep-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "arkeep command-line interface"
+
+[[bin]]
+name = "arkeep"
+path = "src/main.rs"
+
+[dependencies]
+arkeep-core = { path = "../arkeep-core" }
+# `arkeepd` now has a library target (see `arkeepd/src/lib.rs`), so
+# `audit.rs`'s `run_audit_tail` depends on `arkeepd::audit::{AuditLog,
+# AuditEntry}` directly rather than pulling the source in via `#[path]`.
+arkeepd = { path = "../arkeepd" }
+clap = { version = "4", features = ["derive", "env"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+bincode = "1"

@@ -2,11 +2,11 @@
 
 Status: accepted
 
-A production-readiness review found that `mikavtd` applied `set`/`rm`
+A production-readiness review found that `arkeepd` applied `set`/`rm`
 only to its in-memory map. `Daemon::save_to` existed but nothing called
 it, so every secret written through the daemon (Unix socket or server
 mode) was silently lost on restart — while the client had been told
-`ok`. Separately, `VaultFile::save` wrote `vault.mika` in place
+`ok`. Separately, `VaultFile::save` wrote `vault.arkeep` in place
 (truncate + write), so a crash mid-write could corrupt the whole vault,
 and nothing stopped the CLI and the daemon from read-modify-writing the
 file at the same time and dropping each other's changes.
@@ -14,8 +14,8 @@ file at the same time and dropping each other's changes.
 **Decision:**
 
 1. **Write-through, acknowledge after disk.** A daemon built with
-   `Daemon::with_persistence` (always, in `mikavtd`'s `main`) handles a
-   `set`/`rm` by: taking the vault lock, re-reading `vault.mika`,
+   `Daemon::with_persistence` (always, in `arkeepd`'s `main`) handles a
+   `set`/`rm` by: taking the vault lock, re-reading `vault.arkeep`,
    applying exactly that one entry change, saving atomically, and only
    then updating memory and replying `ok`. On any failure it replies
    `Err`, logs the cause to stderr, writes an `error` audit entry, and
@@ -30,12 +30,12 @@ file at the same time and dropping each other's changes.
    unreadable to everyone else. Reads keep working; restart to pick up
    the new DEK.
 3. **Atomic, durable file writes** (`format::write_atomic`, used for
-   `vault.mika` and `meta.json`): write a uniquely named `0600` temp file
+   `vault.arkeep` and `meta.json`): write a uniquely named `0600` temp file
    in the same directory (`create_new`, so a planted file or symlink is
    never followed), `fsync` it, `rename` over the target, `fsync` the
    directory. Readers see the old or the new vault, never a torn one.
 4. **One exclusive lock** (`format::VaultLock`, an OS advisory lock on
-   `vault.mika.lock` via `std::fs::File::lock`, released automatically
+   `vault.arkeep.lock` via `std::fs::File::lock`, released automatically
    if the process dies) taken by the daemon around each persisted write
    and by the CLI around every admin command. This raised the workspace
    MSRV to Rust 1.89, where `File::lock` was stabilized.
@@ -50,7 +50,7 @@ file at the same time and dropping each other's changes.
 `docs/deployment.md`). Hot reload was deferred: restart is simple,
 explicit and already required after `rotate-dek`.
 
-**Proof:** `mikavtd/tests/daemon_persistence.rs` (set is on disk before
+**Proof:** `arkeepd/tests/daemon_persistence.rs` (set is on disk before
 `ok` and survives a restart; rm reaches disk; a re-keyed vault and an
 unwritable vault both get `Err` with memory unchanged; concurrent CLI
 changes are not clobbered), `format.rs` unit tests (atomic replace

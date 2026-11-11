@@ -1,13 +1,13 @@
-# mikavt specification
+# arkeep specification
 
-mikavt is a standalone, dependency-free secrets vault for any service on
+arkeep is a standalone, dependency-free secrets vault for any service on
 Linux or macOS. No external vault/KMS dependency (no HashiCorp Vault, no
 cloud KMS) — it is self-contained and meant to be dropped into another
-project with `git clone` into a `mikavt/` subdirectory, or run standalone.
+project with `git clone` into a `arkeep/` subdirectory, or run standalone.
 
-The contracts are `mikavt-core/src/{crypto,format,acl,seal}.rs`,
-`mikavtd/src/{protocol,daemon,audit}.rs`, and the CLI commands under
-`mikavt-cli/src/commands/`. If this file disagrees with them, stop and
+The contracts are `arkeep-core/src/{crypto,format,acl,seal}.rs`,
+`arkeepd/src/{protocol,daemon,audit}.rs`, and the CLI commands under
+`arkeep-cli/src/commands/`. If this file disagrees with them, stop and
 record it in `docs/PROGRESS.md`.
 
 ## 1. Threat model
@@ -23,7 +23,7 @@ key.
 
 ## 2. Key hierarchy (envelope encryption — see ADR 0001)
 
-- **Root keypair** (X25519): generated once (`mikavt init --root`), private
+- **Root keypair** (X25519): generated once (`arkeep init --root`), private
   half exported offline by the operator, never retained on any host.
 - **Per-host unseal key**: sealed via the platform `HostSeal` backend (ADR
   0002) — `systemd-creds` (Linux) or Keychain (macOS).
@@ -35,7 +35,7 @@ key.
 
 ## 3. On-disk format
 
-`vault.mika` (binary, `bincode`): header, `hosts: BTreeMap<host_id,
+`vault.arkeep` (binary, `bincode`): header, `hosts: BTreeMap<host_id,
 DekWrapHost>`, `services: BTreeMap<service_id, EncryptedEntry>`,
 `entries: BTreeMap<path, VaultEntry>`, `root_wrap: Option<DekWrapRoot>`.
 `meta.json` (non-secret, informational): version, root pubkey fingerprint,
@@ -44,7 +44,7 @@ host/service IDs — safe to read without unsealing.
 Both are written atomically (unique `0600` temp file → fsync → rename →
 fsync directory), so a crash leaves the old or the new file, never a torn
 one. Every writer — the daemon persisting a `set`/`rm`, and every CLI
-admin command — holds an exclusive advisory lock on `vault.mika.lock`
+admin command — holds an exclusive advisory lock on `vault.arkeep.lock`
 while it reads-modifies-writes. Loading rejects files over 256 MiB and
 decodes with a size limit. Host and service ids are restricted to
 `[A-Za-z0-9._-]{1,64}`, not starting with `.`/`-`, since they become file
@@ -53,12 +53,12 @@ paths and credential names. (ADR 0010.)
 ## 4. Crates
 
 ```
-mikavt-core/   # crypto (envelope wrap/unwrap, AEAD entries), on-disk
+arkeep-core/   # crypto (envelope wrap/unwrap, AEAD entries), on-disk
                # format, ACL/access-token model, HostSeal trait + backends
-mikavtd/       # daemon: Unix-socket protocol, request handling + ACL
+arkeepd/       # daemon: Unix-socket protocol, request handling + ACL
                # enforcement, append-only audit log. Has a lib.rs
-               # (see ADR 0004) consumed by mikavt-cli.
-mikavt-cli/    # `mikavt` binary: init, enroll-host, enroll-service, set,
+               # (see ADR 0004) consumed by arkeep-cli.
+arkeep-cli/    # `arkeep` binary: init, enroll-host, enroll-service, set,
                # get, rm, list, rotate-dek, recover, audit tail
 ```
 
@@ -67,20 +67,20 @@ mikavt-cli/    # `mikavt` binary: init, enroll-host, enroll-service, set,
 Boot → OS delivers the host's unseal key (on Linux: systemd decrypts it
 as root via `LoadCredentialEncrypted=` into `$CREDENTIALS_DIRECTORY`, so
 the unprivileged daemon never needs systemd-creds itself — ADR 0009) →
-`mikavtd` unwraps the DEK → decrypts the entry table into memory → serves requests over a
+`arkeepd` unwraps the DEK → decrypts the entry table into memory → serves requests over a
 local Unix socket, and over TLS/TCP if server mode (§6a) is on,
 enforcing each token's path-prefix ACL, until shutdown (DEK zeroized).
-Every acknowledged `set`/`rm` is already durable in `vault.mika`; a write
+Every acknowledged `set`/`rm` is already durable in `vault.arkeep`; a write
 that cannot be persisted is answered with `Err` and not applied. If the
 vault on disk was re-keyed since startup (`rotate-dek`), writes are
 refused until restart (ADR 0010).
 No creator/root-private-key interaction on any normal boot, restart,
 read, or write.
 
-`mikavtd` needs `$MIKAVT_HOST_ID` to know which enrolled host it is
+`arkeepd` needs `$ARKEEP_HOST_ID` to know which enrolled host it is
 running as whenever the vault has more than one (default: the single
 host, if there's only one). It reads that host's key from
-`$CREDENTIALS_DIRECTORY/mikavt-<id>` if present, else unseals
+`$CREDENTIALS_DIRECTORY/arkeep-<id>` if present, else unseals
 `hosts/<id>.seal` itself, unwraps the DEK from `vault.hosts[id]`, and decrypts
 every `vault.services` entry into an `AccessToken` keyed by the hex of
 its own `secret` (matching the wire `token` string clients send) before
@@ -89,8 +89,8 @@ missing for a while and is now fixed and real).
 
 ## 6. Wire protocol
 
-Newline-delimited JSON over the Unix socket at `$MIKAVT_SOCKET`
-(`mikavtd/src/protocol.rs`'s `Request`/`Response`, serde's default
+Newline-delimited JSON over the Unix socket at `$ARKEEP_SOCKET`
+(`arkeepd/src/protocol.rs`'s `Request`/`Response`, serde's default
 externally-tagged enum encoding — every SDK in §8 implements this
 exactly):
 
@@ -107,14 +107,14 @@ Response → {"Value":[1,2,3]} | {"Listed":["a/b","a/c"]}
 `value`/`Value` are plain JSON arrays of byte values (`Vec<u8>`'s
 default `serde_json` encoding) — **not** base64. This has bitten one SDK
 already (Go's `encoding/json` base64-encodes `[]byte` by default; see
-`sdk/go/mikavt/mikavt.go`'s explicit `[]int` conversion) — any future
+`sdk/go/arkeep/arkeep.go`'s explicit `[]int` conversion) — any future
 SDK must convert explicitly too, not rely on its language's default
 byte-array JSON encoding.
 
 ## 6a. Server mode (ADR 0008)
 
-Opt-in: `$MIKAVT_TLS_ADDR` (plus `$MIKAVT_TLS_CERT`/`$MIKAVT_TLS_KEY`,
-optionally `$MIKAVT_TLS_CLIENT_CA` for mutual TLS) starts a second
+Opt-in: `$ARKEEP_TLS_ADDR` (plus `$ARKEEP_TLS_CERT`/`$ARKEEP_TLS_KEY`,
+optionally `$ARKEEP_TLS_CLIENT_CA` for mutual TLS) starts a second
 listener, TLS-wrapped TCP, serving the *exact same* §6 wire protocol and
 the *exact same* `Daemon::handle_request` as the Unix socket — not a
 separate API. TLS is `rustls` (pure Rust, no OpenSSL/C dependency). The
@@ -130,9 +130,9 @@ reject/accept paths, by `scripts/server-mode-smoke.sh`.
 `recover --root-key` (disaster recovery, zero-side-effect on failure),
 `audit tail`. Admin commands run under the vault lock; on Linux the ones
 that touch a host key need root, and they hand created files back to the
-data directory's owner. Restart `mikavtd` after `enroll-service`,
+data directory's owner. Restart `arkeepd` after `enroll-service`,
 `rotate-dek`, or re-enrolling its host: tokens and the DEK are loaded at
-startup. See `mikavt-cli/src/main.rs` for exact flags — this spec
+startup. See `arkeep-cli/src/main.rs` for exact flags — this spec
 does not restate flag syntax.
 
 ## 8. SDKs
@@ -152,5 +152,5 @@ ADR 0008. Planned: C, C++, Perl, Ruby
 
 No multi-operator/quorum (no Shamir shares) — single creator, single root
 trust. No general config templating. No clustering/load-balancing across
-multiple `mikavtd` instances — one process serves exactly one host
-(`$MIKAVT_HOST_ID`), whether over the Unix socket, TLS, or both.
+multiple `arkeepd` instances — one process serves exactly one host
+(`$ARKEEP_HOST_ID`), whether over the Unix socket, TLS, or both.

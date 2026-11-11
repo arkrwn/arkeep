@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["mikavt-core", "mikavtd", "mikavt-cli", "sdk/rust/mikavt-sdk"]
+members = ["arkeep-core", "arkeepd", "arkeep-cli", "sdk/rust/arkeep-sdk"]
 
 [workspace.package]
 version = "0.1.0"

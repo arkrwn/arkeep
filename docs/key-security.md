@@ -1,6 +1,6 @@
 # Securing the root (master) private key
 
-`mikavt init --root` prints the root X25519 private key to stdout
+`arkeep init --root` prints the root X25519 private key to stdout
 **exactly once** and never writes it to disk itself. Everything in this
 vault's security model (`docs/SPEC.md` §1) rests on what happens to
 that printed value in the seconds after it appears. This page is about
@@ -11,7 +11,7 @@ no manual handling).
 ## What the root key actually protects
 
 It's the one thing that can recover this vault if **every** enrolled
-host is lost (`mikavt recover --root-key`, `docs/recovery-runbook.md`).
+host is lost (`arkeep recover --root-key`, `docs/recovery-runbook.md`).
 It is not needed for, and should never be used for, day-to-day
 operation — `init --host`/`enroll-host`/`enroll-service` never touch it.
 If you find yourself reaching for the root key more than once in a
@@ -41,7 +41,7 @@ as a signal to review what happened.
      a safe or safety-deposit box, not a desk drawer.
 3. **Verify the backup before you consider the key "stored."** Read it
    back from the offline medium and compare against what was printed
-   (or, better, run it through `mikavt recover --root-key` in a throwaway
+   (or, better, run it through `arkeep recover --root-key` in a throwaway
    test vault to confirm it actually unwraps — see
    `docs/recovery-runbook.md`). A backup you haven't verified is a hope,
    not a backup.
@@ -52,7 +52,7 @@ as a signal to review what happened.
    custody (below) over simply handing a second person the whole key.
 5. **Treat it like you'd treat an SSH CA root key or a code-signing
    root cert**, because structurally it is one: compromise of this key
-   plus access to a copy of `vault.mika` is a total compromise of every
+   plus access to a copy of `vault.arkeep` is a total compromise of every
    secret ever stored in this vault (`docs/SPEC.md` §1's threat model is
    explicit that root-key disclosure is outside what the design
    protects against).
@@ -63,7 +63,7 @@ If no single person should be able to recover the vault alone, split
 the raw key with an external secret-sharing tool *before* it goes to
 offline storage — e.g. Shamir's Secret Sharing via `ssss` (`ssss-split`/
 `ssss-combine`, widely available on Linux/macOS package managers) with
-a threshold like 3-of-5 custodians. mikavt does not implement secret
+a threshold like 3-of-5 custodians. arkeep does not implement secret
 sharing itself (ADR 0001 deliberately rejected building this in — see
 that ADR for why), so this is an operational practice layered on top:
 split the key, distribute shares to separate custodians/locations,
@@ -82,30 +82,30 @@ destroy the unsplit copy once shares are distributed and verified.
   including as an encrypted file whose decryption key is itself
   committed nearby.
 - **Never store it on the same host, or the same physical medium, as a
-  `vault.mika` file or a host's sealed unseal key.** Co-location defeats
+  `vault.arkeep` file or a host's sealed unseal key.** Co-location defeats
   the dual-wrap design (ADR 0001) that's supposed to make a host
   compromise and a root-key compromise independent events.
 - **Never type it into a form, script, or AI assistant** (including
   this one) to "double check" it or "help format" it. If you need to
-  verify it, use `mikavt recover --root-key` against a disposable test
+  verify it, use `arkeep recover --root-key` against a disposable test
   vault, locally, offline.
 
 ## Rotation
 
-The root key itself has no `mikavt` CLI rotation path today (`rotate-dek`
+The root key itself has no `arkeep` CLI rotation path today (`rotate-dek`
 rotates the DEK, not the root keypair — see `docs/SPEC.md` §7) — this is
 a deliberate current limitation, not an oversight; if you need to
 rotate the root keypair itself (e.g. after a suspected exposure), that
-requires `mikavt init --root` into a fresh vault and re-enrolling every
+requires `arkeep init --root` into a fresh vault and re-enrolling every
 host/service, tracked as a gap in `docs/PROGRESS.md` if it isn't
 already. Rotating the *DEK* (`rotate-dek --hosts <csv>`) does not help
 if the root key itself is what's suspected compromised — the root
-public key stored in `vault.mika` doesn't change, so a leaked root
+public key stored in `vault.arkeep` doesn't change, so a leaked root
 private key remains valid for that vault until a full re-bootstrap.
 
 ## Periodic drills
 
-Run `mikavt recover --root-key` against a copy of a real (or disposable
+Run `arkeep recover --root-key` against a copy of a real (or disposable
 test) vault on a schedule — quarterly is a reasonable default for most
 teams — to confirm the stored key still works and whoever is supposed to
 be able to execute recovery actually can, before an actual disaster

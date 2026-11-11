@@ -47,7 +47,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           set -euo pipefail
-          BIN="$(cargo test -p mikavt-core --test seal_linux --no-run --message-format=json \
+          BIN="$(cargo test -p arkeep-core --test seal_linux --no-run --message-format=json \
             | jq -r 'select(.reason == "compiler-artifact" and .executable != null) | .executable' \
             | tail -n 1)"
           test -x "$BIN"
