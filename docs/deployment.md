@@ -158,26 +158,22 @@ every CI build (Linux).
 
 ## macOS (launchd)
 
-The plist template runs `cofferakd` as a per-user LaunchAgent. It is a user
-agent, not a system daemon, because the host key is stored in the user's
-Keychain (service `cofferak`, account = the host's id — matching
-`cofferak init --host`/`enroll-host` exactly), which is only available
-inside a user session.
+The plist template runs the daemon as a per-user LaunchAgent with
+`cofferak daemon`. It is a user agent, not a system daemon, because the
+host key is stored in the user's Keychain (service `cofferak`, account =
+the host's id), which is only available inside a user session.
 
-**Known limitation:** macOS Keychain's default access control list only
+**Why `cofferak daemon` and not `cofferakd`:** the Keychain's access list
 trusts the application that *created* an item. `cofferak init --host`
-(run from the `cofferak` CLI binary) and `cofferakd` (a different binary)
-are different applications by that ACL's definition, so `cofferakd`
-reading a key the CLI sealed can hang waiting on an authorization prompt
-that never renders in a non-interactive/headless session, rather than
-failing fast. This is tracked in [`docs/PROGRESS.md`](PROGRESS.md)'s
-"Known gaps" — until it's resolved (likely via an explicit shared ACL/
-trusted-application list set at seal time), treat the macOS path as
-needing a real interactive login session the first time a sealed item
-is read by a different binary than the one that created it.
+creates it from the `cofferak` binary, so the daemon must be that same
+binary to read the key without an authorization prompt. `cofferak daemon`
+runs exactly the same code as `cofferakd` ([ADR 0007](adr/0007-macos-keychain-cross-process-limitation.md)).
+After you install a **new build** of `cofferak`, macOS may ask once
+whether it may use the `cofferak` Keychain item; choose **Always Allow**.
 
-The template sets `RunAtLoad` so the daemon starts at login, and
-`KeepAlive` so launchd restarts it if it exits.
+The template sets `RunAtLoad` so the daemon starts at login, `KeepAlive`
+so launchd restarts it if it exits, and logs errors to
+`~/Library/Logs/cofferak.log`.
 
 ### Install
 
@@ -185,24 +181,27 @@ The template sets `RunAtLoad` so the daemon starts at login, and
 
    ```sh
    cargo build --release
-   sudo install -m 0755 target/release/cofferakd /usr/local/bin/cofferakd
+   sudo install -m 0755 target/release/cofferak /usr/local/bin/cofferak
    ```
 
-2. Create the data directory and bootstrap the vault and this host:
+2. Create the data directory and bootstrap the vault and this host. Save
+   the root private key block `init --root` prints to offline media
+   ([key security](key-security.md)):
 
    ```sh
-   mkdir -p "$HOME/Library/Application Support/cofferak"
-   cofferak init --root --data-dir "$HOME/Library/Application Support/cofferak"
-   cofferak init --host "$(hostname -s)" --data-dir "$HOME/Library/Application Support/cofferak"
+   export COFFERAK_DATA_DIR="$HOME/Library/Application Support/cofferak"
+   mkdir -p "$COFFERAK_DATA_DIR" && chmod 700 "$COFFERAK_DATA_DIR"
+   cofferak init --root
+   cofferak init --host "$(hostname -s)"
    ```
 
 3. Copy the plist and replace every `REPLACE_WITH_USER` with your macOS
-   account name. launchd does not expand `~` or `$HOME` inside plist files,
-   so the paths must be absolute:
+   account name (launchd does not expand `~` or `$HOME` inside plist
+   files, so the paths must be absolute):
 
    ```sh
-   cp deployment/macos/com.cofferak.cofferakd.plist ~/Library/LaunchAgents/
-   open -e ~/Library/LaunchAgents/com.cofferak.cofferakd.plist
+   sed "s/REPLACE_WITH_USER/$(id -un)/g" deployment/macos/com.cofferak.cofferakd.plist \
+     > ~/Library/LaunchAgents/com.cofferak.cofferakd.plist
    ```
 
 4. Validate the file and load it:
@@ -215,14 +214,20 @@ The template sets `RunAtLoad` so the daemon starts at login, and
 5. Check that the daemon is running:
 
    ```sh
-   launchctl print gui/$(id -u)/com.cofferak.cofferakd
+   launchctl print gui/$(id -u)/com.cofferak.cofferakd | grep state
+   ls -l "$COFFERAK_DATA_DIR/cofferakd.sock"
    ```
 
-To stop and remove the agent:
+To restart it (e.g. after `enroll-service`) or remove it:
 
 ```sh
+launchctl kickstart -k gui/$(id -u)/com.cofferak.cofferakd
 launchctl bootout gui/$(id -u)/com.cofferak.cofferakd
 ```
+
+**Socket path length:** Unix socket paths are limited to about 104
+characters on macOS (108 on Linux). Keep `COFFERAK_SOCKET` short; the
+default above is fine for normal account names.
 
 ## Socket permissions
 

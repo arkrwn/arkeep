@@ -4,26 +4,24 @@
 #
 # Two modes, selected by $COFFERAK_SMOKE_MODE:
 #
-#   full   (default on Linux with systemd-creds; needs passwordless sudo):
-#           builds and runs the REAL `cofferakd` + `cofferak` CLI binaries end
-#           to end, laid out like production (ADR 0009): admin commands run
-#           as root (real systemd-creds sealing), the daemon runs as a
-#           NON-root transient systemd service that receives its host key
-#           via LoadCredentialEncrypted=, a real enrolled service token is
-#           loaded from the real vault file, and a write is proven to
-#           survive a daemon restart (ADR 0010). The authoritative proof.
+#   full   (default on Linux with systemd-creds, and on macOS): the REAL
+#           `cofferak` CLI and daemon end to end, with real host-key
+#           sealing, a real enrolled service token loaded from the real
+#           vault file, all four SDKs, and a write proven to survive a
+#           daemon restart (ADR 0010).
+#           - Linux (needs passwordless sudo), laid out like production
+#             (ADR 0009): admin commands run as root (systemd-creds), the
+#             daemon runs as a NON-root transient systemd service that
+#             receives its host key via LoadCredentialEncrypted=.
+#           - macOS: the host key is sealed in the Keychain and the daemon
+#             runs as `cofferak daemon`, the same binary that sealed it, so
+#             the Keychain serves it without a prompt (ADR 0007). The test
+#             Keychain item is deleted on exit.
 #
-#   dev    (default on macOS / anywhere real HostSeal cross-process
-#           access isn't available — see docs/PROGRESS.md's "Known
-#           gaps" entry on macOS Keychain's per-creating-process ACL):
-#           runs `cofferakd/examples/dev-daemon.rs`, an in-memory daemon
-#           with one pre-provisioned token and no disk persistence or
-#           sealing involved. This proves the SDKs' protocol
-#           implementations are correct against a real socket-serving
-#           daemon; it does not exercise the real CLI-bootstrap or
-#           HostSeal path (those are proven separately — see
-#           cofferak-core/tests/seal_{linux,macos}.rs and the "full" mode
-#           above, which runs for real in CI on ubuntu-latest).
+#   dev    (anywhere else, or COFFERAK_SMOKE_MODE=dev): runs
+#           `cofferakd/examples/dev-daemon.rs`, an in-memory daemon with one
+#           pre-provisioned token and no persistence or sealing. Proves the
+#           SDKs' protocol code, not the bootstrap/sealing path.
 #
 # Used both locally and by .github/workflows/ci.yml's sdk-smoke job —
 # this script is the single source of truth for "the SDKs actually
@@ -37,13 +35,17 @@ SOCKET="$WORKDIR/cofferakd.sock"
 DAEMON_PID=""
 MODE="${COFFERAK_SMOKE_MODE:-}"
 
+OS="$(uname -s)"
 if [[ -z "$MODE" ]]; then
-  if [[ "$(uname -s)" == "Linux" ]] && command -v systemd-creds >/dev/null 2>&1; then
+  if [[ "$OS" == "Linux" ]] && command -v systemd-creds >/dev/null 2>&1; then
+    MODE="full"
+  elif [[ "$OS" == "Darwin" ]]; then
     MODE="full"
   else
     MODE="dev"
   fi
 fi
+KEYCHAIN_ITEM=""
 
 UNIT=""
 
@@ -54,6 +56,9 @@ cleanup() {
   if [[ -n "$DAEMON_PID" ]] && kill -0 "$DAEMON_PID" 2>/dev/null; then
     kill "$DAEMON_PID" 2>/dev/null || true
     wait "$DAEMON_PID" 2>/dev/null || true
+  fi
+  if [[ -n "$KEYCHAIN_ITEM" ]]; then
+    security delete-generic-password -s cofferak -a "$KEYCHAIN_ITEM" >/dev/null 2>&1 || true
   fi
   if [[ -n "$UNIT" ]]; then
     sudo rm -rf "$WORKDIR" 2>/dev/null || true
@@ -97,7 +102,30 @@ echo "== mode: $MODE =="
 echo "== building workspace (release) =="
 cargo build --workspace --release
 
-if [[ "$MODE" == "full" ]]; then
+# macOS full mode: the real Keychain-sealed host key and `cofferak daemon`
+# (the same binary that sealed the key, so no Keychain prompt; ADR 0007).
+start_mac_daemon() {
+  rm -f "$SOCKET"
+  COFFERAK_DATA_DIR="$DATA_DIR" COFFERAK_SOCKET="$SOCKET" COFFERAK_HOST_ID="$HOST_ID" \
+    "$COFFERAK" daemon >"$WORKDIR/daemon.log" 2>&1 &
+  DAEMON_PID=$!
+  wait_for_socket || { cat "$WORKDIR/daemon.log" >&2; return 1; }
+}
+
+if [[ "$MODE" == "full" && "$OS" == "Darwin" ]]; then
+  DATA_DIR="$WORKDIR/data"
+  HOST_ID="sdk-smoke-host-$$"
+  KEYCHAIN_ITEM="$HOST_ID"
+  COFFERAK="$REPO_ROOT/target/release/cofferak"
+  echo "== bootstrapping a real throwaway vault in $DATA_DIR (macOS Keychain) =="
+  "$COFFERAK" init --root --data-dir "$DATA_DIR" >/dev/null
+  "$COFFERAK" init --host "$HOST_ID" --data-dir "$DATA_DIR"
+  ENROLL_OUTPUT="$("$COFFERAK" enroll-service sdk-smoke-service --paths "sdk-smoke" --perm rw --data-dir "$DATA_DIR")"
+  TOKEN="$(echo "$ENROLL_OUTPUT" | grep -E '^[0-9a-f]{64}$')"
+  [[ -n "$TOKEN" ]] || { echo "failed to parse the enrolled service's token" >&2; exit 1; }
+  echo "== starting the real daemon: cofferak daemon =="
+  start_mac_daemon
+elif [[ "$MODE" == "full" ]]; then
   DATA_DIR="$WORKDIR/data"
   HOST_ID="sdk-smoke-host"
   SERVICE_ID="sdk-smoke-service"
@@ -178,13 +206,18 @@ if [[ "$MODE" == "full" && "$FAILED" -eq 0 ]]; then
   # Durability (ADR 0010): a write acknowledged by the daemon must still be
   # there after the daemon restarts, read back from vault.cofferak on disk.
   echo "== durability: write, restart cofferakd, read back =="
-  "$COFFERAK" set "sdk-smoke/durable" "survives-restart" >/dev/null
-  sudo systemctl stop "$UNIT"
-  for _ in $(seq 1 50); do
-    systemctl is-active --quiet "$UNIT" || break
-    sleep 0.1
-  done
-  start_real_daemon
+  printf 'survives-restart' | "$COFFERAK" set "sdk-smoke/durable" --stdin >/dev/null
+  if [[ "$OS" == "Darwin" ]]; then
+    kill "$DAEMON_PID"; wait "$DAEMON_PID" 2>/dev/null || true
+    start_mac_daemon
+  else
+    sudo systemctl stop "$UNIT"
+    for _ in $(seq 1 50); do
+      systemctl is-active --quiet "$UNIT" || break
+      sleep 0.1
+    done
+    start_real_daemon
+  fi
   GOT="$("$COFFERAK" get "sdk-smoke/durable")"
   if [[ "$GOT" != "survives-restart" ]]; then
     echo "durability check FAILED: expected 'survives-restart', got '$GOT'" >&2

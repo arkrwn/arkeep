@@ -30,7 +30,7 @@ from a command or test that was actually run. States: `todo`, `doing`,
 | SDK: Go (`sdk/go/cofferak`) | done | Same; required an explicit `[]int` conversion workaround for `encoding/json`'s base64 default on `[]byte` — see ADR 0005/`docs/SPEC.md` §6 |
 | SDK: Python (`sdk/python/cofferak_sdk`) | done | Same, stdlib only |
 | SDK: TypeScript/JavaScript (`sdk/javascript/cofferak-sdk`) | done | Same; smoke test runs against the compiled `dist/` output, proving the JS consumption path too |
-| `sdk-smoke` CI job | done | `ubuntu-latest` runs "full" mode exactly like production: admin commands as root, ownership check, real `cofferakd` as a non-root transient systemd service with `LoadCredentialEncrypted=`, all four SDKs, then a write-restart-read durability check. `macos-latest` runs "dev" mode (see ADR 0007) |
+| `sdk-smoke` CI job | done | `ubuntu-latest` and `macos-latest` both run "full" mode; Linux exactly like production: admin commands as root, ownership check, real `cofferakd` as a non-root transient systemd service with `LoadCredentialEncrypted=`, all four SDKs, then a write-restart-read durability check. macOS uses the real Keychain and `cofferak daemon` (ADR 0007) |
 | Server mode: TLS/TCP listener in `cofferakd` (ADR 0008) | done | `./scripts/server-mode-smoke.sh`: real self-signed CA/cert generated with `openssl`, real TLS handshake, real token auth over TLS, real denied-path check — all passing, for all four SDKs |
 | Server mode: mutual TLS (`$COFFERAK_TLS_CLIENT_CA`) | done | Same script, for all four SDKs: a client with no cert, and separately a client with a cert signed by a *different, untrusted* CA, are both rejected; only a cert signed by the configured CA is accepted — all verified, not assumed |
 | Server mode: hostname verification | done | Same script, for all four SDKs: connecting with the wrong expected server name against the real server cert is rejected (defends against a MITM presenting a different, even CA-signed, cert) |
@@ -50,6 +50,8 @@ from a command or test that was actually run. States: `todo`, `doing`,
 | Armored root private key with checksum | done | `init --root` prints a `-----BEGIN COFFERAK ROOT PRIVATE KEY-----` block; `recover` reads it; truncation/typos rejected by the checksum (unit test) |
 | Hardware-accelerated AES-256-GCM-SIV | done | AWS-LC AEAD; RFC 8452 interop test against RustCrypto in both directions; decrypt 64 B in 0.24 µs, ≈1.4 GB/s on 16 KB (docs/benchmarks.md) |
 | Server mode: mandatory mTLS, TLS 1.3 / AES-256-GCM-SHA384 only, ML-KEM-1024 preferred | done | `server-mode-smoke.sh`: no-client-CA startup refused; no cert / untrusted CA / wrong hostname rejected in all four SDKs; TLS 1.2 and AES-128 refused; Rust negotiates `TLSv1_3 TLS13_AES_256_GCM_SHA384 MLKEM1024` |
+| macOS daemon via `cofferak daemon` (ADR 0007 resolved) | done | Daemon code moved to `cofferakd::server::run`; `sdk-smoke.sh` full mode on macOS: real Keychain-sealed host key, all four SDKs, restart durability |
+| `set --stdin` / `--from-file`, `get -o`, token hidden in `--help` | done | `cofferak-cli/tests/cli_binary.rs`; SSH private key round trip byte-exact (manual test in `localtest.md`) |
 | Benchmarks | done | `scripts/bench.sh`, run in CI on every build; results in `docs/benchmarks.md` |
 
 ## Known gaps / open items
@@ -64,15 +66,10 @@ from a command or test that was actually run. States: `todo`, `doing`,
   `rotate-dek` and re-enrolling the daemon's own host take effect on
   restart; after `rotate-dek` the running daemon refuses writes (never
   writes under the stale DEK) until restarted. No hot reload yet.
-- **macOS Keychain cross-process access (ADR 0007, open, not yet fixed).**
-  `cofferakd` reading a sealed key that `cofferak init --host` (a different
-  binary) created hangs waiting on an authorization step that can't
-  render in a non-interactive session, rather than failing fast. Verified
-  independent of this project's code (`security find-generic-password`
-  itself hangs the same way). `scripts/sdk-smoke.sh` falls back to an
-  in-memory dev daemon on macOS to still prove the SDKs for real; the
-  authoritative full end-to-end proof runs in CI on `ubuntu-latest`
-  (`systemd-creds` has no equivalent per-process ACL problem).
+- **macOS: a new build may ask once for Keychain access.** The Keychain
+  trusts the binary that created the host-key item by code identity, so
+  after installing a new `cofferak` build macOS may show one "allow"
+  prompt (choose Always Allow). Reads are silent otherwise (ADR 0007).
 - One `cofferakd` process serves exactly one host (`$COFFERAK_HOST_ID`); it
   does not load-balance or proxy across multiple enrolled hosts.
   `enroll-host` correctly re-wraps the DEK for additional hosts on disk;

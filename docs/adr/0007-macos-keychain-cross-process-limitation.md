@@ -1,6 +1,17 @@
-# ADR 0007: macOS Keychain cross-process access is an open limitation
+# ADR 0007: macOS Keychain cross-process access: run the daemon from the binary that sealed the key
 
-Status: proposed (documents a known gap, not a decision taken yet)
+Status: accepted (resolved: the daemon runs as `cofferak daemon` on macOS)
+
+> **Resolution (2026-11-11):** option 4 below. The daemon's code moved into
+> the `cofferakd` library (`cofferakd::server::run`), and the CLI gained a
+> `cofferak daemon` subcommand that calls it. On macOS the daemon runs as
+> `cofferak daemon`, the same binary that created the Keychain item, so the
+> Keychain returns the key without an authorization prompt. The launchd
+> template, `docs/deployment.md` and the README use it, and
+> `scripts/sdk-smoke.sh` now runs the full real path on macOS in CI
+> (real Keychain-sealed host key, `cofferak daemon`, all four SDKs, and a
+> restart-durability check). The sections below are the original problem
+> statement and options.
 
 ## Context
 
@@ -44,4 +55,11 @@ Candidates for the real fix, for whoever picks this up:
    restart then working headlessly (untested — would need to be
    verified, not assumed).
 
-Tracked in `docs/PROGRESS.md`'s "Known gaps" until resolved.
+4. **Run the daemon from the same binary that seals the key.** No ACL
+   or signing changes: a `cofferak daemon` subcommand runs the daemon
+   code, so the reader *is* the creating application. Verified on macOS:
+   `cofferakd` reading a CLI-created item blocks on an authorization
+   prompt, while `cofferak daemon` (and the CLI's own admin commands)
+   read it silently. **Chosen.** Remaining caveat: the Keychain ties the
+   trust to the binary's code identity, so after installing a new build
+   macOS may ask once to allow it ("Always Allow").

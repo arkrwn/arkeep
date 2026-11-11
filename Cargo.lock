@@ -227,6 +227,7 @@ dependencies = [
  "clap",
  "cofferak-core",
  "cofferakd",
+ "libc",
  "rand_core",
  "zeroize",
 ]

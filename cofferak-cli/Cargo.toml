@@ -22,3 +22,4 @@ clap = { version = "4", features = ["derive", "env"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
 bincode = "1"
 zeroize = "1"
+libc = "0.2"

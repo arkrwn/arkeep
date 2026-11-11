@@ -121,8 +121,9 @@ MSRV (`rust-version` in `Cargo.toml`) is 1.89.
   `cargo clippy --workspace --all-targets -- -D warnings`,
   `cargo test --workspace`, and on Linux the `seal_linux` test re-run as
   root (it fails if the test skips).
-- `sdk-smoke` job: `scripts/sdk-smoke.sh`,
-  `scripts/server-mode-smoke.sh`, and `scripts/bench.sh`
+- `sdk-smoke` job: `scripts/quickstart-check.sh` (the README Quickstart
+  run as written), `scripts/sdk-smoke.sh` (full mode on both Linux and
+  macOS), `scripts/server-mode-smoke.sh`, and `scripts/bench.sh`
   (informational).
 
 A PR is not mergeable with a red or skipped CI run. Run the fmt, clippy

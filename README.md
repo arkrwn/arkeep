@@ -199,15 +199,22 @@ API to learn, not a second thing to keep in sync. See
 [ADR 0008](docs/adr/0008-server-mode-rpc-over-tls.md) for why this (RPC
 over TLS) was chosen over REST or WebSocket.
 
+Don't have certificates yet? One command makes a private P-384 CA, a
+server certificate and client certificates:
+
+```bash
+./scripts/gen-certs.sh ./tls cofferak.internal app1 app2
+```
+
 ```bash
 # Server side: turn on TLS alongside the existing Unix socket. All four
 # TLS variables are required: mutual TLS is mandatory.
 COFFERAK_DATA_DIR=./data \
 COFFERAK_TLS_ADDR=0.0.0.0:8443 \
-COFFERAK_TLS_CERT=./server.pem \
-COFFERAK_TLS_KEY=./server.key \
-COFFERAK_TLS_CLIENT_CA=./client-ca.pem \
-  ./target/release/cofferakd &
+COFFERAK_TLS_CERT=./tls/server.pem \
+COFFERAK_TLS_KEY=./tls/server.key \
+COFFERAK_TLS_CLIENT_CA=./tls/ca.pem \
+  cofferak daemon     # cofferakd on a Linux systemd install
 ```
 
 | Variable | Purpose |
@@ -257,7 +264,7 @@ cofferak/
   cofferak-cli/    # admin CLI: init/enroll-host/enroll-service/set/get/rm/list/rotate-dek/recover/audit tail
   sdk/             # client SDKs: rust, go, python, javascript (TypeScript)
   deployment/      # copy-and-edit systemd unit (Linux) and launchd plist (macOS)
-  scripts/         # sdk-smoke.sh, server-mode-smoke.sh — real, run-it-yourself proof
+  scripts/         # quickstart-check, sdk-smoke, server-mode-smoke, bench, gen-certs
   docs/            # SPEC.md, adr/, PROGRESS.md, deployment guide, recovery runbook,
                    # sample-integration/, assets/ (logo and icons)
   SDD.md           # the design/documentation practice this repo follows
@@ -315,57 +322,78 @@ cofferak/
 
 ## Quickstart
 
-Requires a stable Rust toolchain (MSRV 1.89; CI uses the exact version
-pinned in `rust-toolchain.toml`).
+Try it locally in about five minutes. You need Rust 1.89 or newer
+([rustup.rs](https://rustup.rs)); macOS or Linux with systemd.
 
-This quickstart runs everything as your own user, which works on macOS.
-**On Linux, run the admin commands (`init`, `enroll-*`, `rotate-dek`,
-`recover`) and this foreground `cofferakd` with `sudo`**: `systemd-creds`'
-host scope is root-only. For a
-real Linux install — unprivileged daemon under systemd, host key delivered
-via `LoadCredentialEncrypted=` — follow
-[`docs/deployment.md`](docs/deployment.md) and
-[ADR 0009](docs/adr/0009-linux-host-key-via-systemd-credentials.md).
+**1. Build and point your shell at a throwaway vault**
 
 ```bash
-# Build everything (library, daemon, CLI).
-cargo build --workspace --release
-
-# 1. Create a brand-new vault and its root keypair (X25519 + ML-KEM-1024).
-#    The root private key is printed exactly once, as a
-#    -----BEGIN COFFERAK ROOT PRIVATE KEY----- block: save the whole block
-#    to a file on offline media and never store it on a host that runs
-#    the daemon. It is the only way to recover the vault if every
-#    enrolled host is lost; see docs/key-security.md (how to actually
-#    secure it) and docs/recovery-runbook.md (how to use it to recover).
-./target/release/cofferak init --root --data-dir ./data
-
-# 2. Enroll this host. This generates the vault's DEK, wraps it for the
-#    root key and for this host, and seals this host's own unseal key
-#    with the platform HostSeal backend (systemd-creds on Linux, Keychain
-#    on macOS).
-./target/release/cofferak init --host myhost --data-dir ./data
-
-# 3. Start the daemon (foreground, for a quickstart — see
-#    docs/deployment.md to run it as a systemd/launchd service instead).
-COFFERAK_DATA_DIR=./data COFFERAK_SOCKET=./data/cofferakd.sock \
-  ./target/release/cofferakd &
-
-# 4. Enroll a consuming service, scoped to a path prefix. The printed
-#    token is shown exactly once — hand it to the service's own config.
-#    The daemon loads tokens at startup, so restart it afterwards.
-./target/release/cofferak enroll-service myapp \
-  --paths myapp --perm rw --data-dir ./data
-kill %1; COFFERAK_DATA_DIR=./data COFFERAK_SOCKET=./data/cofferakd.sock \
-  ./target/release/cofferakd &
-
-# 5. Set and get a secret over the daemon's socket.
-export COFFERAK_TOKEN=<token printed by step 4>
-./target/release/cofferak set myapp/db-password 's3cr3t' \
-  --socket ./data/cofferakd.sock
-./target/release/cofferak get myapp/db-password \
-  --socket ./data/cofferakd.sock
+git clone https://github.com/arkrwn/cofferak && cd cofferak
+cargo build --release
+export PATH="$PWD/target/release:$PATH"
+export COFFERAK_DATA_DIR="$HOME/.cofferak-demo"
+export COFFERAK_SOCKET="$COFFERAK_DATA_DIR/cofferakd.sock"
+mkdir -p "$COFFERAK_DATA_DIR" && chmod 700 "$COFFERAK_DATA_DIR"
 ```
+
+**2. Create the vault and enroll this machine**
+
+```bash
+ADMIN=cofferak                                    # macOS
+ADMIN="sudo -E $(command -v cofferak)"            # Linux: sealing with systemd-creds needs root
+
+$ADMIN init --root            # prints the root private key ONCE: save the whole
+                              # -----BEGIN/END----- block offline (it's your recovery key)
+$ADMIN init --host demo       # seals this machine's key (Keychain / systemd-creds)
+$ADMIN enroll-service myapp --paths myapp --perm rw
+                              # prints myapp's access token ONCE
+```
+
+**3. Start the daemon** (in a second terminal, with the same `export`s)
+
+```bash
+# macOS
+cofferak daemon
+
+# Linux: run it the way production does, as you (not root), with systemd
+# handing it the host key (copy as-is):
+sudo systemd-run --unit=cofferak-demo --uid="$(id -u)" --gid="$(id -g)" \
+  -p "LoadCredentialEncrypted=cofferak-demo:$COFFERAK_DATA_DIR/hosts/demo.seal" \
+  --setenv=COFFERAK_DATA_DIR="$COFFERAK_DATA_DIR" --setenv=COFFERAK_SOCKET="$COFFERAK_SOCKET" \
+  --setenv=COFFERAK_HOST_ID=demo "$(command -v cofferak)" daemon
+```
+
+**4. Store and read secrets**
+
+```bash
+export COFFERAK_TOKEN=<token printed by enroll-service>   # this shell only
+
+# Type a secret without it touching the screen, argv or shell history:
+read -rs -p "DB password: " V && printf %s "$V" | cofferak set myapp/DB_PASSWORD --stdin; unset V
+cofferak get myapp/DB_PASSWORD
+
+# Store a whole file, byte for byte (an SSH key, a certificate, a JSON credential):
+cofferak set myapp/ssh/id_ed25519 --from-file ~/.ssh/id_ed25519
+cofferak get myapp/ssh/id_ed25519 | ssh-add -      # load it into ssh-agent
+cofferak list myapp
+cofferak get other/thing                           # denied: outside myapp's paths
+```
+
+**5. Use a secret without a `.env` file**
+
+```bash
+DB_PASSWORD="$(cofferak get myapp/DB_PASSWORD)" ./your-app
+```
+
+or read it in code with an [SDK](#sdks). To clean up: stop the daemon
+(Ctrl-C, or `sudo systemctl stop cofferak-demo` on Linux) and
+`rm -rf ~/.cofferak-demo`; on macOS also
+`security delete-generic-password -s cofferak -a demo`.
+
+A step-by-step walkthrough of every command, the SDKs and the failure
+cases is in [docs/getting-started.md](docs/getting-started.md). For a
+permanent install (systemd unit, launchd agent) see
+[docs/deployment.md](docs/deployment.md).
 
 ## Commands
 
@@ -382,13 +410,14 @@ on macOS). `set`/`get`/`rm`/`list` additionally accept `--socket <PATH>`
 | `init --host <id>` | Enroll the *first* host into a vault created by `init --root`. |
 | `enroll-host <new-id> --this-host <id>` | Enroll an *additional* host, using an already-enrolled host's own sealed key to recover the DEK. |
 | `enroll-service <id> --paths <csv> --perm <ro\|rw>` | Enroll a consuming service and print its one-time access token. |
-| `set <path> <value> --token <t>` | Write a secret (over the daemon socket). |
-| `get <path> --token <t>` | Read a secret (over the daemon socket). |
+| `set <path> --stdin` / `--from-file <f>` / `<value>` | Write a secret (over the daemon socket). `--stdin` and `--from-file` keep the value out of argv and shell history; use them for real secrets. |
+| `get <path> [-o <file>]` | Read a secret (over the daemon socket); `-o` writes the exact bytes to a `0600` file. |
 | `rm <path> --token <t>` | Remove a secret (over the daemon socket). |
 | `list [prefix] --token <t>` | List secret paths under a prefix (over the daemon socket). |
 | `rotate-dek --hosts <csv>` | Generate a fresh DEK, re-encrypt every entry/token, and re-wrap it for the root key and the given hosts. Operates on `vault.cofferak` directly, not over the socket. Restart `cofferakd` afterwards: until then it refuses writes rather than using the stale DEK. |
 | `recover --root-key <path> --new-host <id>` | Disaster recovery: enroll a new host using the offline root private key (the saved armored block), bypassing every enrolled host's own sealed blob. See [`docs/recovery-runbook.md`](docs/recovery-runbook.md). |
 | `audit tail [--count N]` | Print the last `N` (default 20) entries of the daemon's audit log, read directly from `<data_dir>/audit.jsonl`. |
+| `daemon` | Run the daemon in the foreground (same code as `cofferakd`). Use this on macOS; see [deployment](docs/deployment.md#macos-launchd). |
 
 `cofferakd` itself takes no CLI flags; it reads `COFFERAK_DATA_DIR` and
 `COFFERAK_SOCKET` from the environment (same per-OS defaults as above),
@@ -419,8 +448,10 @@ for TLS/mTLS including adversarial reject cases, both wired into
 | TypeScript | [`sdk/javascript/cofferak-sdk`](sdk/javascript/cofferak-sdk) | `node:tls` (stdlib) | [`docs/sample-integration/typescript.md`](docs/sample-integration/typescript.md) |
 | JavaScript | same package, compiled `dist/` | `node:tls` (stdlib) | [`docs/sample-integration/javascript.md`](docs/sample-integration/javascript.md) |
 
-No third-party TLS library anywhere — every SDK uses its own language's
-standard library for the TLS transport.
+The Go, Python and Node SDKs use only their language's standard library;
+the Rust SDK uses `rustls` on AWS-LC, the same stack as the daemon.
+Copy-paste samples for all four, verified against a running daemon, are
+in [docs/getting-started.md](docs/getting-started.md#6-read-secrets-from-code-sdks).
 
 ```python
 # Python, the shortest example — same shape in every SDK above.
@@ -450,17 +481,14 @@ clear message if `systemd-creds` isn't on `PATH`, e.g. off Linux) and
 `tests/seal_macos.rs` (runs for real against a uniquely-named,
 test-scoped Keychain item on macOS, and cleans it up afterward).
 
-To additionally prove every SDK against a real running daemon:
+End-to-end scripts (all run in CI on Linux and macOS):
 
 ```bash
-./scripts/sdk-smoke.sh
-```
-
-And to prove server mode (TLS + mutual TLS) for real, including the
-mTLS reject/accept paths:
-
-```bash
-./scripts/server-mode-smoke.sh
+./scripts/quickstart-check.sh     # the Quickstart above, run as written
+./scripts/sdk-smoke.sh            # real CLI + daemon + sealing, all four SDKs, restart durability
+./scripts/server-mode-smoke.sh    # mutual TLS accept/reject in all four SDKs, downgrade refusals
+./scripts/bench.sh                # performance numbers (docs/benchmarks.md)
+./scripts/gen-certs.sh DIR NAME [CLIENT...]   # helper: P-384 CA, server and client certs
 ```
 
 ## Further reading
