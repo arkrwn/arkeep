@@ -77,6 +77,15 @@ fn encrypted_token(
     )
 }
 
+/// Edit the vault file the way the CLI does: load, change, seal with the
+/// DEK (bumping the generation), save.
+fn cli_edit(f: &Fixture, change: impl FnOnce(&mut VaultFile)) {
+    let mut disk = VaultFile::load(&f.vault_path).unwrap();
+    change(&mut disk);
+    disk.seal(&DEK);
+    disk.save(&f.vault_path).unwrap();
+}
+
 fn token() -> String {
     token_key(&SECRET)
 }
@@ -99,6 +108,7 @@ fn persistent_daemon(f: &Fixture) -> Daemon {
         f.vault_path.clone(),
         HOST_ID.to_string(),
         host_wrap,
+        0,
     )
 }
 
@@ -299,9 +309,9 @@ fn a_service_removed_from_the_vault_loses_access_immediately() {
     let mut d = persistent_daemon(&f);
     assert_eq!(set(&mut d, "app/K", b"v"), Response::Ok);
 
-    let mut disk = VaultFile::load(&f.vault_path).unwrap();
-    disk.services.remove("svc");
-    disk.save(&f.vault_path).unwrap();
+    cli_edit(&f, |disk| {
+        disk.services.remove("svc");
+    });
 
     assert_eq!(get(&mut d, "app/K"), Response::Denied);
 }
@@ -315,4 +325,69 @@ fn own_writes_do_not_trigger_needless_reloads_but_stay_consistent() {
         assert_eq!(set(&mut d, "app/LOOP", v.as_bytes()), Response::Ok);
         assert_eq!(get(&mut d, "app/LOOP"), Response::Value(v.into_bytes()));
     }
+}
+
+#[test]
+fn daemon_writes_seal_the_vault_and_advance_the_anchor() {
+    let f = fixture("seal");
+    let mut d = persistent_daemon(&f);
+    assert_eq!(set(&mut d, "app/A", b"1"), Response::Ok);
+    assert_eq!(set(&mut d, "app/B", b"2"), Response::Ok);
+    let disk = VaultFile::load(&f.vault_path).unwrap();
+    assert_eq!(disk.generation, 2);
+    assert_eq!(disk.verify(&DEK, Some(2)), Ok(()));
+    assert_eq!(
+        cofferak_core::format::read_anchor(&f.dir, HOST_ID, &DEK),
+        Ok(Some(2))
+    );
+}
+
+#[test]
+fn a_tampered_vault_is_not_loaded_and_blocks_writes() {
+    let f = fixture("tamper");
+    let mut d = persistent_daemon(&f);
+    assert_eq!(set(&mut d, "app/A", b"original"), Response::Ok);
+
+    // Someone edits the file directly: drops an entry and adds one, without
+    // the DEK-derived integrity key.
+    let mut disk = VaultFile::load(&f.vault_path).unwrap();
+    disk.entries.remove("app/A");
+    disk.entries.insert(
+        "app/INJECTED".to_string(),
+        cofferak_core::format::VaultEntry {
+            ciphertext: encrypt_entry(&DEK, &Aad::entry("app/INJECTED"), b"evil"),
+            version: 1,
+            updated_at: 0,
+        },
+    );
+    disk.save(&f.vault_path).unwrap();
+
+    // Reads keep the last verified state; the injected entry never appears.
+    assert_eq!(get(&mut d, "app/A"), Response::Value(b"original".to_vec()));
+    assert_eq!(get(&mut d, "app/INJECTED"), Response::NotFound);
+    assert!(matches!(set(&mut d, "app/B", b"x"), Response::Err(_)));
+}
+
+#[test]
+fn an_older_copy_put_back_is_refused() {
+    let f = fixture("rollback");
+    let mut d = persistent_daemon(&f);
+    assert_eq!(set(&mut d, "app/A", b"v1"), Response::Ok);
+    let old = std::fs::read(&f.vault_path).unwrap();
+    assert_eq!(set(&mut d, "app/A", b"v2"), Response::Ok);
+    assert_eq!(set(&mut d, "app/REVOKE_ME", b"x"), Response::Ok);
+
+    // Replace the file with the authentic but older copy.
+    let tmp = f.dir.join("old.tmp");
+    std::fs::write(&tmp, &old).unwrap();
+    std::fs::rename(&tmp, &f.vault_path).unwrap();
+
+    assert_eq!(get(&mut d, "app/A"), Response::Value(b"v2".to_vec()));
+    assert!(matches!(set(&mut d, "app/C", b"x"), Response::Err(_)));
+
+    // A daemon started later still refuses it (the anchor is at 3).
+    let anchor = cofferak_core::format::read_anchor(&f.dir, HOST_ID, &DEK).unwrap();
+    assert_eq!(anchor, Some(3));
+    let on_disk = VaultFile::load(&f.vault_path).unwrap();
+    assert!(on_disk.verify(&DEK, anchor).is_err());
 }

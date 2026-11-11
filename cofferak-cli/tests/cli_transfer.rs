@@ -12,6 +12,9 @@ mod enroll;
 #[path = "../src/commands/init.rs"]
 mod init;
 #[allow(dead_code)]
+#[path = "../src/commands/integrity.rs"]
+mod integrity;
+#[allow(dead_code)]
 #[path = "../src/commands/secrets.rs"]
 mod secrets;
 #[allow(dead_code)]
@@ -214,6 +217,7 @@ fn vault_with(tag: &str, seal_tag: u8, secrets: &[(&str, &[u8])]) -> (PathBuf, A
             },
         );
     }
+    vault.seal(&dek); // a sealed write, as the daemon makes
     vault.save(&vault_path(&dir)).unwrap();
     (dir, token)
 }
@@ -702,8 +706,8 @@ fn peer_names_are_validated_and_self_or_duplicate_trust_refused() {
     transfer::run_peer_add_with_seal(&a, "h", &s, "b", &b_id, false).unwrap();
     assert!(transfer::run_peer_add_with_seal(&a, "h", &s, "b", &b_id, false).is_err());
     assert!(transfer::run_peer_add_with_seal(&a, "h", &s, "b2", &b_id, false).is_err());
-    assert!(transfer::run_peer_rm(&a, "b").unwrap());
-    assert!(!transfer::run_peer_rm(&a, "b").unwrap());
+    assert!(transfer::run_peer_rm_with_seal(&a, "h", &FakeHostSeal { tag: 1 }, "b").unwrap());
+    assert!(!transfer::run_peer_rm_with_seal(&a, "h", &FakeHostSeal { tag: 1 }, "b").unwrap());
     cleanup(&a);
     cleanup(&b);
 }

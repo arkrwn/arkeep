@@ -312,9 +312,7 @@ pub fn run_init_host_with_seal(
         wrap_dek_for_host(&dek, host_id, &host_key),
     );
 
-    vault.save(&vpath)?;
-    let meta = VaultMeta::from_vault(&vault);
-    meta.save(&meta_path(data_dir))?;
+    super::integrity::commit(data_dir, &[host_id], &mut vault, &dek)?;
 
     Ok(())
 }

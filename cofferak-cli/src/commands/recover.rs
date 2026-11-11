@@ -24,10 +24,10 @@
 use std::path::Path;
 
 use cofferak_core::crypto::{unwrap_dek_for_root, wrap_dek_for_host, KeyBytes, RootPrivateKey};
-use cofferak_core::format::{VaultFile, VaultMeta};
+use cofferak_core::format::VaultFile;
 use cofferak_core::seal::HostSeal;
 
-use super::init::{meta_path, random_key, vault_path, CliError};
+use super::init::{random_key, vault_path, CliError};
 
 /// Recover a vault using the offline root private key stored at
 /// `root_privkey_path`, enrolling `new_host_id` with a freshly generated
@@ -83,6 +83,11 @@ pub fn run_recover(
         unwrap_dek_for_root(&root_wrap, &vault.root_pubkey, &root_privkey)
             .map_err(|_| CliError::BadRootKey)?,
     );
+    // Recovering must not resurrect a vault someone edited: the integrity
+    // code is checked (there is no anchor for the new host yet).
+    vault
+        .verify(&dek, None)
+        .map_err(|e| CliError::Invalid(e.to_string()))?;
 
     let new_host_key = KeyBytes::new(random_key());
     let sealed = new_host_seal
@@ -96,17 +101,8 @@ pub fn run_recover(
         wrap_dek_for_host(&dek, new_host_id, &new_host_key),
     );
 
-    // Atomic rewrite: serialize to a temp file in the same directory as
-    // `vault.cofferak`, then `rename` over the real path. See the module doc
-    // comment above.
-    let bytes = bincode::serialize(&vault)
-        .map_err(|e| CliError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
-    let tmp_path = data_dir.join("vault.cofferak.tmp");
-    std::fs::write(&tmp_path, &bytes)?;
-    std::fs::rename(&tmp_path, &vpath)?;
-
-    let meta = VaultMeta::from_vault(&vault);
-    meta.save(&meta_path(data_dir))?;
+    // Sealed, atomic write (unique 0600 temp file, fsync, rename).
+    super::integrity::commit(data_dir, &[new_host_id], &mut vault, &dek)?;
 
     Ok(())
 }

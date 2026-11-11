@@ -42,7 +42,7 @@ use std::path::PathBuf;
 
 use cofferak_core::acl::{path_allowed, AccessToken};
 use cofferak_core::crypto::{decrypt_entry, encrypt_entry, Aad, DekWrapHost, KeyBytes};
-use cofferak_core::format::{VaultEntry, VaultFile, VaultLock};
+use cofferak_core::format::{write_anchor, VaultEntry, VaultFile, VaultLock};
 
 use crate::audit::{AuditEntry, AuditLog};
 use crate::protocol::{Request, Response};
@@ -84,6 +84,12 @@ struct Persistence {
     stamp: Option<FileStamp>,
     /// Set once a re-keyed vault has been reported, to log it only once.
     rekey_reported: bool,
+    /// Newest vault generation this daemon has loaded or written (ADR
+    /// 0015). A file with a lower generation is an older copy.
+    generation_seen: u64,
+    /// Set while the file on disk fails its integrity or rollback check:
+    /// reads keep using the last good state, writes are refused.
+    integrity_failure: Option<String>,
 }
 
 /// (device, inode, mtime seconds, mtime nanoseconds, length) of a file.
@@ -173,6 +179,7 @@ impl Daemon {
         vault_path: PathBuf,
         host_id: String,
         host_wrap: DekWrapHost,
+        generation_seen: u64,
     ) -> Self {
         let stamp = file_stamp(&vault_path);
         self.persistence = Some(Persistence {
@@ -181,6 +188,8 @@ impl Daemon {
             host_wrap,
             stamp,
             rekey_reported: false,
+            generation_seen,
+            integrity_failure: None,
         });
         self
     }
@@ -205,6 +214,18 @@ impl Daemon {
                 return;
             }
         };
+        if let Err(e) = disk.verify(&self.dek, Some(p.generation_seen)) {
+            let msg = e.to_string();
+            if p.integrity_failure.as_deref() != Some(msg.as_str()) {
+                eprintln!(
+                    "cofferakd: ALERT: {msg}; serving the last verified state, writes refused"
+                );
+            }
+            p.integrity_failure = Some(msg);
+            p.stamp = now;
+            return;
+        }
+        p.integrity_failure = None;
         if disk.hosts.get(&p.host_id) != Some(&p.host_wrap) {
             if !p.rekey_reported {
                 eprintln!("cofferakd: vault on disk was re-keyed; serving the last loaded state, writes refused until restart");
@@ -214,6 +235,7 @@ impl Daemon {
             return;
         }
         p.stamp = now;
+        p.generation_seen = p.generation_seen.max(disk.generation);
         self.tokens = load_tokens(&disk, &self.dek);
         self.entries = disk.entries;
     }
@@ -242,6 +264,11 @@ impl Daemon {
             VaultLock::acquire(&p.vault_path).map_err(|e| format!("could not lock vault: {e}"))?;
         let mut disk = VaultFile::load(&p.vault_path)
             .map_err(|e| format!("could not re-read vault before writing: {e}"))?;
+        if let Some(why) = &p.integrity_failure {
+            return Err(why.clone());
+        }
+        disk.verify(&self.dek, Some(p.generation_seen))
+            .map_err(|e| e.to_string())?;
         if disk.hosts.get(&p.host_id) != Some(&p.host_wrap) {
             return Err(format!(
                 "vault on disk was re-keyed (rotate-dek) or host '{}' was re-enrolled \
@@ -257,10 +284,17 @@ impl Daemon {
                 disk.entries.remove(path);
             }
         }
+        disk.seal(&self.dek);
         disk.save(&p.vault_path)
             .map_err(|e| format!("could not write vault: {e}"))?;
         // Our own write must not look like an external change.
         p.stamp = file_stamp(&p.vault_path);
+        p.generation_seen = disk.generation;
+        if let Some(dir) = p.vault_path.parent() {
+            if let Err(e) = write_anchor(dir, &p.host_id, &self.dek, disk.generation) {
+                eprintln!("cofferakd: could not update this host's anchor (rollback protection is degraded until the next write): {e}");
+            }
+        }
         Ok(())
     }
 

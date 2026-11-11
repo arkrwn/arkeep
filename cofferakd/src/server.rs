@@ -239,6 +239,26 @@ pub fn run() {
         })
     };
 
+    // Integrity and rollback check (ADR 0015) before serving anything.
+    let anchor = cofferak_core::format::read_anchor(&data_dir, &host_id, &dek).unwrap_or_else(|_| {
+        eprintln!(
+            "cofferakd: the anchor file for host '{host_id}' was modified outside cofferak; refusing to start"
+        );
+        std::process::exit(1);
+    });
+    if let Err(e) = vault.verify(&dek, anchor) {
+        eprintln!("cofferakd: {e}; refusing to start");
+        std::process::exit(1);
+    }
+    let generation_seen = anchor.unwrap_or(0).max(vault.generation);
+    if !vault.mac.is_empty() && anchor != Some(generation_seen) {
+        if let Err(e) =
+            cofferak_core::format::write_anchor(&data_dir, &host_id, &dek, generation_seen)
+        {
+            eprintln!("cofferakd: could not write this host's anchor: {e}");
+        }
+    }
+
     let audit_path = data_dir.join("audit.jsonl");
     let audit = AuditLog::open(&audit_path).unwrap_or_else(|e| {
         eprintln!(
@@ -257,6 +277,7 @@ pub fn run() {
             data_dir.join("vault.cofferak"),
             host_id.clone(),
             host_wrap,
+            generation_seen,
         ),
     ));
 

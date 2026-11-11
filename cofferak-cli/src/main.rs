@@ -157,6 +157,10 @@ enum Command {
     /// Manage trusted peer coffers (who may send you transfers, and whom
     /// you can export to with `export --to`).
     Peer(PeerArgs),
+    /// After restoring an older vault backup on purpose: accept the vault
+    /// now on disk (it must be an authentic copy of this vault). Restart
+    /// the daemon afterwards.
+    AcceptRestore(DataDirArgs),
 }
 
 #[derive(Args)]
@@ -397,6 +401,13 @@ struct ImportArgs {
     /// (instead of requiring the sender to be a stored peer).
     #[arg(long, value_name = "IDENTITY_FILE")]
     from: Option<PathBuf>,
+    /// Vault data directory. Defaults to `$COFFERAK_DATA_DIR` / the platform data dir.
+    #[arg(long, value_name = "DIR")]
+    data_dir: Option<PathBuf>,
+}
+
+#[derive(Args)]
+struct DataDirArgs {
     /// Vault data directory. Defaults to `$COFFERAK_DATA_DIR` / the platform data dir.
     #[arg(long, value_name = "DIR")]
     data_dir: Option<PathBuf>,
@@ -866,6 +877,7 @@ fn main() {
         Command::Import(args) => cmd_import(args),
         Command::Identity(args) => cmd_identity(args),
         Command::Peer(args) => cmd_peer(args),
+        Command::AcceptRestore(args) => cmd_accept_restore(args),
         Command::Audit(args) => match args.command {
             AuditCommand::Tail(tail_args) => {
                 let data_dir = resolve_data_dir(tail_args.data_dir);
@@ -1322,7 +1334,9 @@ fn cmd_peer(args: PeerArgs) {
         }
         PeerCommand::Rm { name } => {
             let removed = with_admin_lock(&data_dir, || {
-                commands::transfer::run_peer_rm(&data_dir, &name)
+                with_local_host(&data_dir, |h, seal| {
+                    commands::transfer::run_peer_rm_with_seal(&data_dir, h, seal, &name)
+                })
             })
             .unwrap_or_else(|e| fail("peer rm", e));
             if removed {
@@ -1332,4 +1346,25 @@ fn cmd_peer(args: PeerArgs) {
             }
         }
     }
+}
+
+fn cmd_accept_restore(args: DataDirArgs) {
+    let data_dir = resolve_data_dir(args.data_dir);
+    let r = with_admin_lock(&data_dir, || {
+        with_local_host(&data_dir, |h, seal| {
+            commands::integrity::run_accept_restore_with_seal(&data_dir, h, seal)
+        })
+    })
+    .unwrap_or_else(|e| fail("accept-restore", e));
+    match r.previous_anchor {
+        Some(prev) if prev > r.accepted_generation => println!(
+            "accepted the restored vault at generation {} (this host had seen {prev}): changes made after that backup are gone",
+            r.accepted_generation
+        ),
+        _ => println!(
+            "accepted the vault at generation {} (nothing was rolled back)",
+            r.accepted_generation
+        ),
+    }
+    println!("restart the daemon so it serves the restored vault");
 }

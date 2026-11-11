@@ -32,10 +32,10 @@ use std::path::Path;
 
 use cofferak_core::acl::{AccessToken, Permission};
 use cofferak_core::crypto::{encrypt_entry, unwrap_dek_for_host, wrap_dek_for_host, Aad, KeyBytes};
-use cofferak_core::format::{VaultFile, VaultMeta};
+use cofferak_core::format::VaultFile;
 use cofferak_core::seal::{HostSeal, SealedBlob};
 
-use super::init::{current_host_seal, host_seal_path, meta_path, random_key, vault_path, CliError};
+use super::init::{current_host_seal, host_seal_path, random_key, vault_path, CliError};
 
 /// Enroll `new_host_id` into a vault that already has `this_host_id`
 /// enrolled.
@@ -86,6 +86,7 @@ pub fn run_enroll_host_with_seal(
         unwrap_dek_for_host(&this_wrap, this_host_id, &this_host_key)
             .map_err(|e| CliError::Io(std::io::Error::other(e)))?,
     );
+    super::integrity::check(data_dir, this_host_id, &vault, &dek)?;
 
     let new_host_key = KeyBytes::new(random_key());
     let sealed = new_host_seal
@@ -99,9 +100,7 @@ pub fn run_enroll_host_with_seal(
         wrap_dek_for_host(&dek, new_host_id, &new_host_key),
     );
 
-    vault.save(&vpath)?;
-    let meta = VaultMeta::from_vault(&vault);
-    meta.save(&meta_path(data_dir))?;
+    super::integrity::commit(data_dir, &[this_host_id, new_host_id], &mut vault, &dek)?;
 
     Ok(())
 }
@@ -200,6 +199,7 @@ pub fn run_enroll_service_with_seal(
         unwrap_dek_for_host(&wrap, host_id, &host_key)
             .map_err(|e| CliError::Io(std::io::Error::other(e)))?,
     );
+    super::integrity::check(data_dir, host_id, &vault, &dek)?;
 
     let token = AccessToken {
         service_id: service_id.to_string(),
@@ -214,9 +214,7 @@ pub fn run_enroll_service_with_seal(
 
     vault.services.insert(service_id.to_string(), entry);
 
-    vault.save(&vpath)?;
-    let meta = VaultMeta::from_vault(&vault);
-    meta.save(&meta_path(data_dir))?;
+    super::integrity::commit(data_dir, &[host_id], &mut vault, &dek)?;
 
     Ok(token)
 }

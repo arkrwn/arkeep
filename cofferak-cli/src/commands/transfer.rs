@@ -15,12 +15,12 @@ use cofferak_core::acl::AccessToken;
 use cofferak_core::bundle::{self, Bundle, BundleEntry};
 use cofferak_core::crypto::{decrypt_entry, encrypt_entry, unwrap_dek_for_host, Aad, KeyBytes};
 use cofferak_core::dotenv;
-use cofferak_core::format::{VaultEntry, VaultFile, VaultMeta};
+use cofferak_core::format::{VaultEntry, VaultFile};
 use cofferak_core::identity::{self, IdentityPublic, IdentitySecret};
 use cofferak_core::seal::{HostSeal, SealedBlob};
 use zeroize::Zeroizing;
 
-use super::init::{host_seal_path, meta_path, vault_path, CliError};
+use super::init::{host_seal_path, vault_path, CliError};
 use super::secrets::{run_get, run_list, run_set};
 use crate::client::Client;
 
@@ -156,6 +156,7 @@ fn open_vault(
     }
     let vault = VaultFile::load(&vpath)?;
     let dek = unlock(data_dir, &vault, host_id, seal)?;
+    super::integrity::check(data_dir, host_id, &vault, &dek)?;
     Ok((vault, dek))
 }
 
@@ -178,10 +179,13 @@ fn ensure_identity(
     Ok((id, true))
 }
 
-fn save_vault(data_dir: &Path, vault: &VaultFile) -> Result<(), CliError> {
-    vault.save(&vault_path(data_dir))?;
-    VaultMeta::from_vault(vault).save(&meta_path(data_dir))?;
-    Ok(())
+fn save_vault(
+    data_dir: &Path,
+    host_id: &str,
+    vault: &mut VaultFile,
+    dek: &[u8; 32],
+) -> Result<(), CliError> {
+    super::integrity::commit(data_dir, &[host_id], vault, dek)
 }
 
 /// This coffer's public identity (created on first use).
@@ -193,7 +197,7 @@ pub fn run_identity_with_seal(
     let (mut vault, dek) = open_vault(data_dir, host_id, seal)?;
     let (id, created) = ensure_identity(&mut vault, &dek)?;
     if created {
-        save_vault(data_dir, &vault)?;
+        save_vault(data_dir, host_id, &mut vault, &dek)?;
     }
     Ok(id.public().clone())
 }
@@ -250,7 +254,7 @@ pub fn run_peer_add_with_seal(
         name.to_string(),
         encrypt_entry(&dek, &Aad::peer(name), peer.to_text().as_bytes()),
     );
-    save_vault(data_dir, &vault)
+    save_vault(data_dir, host_id, &mut vault, &dek)
 }
 
 /// Trusted peers by name.
@@ -264,15 +268,16 @@ pub fn run_peer_list_with_seal(
 }
 
 /// Stop trusting the peer `name`. Returns false if there was none.
-pub fn run_peer_rm(data_dir: &Path, name: &str) -> Result<bool, CliError> {
-    let vpath = vault_path(data_dir);
-    if !vpath.exists() {
-        return Err(CliError::VaultMissing);
-    }
-    let mut vault = VaultFile::load(&vpath)?;
+pub fn run_peer_rm_with_seal(
+    data_dir: &Path,
+    host_id: &str,
+    seal: &dyn HostSeal,
+    name: &str,
+) -> Result<bool, CliError> {
+    let (mut vault, dek) = open_vault(data_dir, host_id, seal)?;
     let removed = vault.peers.remove(name).is_some();
     if removed {
-        save_vault(data_dir, &vault)?;
+        save_vault(data_dir, host_id, &mut vault, &dek)?;
     }
     Ok(removed)
 }
@@ -295,7 +300,7 @@ pub fn run_export_to_peer_with_seal(
     })?;
     let (me, created) = ensure_identity(&mut vault, &dek)?;
     if created {
-        save_vault(data_dir, &vault)?;
+        save_vault(data_dir, host_id, &mut vault, &dek)?;
     }
     let b = build_bundle(&vault, &dek, sel)?;
     let report = ExportReport {
@@ -442,7 +447,7 @@ pub fn run_import_with_seal(
     report.source_fingerprint = b.source_fingerprint.clone();
     apply_bundle(&mut vault, &dek, &b, overwrite, &mut report)?;
     if !dry_run {
-        save_vault(data_dir, &vault)?;
+        save_vault(data_dir, host_id, &mut vault, &dek)?;
     }
     Ok(report)
 }

@@ -25,9 +25,12 @@ use cofferakd::daemon;
 #[allow(dead_code)] // each test binary uses only a subset of these shared source modules
 #[path = "../src/commands/enroll.rs"]
 mod enroll;
-#[allow(dead_code)] // each test binary uses only a subset of these shared source modules
+#[allow(dead_code)]
 #[path = "../src/commands/init.rs"]
 mod init;
+#[allow(dead_code)] // each test binary uses only a subset of these shared source modules
+#[path = "../src/commands/integrity.rs"]
+mod integrity;
 use cofferakd::protocol;
 #[allow(dead_code)] // each test binary uses only a subset of these shared source modules
 #[path = "../src/commands/secrets.rs"]
@@ -372,6 +375,7 @@ fn run_rotate_dek_reencrypts_entries_and_services_and_invalidates_old_dek() {
             b"service-token-bytes",
         ),
     );
+    vault.seal(&old_dek); // seed the way the daemon would: a sealed write
     vault.save(&vault_path(&dir)).expect("save seeded vault");
 
     let hosts: Vec<(String, Box<dyn HostSeal>)> = vec![
