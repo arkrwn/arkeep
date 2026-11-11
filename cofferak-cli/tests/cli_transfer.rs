@@ -15,6 +15,9 @@ mod init;
 #[path = "../src/commands/integrity.rs"]
 mod integrity;
 #[allow(dead_code)]
+#[path = "../src/presence.rs"]
+mod presence;
+#[allow(dead_code)]
 #[path = "../src/commands/secrets.rs"]
 mod secrets;
 #[allow(dead_code)]
@@ -538,7 +541,10 @@ fn peer_transfer_moves_secrets_both_ways_and_reencrypts_under_the_receivers_key(
         "h",
         &FakeHostSeal { tag: 2 },
         &bytes,
-        transfer::ImportKey::Identity { from: None },
+        transfer::ImportKey::Identity {
+            from: None,
+            allow_old: false,
+        },
         false,
         true,
         false,
@@ -546,6 +552,27 @@ fn peer_transfer_moves_secrets_both_ways_and_reencrypts_under_the_receivers_key(
     .unwrap();
     assert_eq!(r.from_peer.as_deref(), Some("mac"));
     assert_eq!(r.entries_added, 1);
+    // The same transfer again is a replay and is refused, vault unchanged.
+    let before = std::fs::read(vault_path(&srv)).unwrap();
+    let replay = transfer::run_import_with_seal(
+        &srv,
+        "h",
+        &FakeHostSeal { tag: 2 },
+        &bytes,
+        transfer::ImportKey::Identity {
+            from: None,
+            allow_old: false,
+        },
+        true,
+        true,
+        false,
+    )
+    .unwrap_err();
+    assert!(
+        matches!(replay, CliError::Invalid(ref m) if m.contains("replay")),
+        "{replay}"
+    );
+    assert_eq!(std::fs::read(vault_path(&srv)).unwrap(), before);
     // Readable on the server with the server's own key only.
     assert_eq!(value_of(&srv, 2, "app/MAC_ONLY").unwrap(), b"from-mac");
     assert!(
@@ -567,7 +594,10 @@ fn peer_transfer_moves_secrets_both_ways_and_reencrypts_under_the_receivers_key(
         "h",
         &FakeHostSeal { tag: 1 },
         &back,
-        transfer::ImportKey::Identity { from: None },
+        transfer::ImportKey::Identity {
+            from: None,
+            allow_old: false,
+        },
         false,
         true,
         false,
@@ -611,7 +641,10 @@ fn transfers_from_untrusted_coffers_or_for_other_coffers_are_refused() {
         "h",
         &FakeHostSeal { tag: 2 },
         &forged,
-        transfer::ImportKey::Identity { from: None },
+        transfer::ImportKey::Identity {
+            from: None,
+            allow_old: false,
+        },
         false,
         true,
         false,
@@ -637,7 +670,10 @@ fn transfers_from_untrusted_coffers_or_for_other_coffers_are_refused() {
         "h",
         &FakeHostSeal { tag: 3 },
         &for_srv,
-        transfer::ImportKey::Identity { from: None },
+        transfer::ImportKey::Identity {
+            from: None,
+            allow_old: false,
+        },
         false,
         true,
         false,
@@ -692,7 +728,10 @@ fn identity_and_peers_survive_dek_rotation() {
         "h",
         &FakeHostSeal { tag: 2 },
         &bytes,
-        transfer::ImportKey::Identity { from: None },
+        transfer::ImportKey::Identity {
+            from: None,
+            allow_old: false,
+        },
         false,
         true,
         false,

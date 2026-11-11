@@ -1,5 +1,6 @@
 mod client;
 mod commands;
+mod presence;
 
 // The wire protocol `client` speaks, from `cofferakd`'s library target
 // (ADR 0004) — one shared definition, not a second copy.
@@ -208,6 +209,12 @@ struct InitArgs {
     #[arg(long, value_name = "ID")]
     host: Option<String>,
 
+    /// macOS: don't require Touch ID or the login password for admin
+    /// commands on this host (for CI and headless Macs). Same as
+    /// `COFFERAK_NO_USER_PRESENCE=1`. Can't be changed later.
+    #[arg(long, requires = "host")]
+    no_user_presence: bool,
+
     /// Vault data directory. Defaults to the platform data dir, or
     /// `$COFFERAK_DATA_DIR` if set.
     #[arg(long, value_name = "DIR")]
@@ -270,7 +277,7 @@ struct SetArgs {
     from_file: Option<PathBuf>,
     /// Service access token (hex-encoded secret). Defaults to
     /// `$COFFERAK_TOKEN` if set.
-    #[arg(long, env = "COFFERAK_TOKEN", hide_env_values = true)]
+    #[arg(long, env = "COFFERAK_TOKEN", hide_env_values = true, hide = true)]
     token: String,
     /// Daemon Unix socket path. Defaults to the platform socket path, or
     /// `$COFFERAK_SOCKET` if set.
@@ -288,7 +295,7 @@ struct GetArgs {
     output: Option<PathBuf>,
     /// Service access token (hex-encoded secret). Defaults to
     /// `$COFFERAK_TOKEN` if set.
-    #[arg(long, env = "COFFERAK_TOKEN", hide_env_values = true)]
+    #[arg(long, env = "COFFERAK_TOKEN", hide_env_values = true, hide = true)]
     token: String,
     /// Daemon Unix socket path. Defaults to the platform socket path, or
     /// `$COFFERAK_SOCKET` if set.
@@ -302,7 +309,7 @@ struct RmArgs {
     path: String,
     /// Service access token (hex-encoded secret). Defaults to
     /// `$COFFERAK_TOKEN` if set.
-    #[arg(long, env = "COFFERAK_TOKEN", hide_env_values = true)]
+    #[arg(long, env = "COFFERAK_TOKEN", hide_env_values = true, hide = true)]
     token: String,
     /// Daemon Unix socket path. Defaults to the platform socket path, or
     /// `$COFFERAK_SOCKET` if set.
@@ -320,7 +327,7 @@ struct ListArgs {
     prefix: String,
     /// Service access token (hex-encoded secret). Defaults to
     /// `$COFFERAK_TOKEN` if set.
-    #[arg(long, env = "COFFERAK_TOKEN", hide_env_values = true)]
+    #[arg(long, env = "COFFERAK_TOKEN", hide_env_values = true, hide = true)]
     token: String,
     /// Daemon Unix socket path. Defaults to the platform socket path, or
     /// `$COFFERAK_SOCKET` if set.
@@ -342,7 +349,7 @@ struct ImportEnvArgs {
     #[arg(long)]
     dry_run: bool,
     /// Service access token. Defaults to `$COFFERAK_TOKEN` if set.
-    #[arg(long, env = "COFFERAK_TOKEN", hide_env_values = true)]
+    #[arg(long, env = "COFFERAK_TOKEN", hide_env_values = true, hide = true)]
     token: String,
     /// Daemon Unix socket path. Defaults to `$COFFERAK_SOCKET` / the platform path.
     #[arg(long, value_name = "PATH")]
@@ -362,7 +369,7 @@ struct ExportEnvArgs {
     #[arg(long)]
     force: bool,
     /// Service access token. Defaults to `$COFFERAK_TOKEN` if set.
-    #[arg(long, env = "COFFERAK_TOKEN", hide_env_values = true)]
+    #[arg(long, env = "COFFERAK_TOKEN", hide_env_values = true, hide = true)]
     token: String,
     /// Daemon Unix socket path. Defaults to `$COFFERAK_SOCKET` / the platform path.
     #[arg(long, value_name = "PATH")]
@@ -385,7 +392,7 @@ struct RunArgs {
     #[arg(long)]
     keep_token: bool,
     /// Service access token. Defaults to `$COFFERAK_TOKEN` if set.
-    #[arg(long, env = "COFFERAK_TOKEN", hide_env_values = true)]
+    #[arg(long, env = "COFFERAK_TOKEN", hide_env_values = true, hide = true)]
     token: String,
     /// Daemon Unix socket path. Defaults to `$COFFERAK_SOCKET` / the platform path.
     #[arg(long, value_name = "PATH")]
@@ -446,6 +453,10 @@ struct ImportArgs {
     /// this flag only secrets are imported.
     #[arg(long)]
     with_tokens: bool,
+    /// Accept a peer transfer made more than 30 days ago (refused by
+    /// default in case it is a replay).
+    #[arg(long)]
+    allow_old: bool,
     /// Vault data directory. Defaults to `$COFFERAK_DATA_DIR` / the platform data dir.
     #[arg(long, value_name = "DIR")]
     data_dir: Option<PathBuf>,
@@ -610,10 +621,10 @@ fn resolve_socket_path(cli_socket: Option<PathBuf>) -> PathBuf {
         .unwrap_or_else(default_socket_path)
 }
 
-/// Largest value `set` accepts. The wire protocol encodes bytes as a JSON
-/// array (up to 4 characters per byte) inside a 16 MiB line, so 3 MiB
-/// leaves headroom; secrets, keys and certificates are far smaller.
-const MAX_SECRET_BYTES: usize = 3 * 1024 * 1024;
+/// Largest value `set` accepts: the daemon's own limit (1 MiB), checked
+/// here too so the error comes before anything is sent. Secrets, keys and
+/// certificates are far smaller.
+const MAX_SECRET_BYTES: usize = cofferakd::protocol::MAX_VALUE_BYTES;
 
 /// The value for `set`, from the positional argument, `--stdin` or
 /// `--from-file`, held in zeroize-on-drop memory.
@@ -691,7 +702,12 @@ fn default_sigpipe() {
 }
 
 fn main() {
-    let cli = Cli::parse();
+    let cli = Cli::parse_from(token_args(std::env::args_os().collect()));
+    // Not for `run`: the program it starts should be debuggable as usual.
+    if !matches!(cli.command, Command::Run(_)) {
+        cofferakd::hardening::harden_process();
+    }
+    cofferakd::hardening::enable_anchor_mirror();
     if !matches!(cli.command, Command::Daemon) {
         default_sigpipe();
     }
@@ -712,6 +728,11 @@ fn main() {
                 },
                 (false, Some(host_id)) => {
                     require_valid_id("host", &host_id);
+                    if args.no_user_presence {
+                        // Read once by the seal below, while this process
+                        // is still single-threaded.
+                        std::env::set_var(presence::NO_PRESENCE_ENV, "1");
+                    }
                     match with_admin_lock(&data_dir, || run_init_host(&data_dir, &host_id)) {
                         Ok(()) => {
                             println!("host '{host_id}' enrolled");
@@ -1257,6 +1278,7 @@ fn cmd_import(args: ImportArgs) {
                 Some(p) => commands::transfer::ImportKey::Passphrase(p.as_bytes()),
                 None => commands::transfer::ImportKey::Identity {
                     from: pinned.clone(),
+                    allow_old: args.allow_old,
                 },
             };
             commands::transfer::run_import_with_seal(
@@ -1482,4 +1504,52 @@ fn dangerous_env(name: &str) -> bool {
         || name.starts_with("DYLD_")
         || name.starts_with("BASH_FUNC_")
         || name.starts_with("COFFERAK_")
+}
+
+/// Tokens never travel on the command line, where every local user can
+/// read them with `ps`. `--token VALUE` is refused. `--token-file FILE`
+/// (or `-` for stdin) is read here and handed to the parser through
+/// `COFFERAK_TOKEN`, the same as setting that variable yourself.
+fn token_args(args: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsString> {
+    let mut out = Vec::with_capacity(args.len());
+    let mut it = args.into_iter();
+    while let Some(a) = it.next() {
+        let text = a.to_string_lossy();
+        if text == "--" {
+            out.push(a);
+            out.extend(it);
+            break;
+        }
+        if text == "--token" || text.starts_with("--token=") {
+            fail(
+                "token",
+                "--token on the command line is visible to other users in `ps`. Set COFFERAK_TOKEN or use --token-file FILE",
+            );
+        }
+        let file = if text == "--token-file" {
+            Some(
+                it.next()
+                    .unwrap_or_else(|| fail("token", "--token-file needs a file")),
+            )
+        } else {
+            text.strip_prefix("--token-file=")
+                .map(std::ffi::OsString::from)
+        };
+        if let Some(file) = file {
+            let raw = if file == "-" {
+                let mut s = String::new();
+                std::io::Read::read_to_string(&mut std::io::stdin(), &mut s)
+                    .unwrap_or_else(|e| fail("token", format!("stdin: {e}")));
+                s
+            } else {
+                std::fs::read_to_string(&file)
+                    .unwrap_or_else(|e| fail("token", format!("{}: {e}", file.to_string_lossy())))
+            };
+            // Still single-threaded: nothing else reads the environment yet.
+            std::env::set_var("COFFERAK_TOKEN", raw.trim());
+            continue;
+        }
+        out.push(a);
+    }
+    out
 }

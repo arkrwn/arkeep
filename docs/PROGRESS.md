@@ -59,6 +59,7 @@ from a command or test that was actually run. States: `todo`, `doing`,
 | Vault format 3 (identity, peers) with format-2 upgrade | done | `format.rs` test loads a format-2 file and upgrades it |
 | Vault integrity code and rollback protection (ADR 0015) | done | `format.rs` and `daemon_persistence.rs` tests: edits, splices, stripped codes and older copies are refused, live and at startup; `accept-restore` for intentional restores; `rotate-dek`/`recover` use the safe atomic writer |
 | Security hardening from the internal audit (ADR 0016) | done | symlink-safe root writes, `import --with-tokens`, `run --allow-env`, connection caps and deadlines, value cap, audit escaping; known limits listed in ADR 0016 |
+| Closing the known limits (ADR 0017) | done | macOS user presence, `--token-file`, memory wiping, TLS service binding and CRLs, replay protection, anchor mirror; proved by unit tests, server-mode-smoke and quickstart-check in CI |
 | Benchmarks | done | `scripts/bench.sh`, run in CI on every build; results in `docs/benchmarks.md` |
 
 ## Known gaps / open items

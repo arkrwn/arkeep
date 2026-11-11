@@ -5,6 +5,8 @@
 # replaced by a pipe, and names are suffixed so it never touches a real
 # vault. Used by CI on ubuntu-latest and macos-latest.
 set -euo pipefail
+# Unattended run: hosts created here must not ask for Touch ID (macOS).
+export COFFERAK_NO_USER_PRESENCE=1
 
 cd "$(dirname "$0")/.."
 cargo build --release --quiet
@@ -22,7 +24,9 @@ cleanup() {
   [[ -n "$DPID" ]] && kill "$DPID" 2>/dev/null || true
   if [[ "$OS" == "Darwin" ]]; then
     security delete-generic-password -s cofferak -a "$HOST" >/dev/null 2>&1 || true
+    security delete-generic-password -s cofferak-anchor -a "$HOST" >/dev/null 2>&1 || true
     security delete-generic-password -s cofferak -a "qsb-$$" >/dev/null 2>&1 || true
+    security delete-generic-password -s cofferak-anchor -a "qsb-$$" >/dev/null 2>&1 || true
   fi
   sudo -n rm -rf "$WORK" 2>/dev/null || rm -rf "$WORK"
 }
@@ -102,7 +106,17 @@ $ADMIN_B export --to a -o "$WORK/b2a.cfk" >/dev/null
 $ADMIN import "$WORK/b2a.cfk" | grep -q "from peer 'b' (signature verified): secrets 0 new, 0 replaced, 3 kept"
 # A file made for B must not open on A, and B must refuse an untrusted sender.
 if $ADMIN import "$WORK/a2b.cfk" 2>/dev/null; then echo "A imported a bundle addressed to B" >&2; exit 1; fi
+if $ADMIN_B import "$WORK/a2b.cfk" 2>/dev/null; then echo "B accepted the same transfer twice (replay)" >&2; exit 1; fi
 $ADMIN_B peer rm a >/dev/null
 if $ADMIN_B import "$WORK/a2b.cfk" 2>/dev/null; then echo "B accepted an untrusted sender" >&2; exit 1; fi
+
+step "9. an older copy of the vault put back is refused, accept-restore accepts it on purpose"
+cp "$COFFERAK_DATA_DIR/vault.cofferak" "$WORK/old.cofferak"
+printf 'newer' | cofferak set myapp/ROLLBACK --stdin
+cp "$WORK/old.cofferak" "$COFFERAK_DATA_DIR/vault.cofferak.restore"
+mv "$COFFERAK_DATA_DIR/vault.cofferak.restore" "$COFFERAK_DATA_DIR/vault.cofferak"
+[[ "$(cofferak get myapp/ROLLBACK)" == "newer" ]]   # the daemon keeps the last verified state
+if printf x | cofferak set myapp/AFTER --stdin 2>/dev/null; then echo "daemon wrote over an older copy" >&2; exit 1; fi
+$ADMIN accept-restore | grep -q "accepted the restored vault"
 
 echo "== README quickstart: all steps passed ($OS)"

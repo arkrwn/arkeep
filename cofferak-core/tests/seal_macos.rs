@@ -84,3 +84,35 @@ fn seal_unseal_round_trips_and_missing_item_is_invalid() {
         std::panic::resume_unwind(panic);
     }
 }
+
+#[test]
+fn the_presence_flag_is_stored_with_the_key_and_does_not_change_it() {
+    let suffix = format!(
+        "{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let service = format!("cofferak-test-presence-{suffix}");
+    let account = format!("acct-{suffix}");
+    delete_item(&service, &account);
+    let sealer = KeychainSeal {
+        service: service.clone(),
+        account: account.clone(),
+    };
+    let key = [7u8; 32];
+    let result = std::panic::catch_unwind(|| {
+        let blob = sealer.seal_with_presence(&key, true).unwrap();
+        assert!(sealer.presence_required().unwrap());
+        assert_eq!(sealer.unseal(&blob).unwrap(), key);
+        let blob = sealer.seal_with_presence(&key, false).unwrap();
+        assert!(!sealer.presence_required().unwrap());
+        assert_eq!(sealer.unseal(&blob).unwrap(), key);
+    });
+    delete_item(&service, &account);
+    if let Err(p) = result {
+        std::panic::resume_unwind(p);
+    }
+}

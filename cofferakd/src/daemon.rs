@@ -259,6 +259,38 @@ impl Daemon {
 
     /// Handle one request: resolve the token, enforce the ACL, perform the
     /// action, and append exactly one audit entry before returning.
+    /// Serve `req` for a TLS client whose certificate names are
+    /// `cert_names` (CN and DNS SANs): the token must belong to a service
+    /// with one of those names (ADR 0017), so a leaked token is useless
+    /// without that service's certificate, and the other way round.
+    pub fn handle_request_for_certificate(
+        &mut self,
+        req: Request,
+        cert_names: &[String],
+    ) -> Response {
+        self.refresh_from_disk();
+        let (token, path, action) = match &req {
+            Request::Get { token, path } => (token, path, "get"),
+            Request::Set { token, path, .. } => (token, path, "set"),
+            Request::Rm { token, path } => (token, path, "rm"),
+            Request::List { token, prefix } => (token, prefix, "list"),
+        };
+        if let Some(tok) = self.tokens.get(&token_digest(token)) {
+            if !cert_names.contains(&tok.service_id) {
+                let service = tok.service_id.clone();
+                let path = path.clone();
+                self.log(
+                    &service,
+                    &path,
+                    action,
+                    "denied: certificate is not for this service",
+                );
+                return Response::Denied;
+            }
+        }
+        self.handle_request(req)
+    }
+
     pub fn handle_request(&mut self, req: Request) -> Response {
         self.refresh_from_disk();
         match req {
@@ -359,6 +391,8 @@ impl Daemon {
     }
 
     fn handle_set(&mut self, token: &str, path: &str, value: Vec<u8>) -> Response {
+        // Wiped when this function returns, whatever the outcome.
+        let value = zeroize::Zeroizing::new(value);
         let tok = self.tokens.get(&token_digest(token)).cloned();
         let Some(tok) = tok else {
             self.log("unknown", path, "set", "denied");

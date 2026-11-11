@@ -211,9 +211,11 @@ pub fn current_host_seal(host_id: &str) -> Box<dyn HostSeal> {
 #[cfg(target_os = "macos")]
 #[allow(dead_code)]
 pub fn current_host_seal(host_id: &str) -> Box<dyn HostSeal> {
-    Box::new(KeychainSeal {
-        service: "cofferak".to_string(),
-        account: host_id.to_string(),
+    Box::new(crate::presence::PresenceGatedSeal {
+        inner: KeychainSeal {
+            service: "cofferak".to_string(),
+            account: host_id.to_string(),
+        },
     })
 }
 

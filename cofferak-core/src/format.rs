@@ -335,9 +335,56 @@ fn anchor_tag(dek: &[u8; 32], host_id: &str, generation: u64) -> aws_lc_rs::hmac
     aws_lc_rs::hmac::sign(&key, &msg)
 }
 
-/// Read `host_id`'s anchor. `Ok(None)` if there is none yet; an anchor
-/// whose code doesn't verify under `dek` is reported as tampering.
+/// A second place to keep each host's anchor, outside the data directory
+/// (ADR 0017): the macOS Keychain, or a separate state directory on Linux.
+/// Restoring the data directory from a backup then leaves the newer
+/// mirrored anchor in place, so the older vault is still detected.
+pub trait AnchorMirror: Send + Sync {
+    /// The stored anchor bytes, `Ok(None)` if there are none yet.
+    fn read(&self, host_id: &str) -> std::io::Result<Option<Vec<u8>>>;
+    fn write(&self, host_id: &str, bytes: &[u8]) -> std::io::Result<()>;
+}
+
+static ANCHOR_MIRROR: std::sync::OnceLock<Box<dyn AnchorMirror>> = std::sync::OnceLock::new();
+
+/// Turn on the anchor mirror for this process (the real binaries do this
+/// at startup, tests don't). Only the first call has an effect.
+pub fn set_anchor_mirror(mirror: Box<dyn AnchorMirror>) {
+    let _ = ANCHOR_MIRROR.set(mirror);
+}
+
+fn decode_anchor(bytes: &[u8], host_id: &str, dek: &[u8; 32]) -> Result<u64, IntegrityError> {
+    if bytes.len() != 8 + 48 {
+        return Err(IntegrityError::Tampered);
+    }
+    let generation = u64::from_le_bytes(bytes[..8].try_into().expect("8 bytes"));
+    if anchor_tag(dek, host_id, generation).as_ref() != &bytes[8..] {
+        return Err(IntegrityError::Tampered);
+    }
+    Ok(generation)
+}
+
+/// Read `host_id`'s anchor: the newest of the anchor file and its mirror.
+/// `Ok(None)` if there is none yet. An anchor whose code doesn't verify
+/// under `dek` is reported as tampering.
 pub fn read_anchor(
+    data_dir: &Path,
+    host_id: &str,
+    dek: &[u8; 32],
+) -> Result<Option<u64>, IntegrityError> {
+    let from_file = read_anchor_file(data_dir, host_id, dek)?;
+    let from_mirror = match ANCHOR_MIRROR.get() {
+        Some(m) => match m.read(host_id) {
+            Ok(Some(bytes)) => Some(decode_anchor(&bytes, host_id, dek)?),
+            Ok(None) => None,
+            Err(_) => return Err(IntegrityError::Tampered),
+        },
+        None => None,
+    };
+    Ok(from_file.max(from_mirror))
+}
+
+fn read_anchor_file(
     data_dir: &Path,
     host_id: &str,
     dek: &[u8; 32],
@@ -378,7 +425,62 @@ pub fn write_anchor(
     }
     let mut bytes = generation.to_le_bytes().to_vec();
     bytes.extend_from_slice(anchor_tag(dek, host_id, generation).as_ref());
-    write_atomic(&anchor_path(data_dir, host_id), &bytes)
+    write_atomic(&anchor_path(data_dir, host_id), &bytes)?;
+    if let Some(m) = ANCHOR_MIRROR.get() {
+        m.write(host_id, &bytes)?;
+    }
+    Ok(())
+}
+
+/// Linux anchor mirror: `<dir>/<host_id>.anchor`, where `dir` is a state
+/// directory outside the data directory (the systemd unit provides
+/// `/var/lib/cofferak-anchor`). When run as root, files are handed to the
+/// directory's owner so the unprivileged daemon can keep them current.
+#[cfg(unix)]
+pub struct DirAnchorMirror {
+    pub dir: std::path::PathBuf,
+}
+
+#[cfg(unix)]
+impl DirAnchorMirror {
+    /// `$COFFERAK_ANCHOR_DIR`, else `/var/lib/cofferak-anchor` if it exists.
+    pub fn from_env() -> Option<Self> {
+        let dir = match std::env::var_os("COFFERAK_ANCHOR_DIR") {
+            Some(d) if !d.is_empty() => std::path::PathBuf::from(d),
+            _ => std::path::PathBuf::from("/var/lib/cofferak-anchor"),
+        };
+        let meta = std::fs::symlink_metadata(&dir).ok()?;
+        meta.is_dir().then_some(DirAnchorMirror { dir })
+    }
+
+    fn path(&self, host_id: &str) -> std::path::PathBuf {
+        self.dir.join(format!("{host_id}.anchor"))
+    }
+}
+
+#[cfg(unix)]
+impl AnchorMirror for DirAnchorMirror {
+    fn read(&self, host_id: &str) -> std::io::Result<Option<Vec<u8>>> {
+        match std::fs::read(self.path(host_id)) {
+            Ok(b) => Ok(Some(b)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    fn write(&self, host_id: &str, bytes: &[u8]) -> std::io::Result<()> {
+        use std::os::unix::fs::MetadataExt;
+        let path = self.path(host_id);
+        write_atomic(&path, bytes)?;
+        // SAFETY: geteuid has no preconditions.
+        if unsafe { libc::geteuid() } == 0 {
+            let dir = std::fs::symlink_metadata(&self.dir)?;
+            if dir.is_dir() {
+                std::os::unix::fs::lchown(&path, Some(dir.uid()), Some(dir.gid()))?;
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Upper bound on a `vault.cofferak` file, enforced on both encode and decode.
@@ -866,6 +968,41 @@ mod tests {
             assert_eq!(mode, 0o600, "vault file must not be group/world readable");
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_mirrored_anchor_survives_restoring_the_data_directory() {
+        // Uses DirAnchorMirror directly (not the process-wide setting, so
+        // other tests are unaffected).
+        let data = temp_path("mirror-data");
+        let mirror_dir = temp_path("mirror-dir");
+        std::fs::create_dir_all(&mirror_dir).unwrap();
+        let m = DirAnchorMirror {
+            dir: mirror_dir.clone(),
+        };
+        let dek = [9u8; 32];
+        write_anchor(&data, "h", &dek, 3).unwrap();
+        let old_file = std::fs::read(anchor_path(&data, "h")).unwrap();
+        // Newer anchor, in both places.
+        write_anchor(&data, "h", &dek, 7).unwrap();
+        let mut bytes = 7u64.to_le_bytes().to_vec();
+        bytes.extend_from_slice(anchor_tag(&dek, "h", 7).as_ref());
+        m.write("h", &bytes).unwrap();
+        // Restore the old anchor file (as from a backup of the data dir).
+        std::fs::write(anchor_path(&data, "h"), &old_file).unwrap();
+        assert_eq!(read_anchor_file(&data, "h", &dek), Ok(Some(3)));
+        let mirrored = decode_anchor(&m.read("h").unwrap().unwrap(), "h", &dek).unwrap();
+        assert_eq!(mirrored, 7);
+        // An edited mirror is tampering.
+        let mut bad = bytes.clone();
+        bad[0] ^= 1;
+        assert_eq!(
+            decode_anchor(&bad, "h", &dek),
+            Err(IntegrityError::Tampered)
+        );
+        let _ = std::fs::remove_dir_all(&data);
+        let _ = std::fs::remove_dir_all(&mirror_dir);
     }
 
     #[cfg(unix)]

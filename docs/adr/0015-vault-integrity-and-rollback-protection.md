@@ -73,6 +73,10 @@ attacker's reach (TPM2 NV storage, or a remote witness such as a paired
 coffer); that is future work. A running daemon catches it regardless,
 because it keeps the newest generation in memory.
 
+Update: ADR 0017 keeps a second copy of each anchor outside the data
+directory (the Keychain on macOS, `/var/lib/cofferak-anchor` on Linux),
+so restoring the data directory from a backup is detected too.
+
 ## Proof
 
 - `cofferak-core/src/format.rs` tests: sealed vaults verify, and removing

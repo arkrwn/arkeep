@@ -203,10 +203,12 @@ API to learn, not a second thing to keep in sync. See
 over TLS) was chosen over REST or WebSocket.
 
 Don't have certificates yet? One command makes a private P-384 CA, a
-server certificate and client certificates:
+server certificate and client certificates. Name each client certificate
+after the service it belongs to (the id you gave `enroll-service`): the
+daemon accepts a token only together with its own service's certificate.
 
 ```bash
-./scripts/gen-certs.sh ./tls cofferak.internal app1 app2
+./scripts/gen-certs.sh ./tls cofferak.internal app1 app2   # for services app1 and app2
 ```
 
 ```bash
@@ -225,7 +227,9 @@ COFFERAK_TLS_CLIENT_CA=./tls/ca.pem \
 | `COFFERAK_TLS_ADDR` | `host:port` to listen on. Unset = server mode is off (Unix socket only). |
 | `COFFERAK_TLS_CERT` / `COFFERAK_TLS_KEY` | Server certificate + private key (PEM). Required once `COFFERAK_TLS_ADDR` is set. |
 | `COFFERAK_TLS_CLIENT_CA` | **Required.** CA (PEM) that signs every client certificate. The daemon refuses to start server mode without it. |
-| `COFFERAK_TLS_MAX_CONNECTIONS` | Optional. Maximum concurrent TLS connections (default `256`); connections beyond it are closed immediately. |
+| `COFFERAK_TLS_MAX_CONNECTIONS` | Optional. Maximum concurrent TLS connections (default `256`), connections beyond it are closed immediately. |
+| `COFFERAK_TLS_CRL` | Optional. PEM revocation lists (comma separated): revoked client certificates are refused. |
+| `COFFERAK_TLS_BIND_SERVICE` | Optional, default `1`: a token works only with a client certificate whose CN or DNS SAN is that token's service id. `0` turns it off. |
 
 The transport is locked to the strongest settings every SDK supports
 ([ADR 0011](docs/adr/0011-cnsa-grade-crypto-and-hardened-transport.md)):
@@ -237,7 +241,10 @@ The transport is locked to the strongest settings every SDK supports
   then classical `P-384` for TLS libraries with no post-quantum support
   yet.
 - **Mutual TLS, always:** no client certificate from your CA, no
-  connection. The per-service token is still checked on every request.
+  connection. The per-service token is still checked on every request,
+  and it must match the certificate's service, so a leaked token alone,
+  or a certificate alone, gets nothing. Revoked certificates are refused
+  when you give a CRL.
 - Bounded request/response lines, a 30-second per-connection timeout,
   and a concurrent-connection cap. There is no per-client rate limit
   yet; for an internet-facing deployment keep a firewall or a
@@ -406,8 +413,9 @@ All `cofferak-cli` subcommands accept `--data-dir <DIR>` (or
 `$COFFERAK_DATA_DIR`), defaulting to the platform data directory
 (`/var/lib/cofferak` on Linux, `~/Library/Application Support/cofferak`
 on macOS). `set`/`get`/`rm`/`list` additionally accept `--socket <PATH>`
-(or `$COFFERAK_SOCKET`) and a service token via `--token` (or
-`$COFFERAK_TOKEN`).
+(or `$COFFERAK_SOCKET`) and take the service token from `$COFFERAK_TOKEN`
+or `--token-file FILE`. A token on the command line is refused, since
+other users could read it with `ps`.
 
 | Command | Purpose |
 |---------|---------|
@@ -417,8 +425,8 @@ on macOS). `set`/`get`/`rm`/`list` additionally accept `--socket <PATH>`
 | `enroll-service <id> --paths <csv> --perm <ro\|rw>` | Enroll a consuming service and print its one-time access token. |
 | `set <path> --stdin` / `--from-file <f>` / `<value>` | Write a secret (over the daemon socket). `--stdin` and `--from-file` keep the value out of argv and shell history; use them for real secrets. |
 | `get <path> [-o <file>]` | Read a secret (over the daemon socket); `-o` writes the exact bytes to a `0600` file. |
-| `rm <path> --token <t>` | Remove a secret (over the daemon socket). |
-| `list [prefix] --token <t>` | List secret paths under a prefix (over the daemon socket). |
+| `rm <path>` | Remove a secret (over the daemon socket). |
+| `list [prefix]` | List secret paths under a prefix (over the daemon socket). |
 | `rotate-dek --hosts <csv>` | Generate a fresh DEK, re-encrypt every entry/token, and re-wrap it for the root key and the given hosts. Operates on `vault.cofferak` directly, not over the socket. Restart `cofferakd` afterwards: until then it refuses writes rather than using the stale DEK. |
 | `recover --root-key <path> --new-host <id>` | Disaster recovery: enroll a new host using the offline root private key (the saved armored block), bypassing every enrolled host's own sealed blob. See [`docs/recovery-runbook.md`](docs/recovery-runbook.md). |
 | `audit tail [--count N]` | Print the last `N` (default 20) entries of the daemon's audit log, read directly from `<data_dir>/audit.jsonl`. |

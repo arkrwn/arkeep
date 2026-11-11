@@ -19,8 +19,10 @@ reading secrets outside its enrolled path prefix.
 
 Does not protect against: root on an already-unsealed live host reading
 process memory, loss or disclosure of the creator's offline root private
-key, or, on macOS, another process running as the same user as the vault
-admin (the Keychain trusts the cofferak binary, see ADR 0016).
+key, the daemon account or root reading a running daemon's memory, or, on
+a Mac host created with `--no-user-presence`, another process running as
+the same user (hosts created normally need Touch ID or the login password
+for admin commands, ADR 0017).
 
 Integrity (ADR 0015): the whole vault carries an HMAC-SHA384 keyed from
 the DEK and a generation counter, and each host keeps an authenticated
@@ -155,8 +157,9 @@ argument, `get -o` writes exact bytes to a `0600` file), `rotate-dek`
 (disaster recovery, zero-side-effect on failure), `audit tail`, and
 `daemon` (runs the daemon in the foreground; the same code as `cofferakd`,
 used on macOS so the Keychain serves the host key to the binary that sealed
-it, ADR 0007). Values are limited to 3 MiB. `--token` falls back to
-`$COFFERAK_TOKEN`, whose value is never shown in `--help`. Admin commands run under the vault lock; on Linux the ones
+it, ADR 0007). Values are limited to 1 MiB, enforced by the daemon. The service token
+comes from `$COFFERAK_TOKEN` or `--token-file FILE`, never from the command
+line, where `ps` would show it (ADR 0017). Admin commands run under the vault lock; on Linux the ones
 that touch a host key need root, and they hand created files back to the
 data directory's owner. The daemon reloads secrets and tokens when
 `vault.cofferak` changes on disk (ADR 0012), so `enroll-service` and

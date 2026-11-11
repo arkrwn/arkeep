@@ -25,7 +25,10 @@ exactly one enrolled host.
 | `COFFERAK_SOCKET` | Path of the Unix socket the daemon listens on | `/run/cofferak/cofferakd.sock` | `~/Library/Application Support/cofferak/cofferakd.sock` |
 | `COFFERAK_HOST_ID` | Which enrolled host this process runs as | — (required if more than one host is enrolled) | — (same) |
 | `COFFERAK_TLS_ADDR`, `COFFERAK_TLS_CERT`, `COFFERAK_TLS_KEY`, `COFFERAK_TLS_CLIENT_CA` | Server mode (ADR 0008/0011); off unless `COFFERAK_TLS_ADDR` is set, and then all four are required (mutual TLS is mandatory) | — | — |
-| `COFFERAK_TLS_MAX_CONNECTIONS` | Cap on concurrent TLS connections; extra connections are closed | `256` | `256` |
+| `COFFERAK_TLS_MAX_CONNECTIONS` | Cap on concurrent TLS connections, extra connections are closed | `256` | `256` |
+| `COFFERAK_TLS_CRL` | PEM certificate revocation lists (comma separated). Revoked client certificates fail the handshake | none | none |
+| `COFFERAK_TLS_BIND_SERVICE` | `1`: a token is accepted only with a client certificate whose CN or DNS SAN is that token's service id. `0` turns this off | `1` | `1` |
+| `COFFERAK_ANCHOR_DIR` | Second copy of each host's rollback anchor, outside the data directory | `/var/lib/cofferak-anchor` (if it exists) | the Keychain |
 
 The templates set `COFFERAK_DATA_DIR`/`COFFERAK_SOCKET` explicitly, using the
 same socket filename (`cofferakd.sock`) as the built-in fallback. When you
@@ -73,7 +76,8 @@ The unit template:
 - receives this host's key through `LoadCredentialEncrypted=` (below);
 - sets `COFFERAK_HOST_ID`, `COFFERAK_DATA_DIR` and `COFFERAK_SOCKET`;
 - uses `RuntimeDirectory=cofferak` to create `/run/cofferak` for the socket,
-  and `StateDirectory=cofferak` (mode `0700`) for the data;
+  and `StateDirectory=cofferak cofferak-anchor` (mode `0700`) for the data
+  and the mirrored rollback anchors;
 - disables core dumps and applies systemd sandboxing (`ProtectSystem=strict`,
   `NoNewPrivileges`, a system-call filter, and more — see the file).
 
@@ -117,8 +121,13 @@ unsealing the file itself, which on Linux only works as root.)
 
    ```sh
    sudo useradd --system --no-create-home --shell /usr/sbin/nologin cofferak
-   sudo install -d -m 0700 -o cofferak -g cofferak /var/lib/cofferak
+   sudo install -d -m 0700 -o cofferak -g cofferak /var/lib/cofferak /var/lib/cofferak-anchor
    ```
+
+   `/var/lib/cofferak-anchor` keeps a second copy of each host's rollback
+   anchor outside the data directory (ADR 0017). Don't include it in backups
+   of `/var/lib/cofferak`: that way, restoring an old backup of the data is
+   still detected as a rollback.
 
 3. Bootstrap the vault and this host, **as root** (see above). Store the
    root private key block `init --root` prints offline, never on this host

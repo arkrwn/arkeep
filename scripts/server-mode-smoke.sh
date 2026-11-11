@@ -17,6 +17,8 @@
 #
 # Not a mocked test: if this passes, server mode works as documented.
 set -euo pipefail
+# Unattended run: hosts created here must not ask for Touch ID (macOS).
+export COFFERAK_NO_USER_PRESENCE=1
 
 cd "$(dirname "$0")/.."
 REPO_ROOT="$(pwd)"
@@ -99,12 +101,37 @@ openssl x509 -req -sha384 -in "$WORKDIR/server.csr" \
   -CA "$WORKDIR/ca.pem" -CAkey "$WORKDIR/ca.key" -CAcreateserial \
   -days 1 -extfile "$WORKDIR/server-ext.cnf" -out "$WORKDIR/server.pem" 2>/dev/null
 
-newkey "$WORKDIR/client.key"
-openssl req -new -sha384 -key "$WORKDIR/client.key" -subj "/CN=cofferak-smoke-client" \
-  -out "$WORKDIR/client.csr" 2>/dev/null
-openssl x509 -req -sha384 -in "$WORKDIR/client.csr" \
-  -CA "$WORKDIR/ca.pem" -CAkey "$WORKDIR/ca.key" -CAcreateserial \
-  -days 1 -out "$WORKDIR/client.pem" 2>/dev/null
+# The client certificate is named after the service its token belongs to:
+# the daemon only accepts a token together with its own service's
+# certificate (ADR 0017).
+make_client_cert() { # <name> <common-name>
+  newkey "$WORKDIR/$1.key"
+  openssl req -new -sha384 -key "$WORKDIR/$1.key" -subj "/CN=$2" \
+    -out "$WORKDIR/$1.csr" 2>/dev/null
+  openssl x509 -req -sha384 -in "$WORKDIR/$1.csr" \
+    -CA "$WORKDIR/ca.pem" -CAkey "$WORKDIR/ca.key" -CAcreateserial \
+    -days 1 -out "$WORKDIR/$1.pem" 2>/dev/null
+}
+make_client_cert client sdk-smoke-service
+make_client_cert other-client some-other-service
+make_client_cert revoked-client sdk-smoke-service
+
+# Revoke one of them and publish a CRL.
+: > "$WORKDIR/index.txt"
+echo 01 > "$WORKDIR/crlnumber"
+cat > "$WORKDIR/ca.cnf" <<CNF
+[ ca ]
+default_ca = CA_default
+[ CA_default ]
+database = $WORKDIR/index.txt
+crlnumber = $WORKDIR/crlnumber
+default_md = sha384
+default_crl_days = 1
+CNF
+openssl ca -config "$WORKDIR/ca.cnf" -keyfile "$WORKDIR/ca.key" -cert "$WORKDIR/ca.pem" \
+  -revoke "$WORKDIR/revoked-client.pem" >/dev/null 2>&1
+openssl ca -config "$WORKDIR/ca.cnf" -keyfile "$WORKDIR/ca.key" -cert "$WORKDIR/ca.pem" \
+  -gencrl -out "$WORKDIR/crl.pem" >/dev/null 2>&1
 
 # A client cert signed by a DIFFERENT (rogue) CA: must be refused.
 newkey "$WORKDIR/rogue-ca.key"
@@ -160,6 +187,7 @@ COFFERAK_TLS_ADDR="$TLS_ADDR" \
 COFFERAK_TLS_CERT="$WORKDIR/server.pem" \
 COFFERAK_TLS_KEY="$WORKDIR/server.key" \
 COFFERAK_TLS_CLIENT_CA="$WORKDIR/ca.pem" \
+COFFERAK_TLS_CRL="$WORKDIR/crl.pem" \
   "$DEV_DAEMON" &
 DAEMON_PID=$!
 for _ in $(seq 1 50); do
@@ -200,6 +228,16 @@ for lang in "${TLS_LANGS[@]}"; do
   echo "== [$lang] no client cert must fail =="
   expect_tls_rejected "a connection with no client cert" \
     "$lang" "sdk-smoke/$lang-nocert" "other/denied" "$SERVER_NAME"
+
+  echo "== [$lang] a valid client cert for another service must fail =="
+  expect_tls_rejected "a token used with another service's certificate" \
+    "$lang" "sdk-smoke/$lang-othersvc" "other/denied" "$SERVER_NAME" \
+    "$WORKDIR/other-client.pem" "$WORKDIR/other-client.key"
+
+  echo "== [$lang] a revoked client cert must fail =="
+  expect_tls_rejected "a revoked client certificate" \
+    "$lang" "sdk-smoke/$lang-revoked" "other/denied" "$SERVER_NAME" \
+    "$WORKDIR/revoked-client.pem" "$WORKDIR/revoked-client.key"
 
   echo "== [$lang] client cert from an untrusted CA must fail =="
   expect_tls_rejected "a client cert signed by an untrusted CA" \

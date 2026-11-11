@@ -11,6 +11,8 @@
 #
 # Usage: ./scripts/bench.sh [requests]
 set -euo pipefail
+# Unattended run: hosts created here must not ask for Touch ID (macOS).
+export COFFERAK_NO_USER_PRESENCE=1
 
 cd "$(dirname "$0")/.."
 REPO_ROOT="$(pwd)"

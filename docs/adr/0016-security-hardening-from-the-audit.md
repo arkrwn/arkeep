@@ -30,6 +30,8 @@ still a known limit.
 
 ## Known limits (documented, not fixed here)
 
+All of these are addressed by [ADR 0017](0017-closing-the-known-limits.md).
+
 - **macOS, same user:** the Keychain item trusts the cofferak binary, so
   any process running as the same macOS user can run `cofferak export`
   and read the vault without a prompt. On a shared login or a compromised

@@ -15,7 +15,7 @@ use cofferak_core::seal::SystemdCredsSeal;
 
 use crate::audit::AuditLog;
 use crate::daemon::{load_tokens, Daemon};
-use crate::protocol::{decode_request, encode, Response};
+use crate::protocol::{decode_request, Response};
 
 /// Default data directory on Linux, used unless `$COFFERAK_DATA_DIR` is set.
 #[cfg(target_os = "linux")]
@@ -209,6 +209,8 @@ const UNIX_MAX_CONNECTIONS: usize = 256;
 
 /// Run the daemon until the process is killed (see below).
 pub fn run() {
+    crate::hardening::harden_process();
+    crate::hardening::enable_anchor_mirror();
     let data_dir = data_dir();
 
     // Thin wrapper: `load_vault_or_exit` itself only ever returns `Result`;
@@ -376,7 +378,11 @@ fn handle_connection(stream: UnixStream, daemon: Arc<Mutex<Daemon>>) {
             Err(_) => Response::Err("malformed request".to_string()),
         };
 
-        if writer.write_all(&encode(&response)).is_err() {
+        let mut out = crate::protocol::respond(response);
+        let sent = writer.write_all(&out);
+        zeroize::Zeroize::zeroize(&mut out);
+        zeroize::Zeroize::zeroize(&mut line);
+        if sent.is_err() {
             break;
         }
     }

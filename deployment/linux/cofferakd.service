@@ -40,13 +40,17 @@ Environment=COFFERAK_SOCKET=/run/cofferak/cofferakd.sock
 #Environment=COFFERAK_TLS_CERT=/etc/cofferak/tls/server.pem
 #Environment=COFFERAK_TLS_KEY=/etc/cofferak/tls/server.key
 #Environment=COFFERAK_TLS_CLIENT_CA=/etc/cofferak/tls/client-ca.pem
+# Optional: revoked client certificates (PEM CRLs, comma separated).
+#Environment=COFFERAK_TLS_CRL=/etc/cofferak/tls/clients.crl.pem
 
 # Creates /run/cofferak owned by User=cofferak. Group members need traverse
 # access to reach the socket.
 RuntimeDirectory=cofferak
 RuntimeDirectoryMode=0750
-# Creates /var/lib/cofferak owned by User=cofferak (the only writable path).
-StateDirectory=cofferak
+# Creates /var/lib/cofferak (the data) and /var/lib/cofferak-anchor (a second
+# copy of each host's rollback anchor, outside the data directory, ADR 0017),
+# both owned by User=cofferak. These are the only writable paths.
+StateDirectory=cofferak cofferak-anchor
 StateDirectoryMode=0700
 UMask=0077
 
