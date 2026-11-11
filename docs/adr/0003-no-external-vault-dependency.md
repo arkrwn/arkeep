@@ -2,11 +2,11 @@
 
 Status: accepted
 
-mikavt does not call HashiCorp Vault, a cloud KMS, or any other
+cofferak does not call HashiCorp Vault, a cloud KMS, or any other
 network-based secret service. It is a standalone, self-contained process
-pair (`mikavtd` + `mikavt` CLI) over a local Unix socket, using only the
+pair (`cofferakd` + `cofferak` CLI) over a local Unix socket, using only the
 host OS's own credential-sealing primitive (ADR 0002) and a local
-on-disk file (`vault.mika`).
+on-disk file (`vault.cofferak`).
 
 This trades the operational features of a managed vault (clustering,
 dynamic secrets, multi-region replication) for zero external

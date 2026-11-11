@@ -2,7 +2,7 @@
 Cargo.lock.bak
 *.key
 *.cred
-vault.mika
+vault.cofferak
 meta.json
 /.superpowers/
 node_modules/

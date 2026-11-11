@@ -4,13 +4,13 @@ Status: accepted
 
 Linux (`systemd-creds`, TPM-bound when present) and macOS (Keychain,
 Secure-Enclave-backed) have no common native sealing primitive. A
-`HostSeal` trait (`seal`/`unseal` over a 32-byte key, `mikavt-core/src/seal/
+`HostSeal` trait (`seal`/`unseal` over a 32-byte key, `cofferak-core/src/seal/
 mod.rs`) is the only platform-dependent surface in the codebase; both
 backends satisfy the same guarantee: the raw key exists unsealed only in
-`mikavtd`'s own memory, zeroized on exit, delivered by the OS's own
+`cofferakd`'s own memory, zeroized on exit, delivered by the OS's own
 credential mechanism.
 
-This keeps `mikavt-core`'s crypto/format/ACL logic, and every test for it,
+This keeps `cofferak-core`'s crypto/format/ACL logic, and every test for it,
 platform-agnostic. Each backend is tested for real on its own OS (a real
 Keychain round-trip on macOS CI, a real `systemd-creds` round-trip on
 Linux CI) rather than mocked.

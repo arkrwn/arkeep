@@ -1,0 +1,21 @@
+[package]
+name = "cofferak-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "cofferak command-line interface"
+
+[[bin]]
+name = "cofferak"
+path = "src/main.rs"
+
+[dependencies]
+cofferak-core = { path = "../cofferak-core" }
+# `cofferakd` now has a library target (see `cofferakd/src/lib.rs`), so
+# `audit.rs`'s `run_audit_tail` depends on `cofferakd::audit::{AuditLog,
+# AuditEntry}` directly rather than pulling the source in via `#[path]`.
+cofferakd = { path = "../cofferakd" }
+clap = { version = "4", features = ["derive", "env"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+bincode = "1"

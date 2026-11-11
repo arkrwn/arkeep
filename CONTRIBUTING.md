@@ -1,6 +1,6 @@
-# Contributing to mikavt
+# Contributing to cofferak
 
-Thanks for your interest! mikavt is an open-source, self-hostable secrets
+Thanks for your interest! cofferak is an open-source, self-hostable secrets
 vault. Contributions — bug reports, docs, platform backends, tests — are
 welcome. The flow is deliberately lightweight, but there is one mandatory
 step: the **CLA (copyright assignment)**.
@@ -38,7 +38,7 @@ Contributing on behalf of a company? See section 8 of `CLA.md`.
 - Bug reports: include the version (tag/commit), platform/toolchain, and
   minimal reproducible steps.
 - Security issues: **do not** open a public issue. Email
-  <hubungi.aja@gmail.com> with subject `SECURITY: mikavt`.
+  <hubungi.aja@gmail.com> with subject `SECURITY: cofferak`.
 
 ## 2. Pull requests
 
@@ -59,11 +59,11 @@ cargo clippy --workspace --all-targets -- -D warnings
 ```
 
 - Rust, edition 2021, MSRV pinned in `rust-toolchain.toml`.
-- `mikavt-core` has no dependency on process I/O beyond disk reads/writes
+- `cofferak-core` has no dependency on process I/O beyond disk reads/writes
   and must stay platform-agnostic; platform-specific code belongs in
-  `mikavt-core/src/seal/{linux,macos}.rs`, gated by `cfg(target_os = ...)`.
+  `cofferak-core/src/seal/{linux,macos}.rs`, gated by `cfg(target_os = ...)`.
 - No plaintext secret or key material may ever be written to disk outside
-  the one documented operator-controlled export path (`mikavt init
+  the one documented operator-controlled export path (`cofferak init
   --root`'s one-time private-key print).
 
 ## 4. Review

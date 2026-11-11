@@ -2,14 +2,14 @@
 
 Status: accepted
 
-mikavt needed a way to run on a server and be called remotely, not only
+cofferak needed a way to run on a server and be called remotely, not only
 over a local Unix socket. Three shapes were on the table: a REST/HTTP
 API, WebSocket, or RPC (a custom protocol over an encrypted transport).
 
 **Decision: RPC — the existing newline-delimited JSON `Request`/
 `Response` protocol (`docs/SPEC.md` §6), unchanged, now also reachable
-over TLS-wrapped TCP (`$MIKAVT_TLS_ADDR`) in addition to the Unix
-socket, both served by the same `mikavtd` process from the same
+over TLS-wrapped TCP (`$COFFERAK_TLS_ADDR`) in addition to the Unix
+socket, both served by the same `cofferakd` process from the same
 `Daemon`.**
 
 Why this over REST/WebSocket:
@@ -26,13 +26,13 @@ Why this over REST/WebSocket:
   Building a REST API or WebSocket server instead would mean pulling in
   a full HTTP server framework (and, for WebSocket, a websocket crate on
   top of that) — real new dependency surface and real new code to
-  secure, for a protocol mikavt already has working and tested.
+  secure, for a protocol cofferak already has working and tested.
 - **TLS via `rustls`**, not OpenSSL. Pure Rust, no C FFI, no system
   OpenSSL version to track — consistent with this project's general
   preference for memory-safe, dependency-light implementations (ADR
   0003's "no external vault/KMS dependency" reasoning extends naturally
   to "no C TLS library dependency" here).
-- **Mutual TLS is supported, not required.** `$MIKAVT_TLS_CLIENT_CA`
+- **Mutual TLS is supported, not required.** `$COFFERAK_TLS_CLIENT_CA`
   turns on client certificate verification for operators who want
   transport-level mutual authentication in addition to the existing
   per-service access token (ADR 0001's capability model). Token auth at
@@ -43,13 +43,13 @@ Why this over REST/WebSocket:
 Rejected: REST (HTTP semantics — verbs, status codes, content
 negotiation — add nothing a four-request-shape protocol needs, and cost
 a whole HTTP server dependency); WebSocket (solves a full-duplex
-streaming problem mikavt doesn't have — every request here already gets
+streaming problem cofferak doesn't have — every request here already gets
 exactly one response, there's no server-push use case yet).
 
 **What this does not change:** the Unix socket path is untouched and
 remains the default/primary transport for same-host services (still
 faster than any network transport, no TLS handshake, OS-enforced file
-permissions). TLS/TCP is additive, opt-in via `$MIKAVT_TLS_ADDR`, for
+permissions). TLS/TCP is additive, opt-in via `$COFFERAK_TLS_ADDR`, for
 when a service genuinely isn't on the same host.
 
 **Update:** all four SDKs now speak TLS/TCP (Rust `rustls`, Go
@@ -65,7 +65,7 @@ rejection, mTLS correct-cert acceptance. See `docs/PROGRESS.md`.
 Reviewed and fixed before this reached `main`:
 
 - **TLS 1.3-only.** `tls12` is deliberately not enabled — both ends of
-  this protocol are mikavt's own code, so there's no legacy-client
+  this protocol are cofferak's own code, so there's no legacy-client
   compatibility reason to allow the weaker, older protocol version.
 - **Bounded request/response lines** (`protocol::read_line_bounded`,
   `MAX_LINE_BYTES` = 16 MiB on the daemon side, and the same cap
@@ -85,7 +85,7 @@ Reviewed and fixed before this reached `main`:
   adding just that CA, Go's fresh `x509.NewCertPool()` (never
   `SystemCertPool()`), Python's `SSLContext` with `load_default_certs()`
   never called, Node's `ca` option (which replaces, not adds to, the
-  bundled public root store). mikavt's TLS is for a self-managed
+  bundled public root store). cofferak's TLS is for a self-managed
   deployment; falling back to a public trust store would let any
   public-CA-issued certificate impersonate the server.
 - **Verified, not assumed, by `scripts/server-mode-smoke.sh`, for every
@@ -96,11 +96,11 @@ Reviewed and fixed before this reached `main`:
   configured one.
 
 **Concurrent connection cap (added later, see PROGRESS).** The listener
-holds at most `$MIKAVT_TLS_MAX_CONNECTIONS` (default 256) connections at
+holds at most `$COFFERAK_TLS_MAX_CONNECTIONS` (default 256) connections at
 once; any connection past the cap is closed immediately without spawning
 a thread, so a connection flood cannot exhaust threads or memory.
 **Still disclosed:** there is no *per-client* rate limit — one client can
 occupy every slot (for up to 30s each). For an internet-facing
 deployment, keep a firewall or a proxy with per-IP limits in front of
-`$MIKAVT_TLS_ADDR`, and prefer mTLS so unauthenticated peers fail at the
+`$COFFERAK_TLS_ADDR`, and prefer mTLS so unauthenticated peers fail at the
 handshake.

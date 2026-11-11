@@ -2,7 +2,7 @@
 
 Status: accepted
 
-mikavt's daemon protocol (`docs/SPEC.md` §6) is a small newline-delimited
+cofferak's daemon protocol (`docs/SPEC.md` §6) is a small newline-delimited
 JSON format over a Unix socket — simple enough that a thin client in any
 language is a translation exercise, not a design problem. Rather than
 publish only documentation describing the format and leave every

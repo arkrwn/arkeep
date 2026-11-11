@@ -8,7 +8,7 @@ directory.
 
 | Language | Notes |
 |---|---|
-| C | A thin libmikavt would let every other native-FFI language (Ruby, PHP, Lua, …) bind to one C ABI instead of each reimplementing the wire protocol. Likely the right investment *before* C++/Perl/Ruby below, rather than parallel to them. |
+| C | A thin libcofferak would let every other native-FFI language (Ruby, PHP, Lua, …) bind to one C ABI instead of each reimplementing the wire protocol. Likely the right investment *before* C++/Perl/Ruby below, rather than parallel to them. |
 | C++ | A header-only or small static-lib wrapper over the C ABI above, idiomatic RAII `Client`. |
 | Perl | Thin bindings over the C ABI (XS) or a pure-Perl socket client mirroring the Python SDK's approach (stdlib-only, no XS, is the simpler initial option). |
 | Ruby | Same choice as Perl: FFI over the C ABI, or a pure-Ruby stdlib-only socket client first. |

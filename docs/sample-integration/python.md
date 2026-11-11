@@ -1,19 +1,19 @@
 # Sample integration: Python
 
-Package: [`sdk/python/mikavt_sdk`](../../sdk/python/mikavt_sdk) — standard
+Package: [`sdk/python/cofferak_sdk`](../../sdk/python/cofferak_sdk) — standard
 library only (`socket`, `json`), Python 3.9+.
 
 ```bash
-pip install ./sdk/python/mikavt_sdk
-# (or, once published) pip install mikavt-sdk
+pip install ./sdk/python/cofferak_sdk
+# (or, once published) pip install cofferak-sdk
 ```
 
 ```python
 import os
-from mikavt_sdk import Client, DeniedError
+from cofferak_sdk import Client, DeniedError
 
-client = Client(os.environ["MIKAVT_SOCKET"])
-token = os.environ["MIKAVT_TOKEN"]
+client = Client(os.environ["COFFERAK_SOCKET"])
+token = os.environ["COFFERAK_TOKEN"]
 
 client.set(token, "myapp/DB_PASSWORD", b"s3cr3t")
 value = client.get(token, "myapp/DB_PASSWORD")
@@ -26,18 +26,18 @@ except DeniedError:
 ```
 
 This exact flow is what
-[`sdk/python/mikavt_sdk/examples/smoke.py`](../../sdk/python/mikavt_sdk/examples/smoke.py)
+[`sdk/python/cofferak_sdk/examples/smoke.py`](../../sdk/python/cofferak_sdk/examples/smoke.py)
 runs for real in CI (`scripts/sdk-smoke.sh`).
 
 ## Server mode (TLS / mutual TLS)
 
 ```python
 client = Client.connect_tls(
-    addr="mikavt.example.internal:8443",
-    server_name="mikavt.example.internal",
+    addr="cofferak.example.internal:8443",
+    server_name="cofferak.example.internal",
     ca_cert_path="/path/to/ca.pem",
     # client_cert_path/client_key_path: set both together only if the
-    # server requires mutual TLS ($MIKAVT_TLS_CLIENT_CA).
+    # server requires mutual TLS ($COFFERAK_TLS_CLIENT_CA).
 )
 ```
 
@@ -50,5 +50,5 @@ called, so Python's system/public root store is never trusted here).
 Proven for real — including rejecting a wrong hostname, rejecting a
 connection with no client cert against an mTLS-only server, and
 rejecting a client cert signed by a different, untrusted CA — by
-[`sdk/python/mikavt_sdk/examples/smoke_tls.py`](../../sdk/python/mikavt_sdk/examples/smoke_tls.py),
+[`sdk/python/cofferak_sdk/examples/smoke_tls.py`](../../sdk/python/cofferak_sdk/examples/smoke_tls.py),
 run by `scripts/server-mode-smoke.sh`.

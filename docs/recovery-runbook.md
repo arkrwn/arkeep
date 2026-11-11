@@ -1,12 +1,12 @@
 # Disaster recovery runbook
 
-This runbook walks a new operator through recovering a mikavt vault
+This runbook walks a new operator through recovering a cofferak vault
 when every enrolled host's sealed key is gone — the host machine was
 destroyed, its disk was wiped, or its `host.seal` file (or
 `<data_dir>/hosts/<host-id>.seal`) is lost or corrupted. It uses the one
 break-glass path that does not depend on any enrolled host: the **offline
 root private key** that was printed to stdout exactly once, when the
-vault was created with `mikavt init --root`, and that you (the
+vault was created with `cofferak init --root`, and that you (the
 operator) were expected to copy to offline storage at that time — see
 [`docs/key-security.md`](key-security.md) for how to actually do that
 (and what *not* to use, e.g. a cloud-synced password manager).
@@ -18,40 +18,40 @@ there is no other way to recover an existing vault's data-encryption key
 for why.
 
 If you still have at least one enrolled host with a working `host.seal`,
-you don't need this runbook — use `mikavt enroll-host` instead (see
+you don't need this runbook — use `cofferak enroll-host` instead (see
 the root [README](../README.md#commands)); it's the normal path for
 adding a host and doesn't touch the root key at all.
 
 ## What you need before you start
 
 1. **The root private key**, as a 64-character hex string. This is
-   exactly what `init --root` printed between the `=== MIKAVT ROOT
+   exactly what `init --root` printed between the `=== COFFERAK ROOT
    PRIVATE KEY ===` banner lines when the vault was first created. It
    looks like this (example, not a real key):
 
    ```
-   === MIKAVT ROOT PRIVATE KEY — copy this offline now, it will not be shown again ===
+   === COFFERAK ROOT PRIVATE KEY — copy this offline now, it will not be shown again ===
    3a1f...   (64 hex characters)
    ======================================================================================
    ```
 
-2. **The vault's data directory**, with `vault.mika` and `meta.json`
-   still intact. This runbook does not help if `vault.mika` itself is
+2. **The vault's data directory**, with `vault.cofferak` and `meta.json`
+   still intact. This runbook does not help if `vault.cofferak` itself is
    gone or corrupted — that file holds the only copy of the encrypted
    secrets and every wrapped DEK, including the one wrapped for the root
-   key. (Back up `vault.mika`/`meta.json` separately from any single
+   key. (Back up `vault.cofferak`/`meta.json` separately from any single
    host's `host.seal` — that's the whole point of the root-key wrap.)
 
 3. **A machine to run the recovery on.** This becomes the new enrolled
    host. It needs:
-   - the `mikavt` binary (built from this repository: `cargo build
-     --workspace --release`, then use `target/release/mikavt`);
+   - the `cofferak` binary (built from this repository: `cargo build
+     --workspace --release`, then use `target/release/cofferak`);
    - on Linux, `systemd-creds` on `PATH`; on macOS, a user Keychain
      session (recovery seals the new host's key the same way `init
      --host`/`enroll-host` do — see the root
      [README](../README.md#why));
    - a decision for the new host's id — any string not already used by
-     an enrolled host in this vault (check with `mikavt audit tail`
+     an enrolled host in this vault (check with `cofferak audit tail`
      or by inspecting `meta.json`'s host list if unsure).
 
 ## Step 1 — turn the hex key back into a 32-byte key file
@@ -66,19 +66,19 @@ On macOS or Linux, with the hex string in `$ROOT_KEY_HEX`:
 
 ```bash
 ROOT_KEY_HEX=3a1f...   # paste the 64 hex characters you copied offline
-echo -n "$ROOT_KEY_HEX" | xxd -r -p > /tmp/mikavt-root.key
+echo -n "$ROOT_KEY_HEX" | xxd -r -p > /tmp/cofferak-root.key
 ```
 
 Confirm the file is exactly 32 bytes:
 
 ```bash
-wc -c /tmp/mikavt-root.key   # must print "32"
+wc -c /tmp/cofferak-root.key   # must print "32"
 ```
 
 If `xxd` isn't available, `python3` works too:
 
 ```bash
-python3 -c "import sys; sys.stdout.buffer.write(bytes.fromhex('$ROOT_KEY_HEX'))" > /tmp/mikavt-root.key
+python3 -c "import sys; sys.stdout.buffer.write(bytes.fromhex('$ROOT_KEY_HEX'))" > /tmp/cofferak-root.key
 ```
 
 Treat this file as sensitive for as long as it exists: it unwraps the
@@ -93,8 +93,8 @@ On Linux, run it with `sudo` (sealing the new host key uses
 writes back to the data directory's owner.
 
 ```bash
-mikavt recover \
-  --root-key /tmp/mikavt-root.key \
+cofferak recover \
+  --root-key /tmp/cofferak-root.key \
   --new-host <new-host-id> \
   --data-dir <path-to-vault-data-dir>
 ```
@@ -104,9 +104,9 @@ mikavt recover \
   something that isn't already enrolled (see Prerequisites above);
   `recover` will refuse with "this host is already enrolled" if it is.
 - `--data-dir <DIR>` — the vault's data directory (containing
-  `vault.mika`). If omitted, it falls back to `$MIKAVT_DATA_DIR`, then
-  the platform default (`/var/lib/mikavt` on Linux,
-  `~/Library/Application Support/mikavt` on macOS).
+  `vault.cofferak`). If omitted, it falls back to `$COFFERAK_DATA_DIR`, then
+  the platform default (`/var/lib/cofferak` on Linux,
+  `~/Library/Application Support/cofferak` on macOS).
 
 On success you'll see:
 
@@ -122,11 +122,11 @@ This has:
   it with this machine's platform backend (`systemd-creds` on Linux,
   Keychain on macOS), writing it to
   `<data_dir>/hosts/<new-host-id>.seal`;
-- wrapped the DEK for `<new-host-id>` and written `vault.mika` +
+- wrapped the DEK for `<new-host-id>` and written `vault.cofferak` +
   `meta.json` back to disk.
 
-You can now start `mikavtd` on this machine against the same
-`--data-dir` (or `$MIKAVT_DATA_DIR`) as host `<new-host-id>` and it will
+You can now start `cofferakd` on this machine against the same
+`--data-dir` (or `$COFFERAK_DATA_DIR`) as host `<new-host-id>` and it will
 serve requests normally. On Linux, set `REPLACE_WITH_HOST_ID` in the unit
 to `<new-host-id>` so `LoadCredentialEncrypted=` delivers the new key —
 see [`docs/deployment.md`](deployment.md).
@@ -135,12 +135,12 @@ see [`docs/deployment.md`](deployment.md).
 
 | Message | Meaning | What to do |
 |---|---|---|
-| `root key file is not a valid 32-byte key, or does not match this vault's root public key` | Either the file isn't exactly 32 raw bytes (see Step 1), or it decoded fine but is the wrong keypair for this `vault.mika` (e.g. you pasted the wrong hex string, or you're pointed at a different vault's data directory than the one this key belongs to). | Re-check the file size (`wc -c`), re-copy the hex string carefully, and confirm `--data-dir` points at the vault this root key was generated for. |
+| `root key file is not a valid 32-byte key, or does not match this vault's root public key` | Either the file isn't exactly 32 raw bytes (see Step 1), or it decoded fine but is the wrong keypair for this `vault.cofferak` (e.g. you pasted the wrong hex string, or you're pointed at a different vault's data directory than the one this key belongs to). | Re-check the file size (`wc -c`), re-copy the hex string carefully, and confirm `--data-dir` points at the vault this root key was generated for. |
 | `this host is already enrolled` | `<new-host-id>` is already present in `vault.hosts`. | Pick a different `--new-host` id, or use `enroll-host` instead if you actually meant to work from an existing host. |
-| `no vault found in this data directory; run \`init --root\` first` | Either `vault.mika` is missing at `--data-dir`, or (same message, different cause) the vault exists but has never had a DEK generated (no host was ever enrolled — nothing to recover). | Double check `--data-dir`. If `vault.mika` is genuinely gone, there is no vault left to recover — this message is not something `recover` can fix. |
+| `no vault found in this data directory; run \`init --root\` first` | Either `vault.cofferak` is missing at `--data-dir`, or (same message, different cause) the vault exists but has never had a DEK generated (no host was ever enrolled — nothing to recover). | Double check `--data-dir`. If `vault.cofferak` is genuinely gone, there is no vault left to recover — this message is not something `recover` can fix. |
 
 **Safety guarantee:** on any failure above, `recover` makes no changes
-to `vault.mika` or to the filesystem — every check runs before any
+to `vault.cofferak` or to the filesystem — every check runs before any
 write, and the one write is an atomic rename, never an in-place
 modification. It's safe to fix the problem (per the table) and run the
 exact same command again.
@@ -149,22 +149,22 @@ exact same command again.
 
 Once the new host is recovered:
 
-1. Start (or restart) `mikavtd` on this machine, pointed at the same
+1. Start (or restart) `cofferakd` on this machine, pointed at the same
    `--data-dir`. See [`docs/deployment.md`](deployment.md) for running it
    as a systemd service (Linux) or launchd agent (macOS) rather than in
    the foreground.
 2. Existing service tokens still work unchanged — `recover` only adds a
    host, it doesn't touch `vault.services` or any stored secret.
 3. If you have other machines that also need to be enrolled hosts (for
-   redundancy), use `mikavt enroll-host <id> --this-host
+   redundancy), use `cofferak enroll-host <id> --this-host
    <new-host-id>` from one of them, now that `<new-host-id>` is a valid,
    working enrolled host whose sealed blob can be unsealed.
-4. Consider rotating the DEK afterward (`mikavt rotate-dek --hosts
+4. Consider rotating the DEK afterward (`cofferak rotate-dek --hosts
    <csv>`) if the loss of the old host(s) is at all suspicious (e.g.
    stolen hardware, not just failed hardware) — the old host's sealed
    blob being gone doesn't by itself prove the key material was exposed,
    but rotation is cheap insurance and invalidates any copy of the old
-   DEK wrap that might have leaked with the lost host. Restart `mikavtd`
+   DEK wrap that might have leaked with the lost host. Restart `cofferakd`
    after rotating: until then it refuses writes rather than encrypting
    under the old DEK.
 
@@ -174,7 +174,7 @@ Whether Step 2 succeeded or failed, delete the raw key file you created
 in Step 1 as soon as you're done with it:
 
 ```bash
-rm -f /tmp/mikavt-root.key
+rm -f /tmp/cofferak-root.key
 ```
 
 The root private key itself (the hex string) is not single-use — keep it

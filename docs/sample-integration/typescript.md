@@ -1,20 +1,20 @@
 # Sample integration: TypeScript
 
-Package: [`sdk/javascript/mikavt-sdk`](../../sdk/javascript/mikavt-sdk) —
+Package: [`sdk/javascript/cofferak-sdk`](../../sdk/javascript/cofferak-sdk) —
 written in TypeScript, Node's `net` module only, no runtime dependencies.
 (Same package also works from plain JavaScript — see
 [`javascript.md`](javascript.md).)
 
 ```bash
-npm install ./sdk/javascript/mikavt-sdk
-# (or, once published) npm install mikavt-sdk
+npm install ./sdk/javascript/cofferak-sdk
+# (or, once published) npm install cofferak-sdk
 ```
 
 ```ts
-import { Client, DeniedError } from "mikavt-sdk";
+import { Client, DeniedError } from "cofferak-sdk";
 
-const client = new Client(process.env.MIKAVT_SOCKET!);
-const token = process.env.MIKAVT_TOKEN!;
+const client = new Client(process.env.COFFERAK_SOCKET!);
+const token = process.env.COFFERAK_TOKEN!;
 
 await client.set(token, "myapp/DB_PASSWORD", Buffer.from("s3cr3t"));
 const value = await client.get(token, "myapp/DB_PASSWORD");
@@ -29,18 +29,18 @@ try {
 
 Build with `npm run build` (runs `tsc`); this exact flow — compiled to
 plain JavaScript and run with `node` — is what
-[`sdk/javascript/mikavt-sdk/examples/smoke.js`](../../sdk/javascript/mikavt-sdk/examples/smoke.js)
+[`sdk/javascript/cofferak-sdk/examples/smoke.js`](../../sdk/javascript/cofferak-sdk/examples/smoke.js)
 runs for real in CI (`scripts/sdk-smoke.sh`).
 
 ## Server mode (TLS / mutual TLS)
 
 ```ts
 const client = Client.connectTls({
-  addr: "mikavt.example.internal:8443",
-  serverName: "mikavt.example.internal",
+  addr: "cofferak.example.internal:8443",
+  serverName: "cofferak.example.internal",
   caCertPath: "/path/to/ca.pem",
   // clientCertPath/clientKeyPath: set both together only if the server
-  // requires mutual TLS ($MIKAVT_TLS_CLIENT_CA).
+  // requires mutual TLS ($COFFERAK_TLS_CLIENT_CA).
 });
 ```
 
@@ -52,5 +52,5 @@ connection rather than adding to it — this client trusts only the CA
 you provide. Proven for real — including rejecting a wrong hostname,
 rejecting a connection with no client cert against an mTLS-only server,
 and rejecting a client cert signed by a different, untrusted CA — by
-[`sdk/javascript/mikavt-sdk/examples/smoke_tls.js`](../../sdk/javascript/mikavt-sdk/examples/smoke_tls.js),
+[`sdk/javascript/cofferak-sdk/examples/smoke_tls.js`](../../sdk/javascript/cofferak-sdk/examples/smoke_tls.js),
 run by `scripts/server-mode-smoke.sh`.

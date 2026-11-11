@@ -1,6 +1,6 @@
-# Software Design Document practice for mikavt
+# Software Design Document practice for cofferak
 
-This file is the one thing every agent (AI or human) working on mikavt
+This file is the one thing every agent (AI or human) working on cofferak
 reads first. It replaces any heavier process — there is no separate
 brainstorming ritual, no per-task spec/plan pair, no multi-round reviewer
 loop required by default. Use the lightest process that gets a correct,
@@ -15,8 +15,8 @@ of memoryos's multi-wave workspace.
 ## The three files
 
 - **`docs/SPEC.md`** — the contract. What the system does, in terms of
-  its actual crates/modules (`mikavt-core/src/{crypto,format,acl,seal}.rs`,
-  `mikavtd/src/{protocol,daemon,audit}.rs`, the CLI commands). If
+  its actual crates/modules (`cofferak-core/src/{crypto,format,acl,seal}.rs`,
+  `cofferakd/src/{protocol,daemon,audit}.rs`, the CLI commands). If
   `SPEC.md` disagrees with the code, the code is the truth and `SPEC.md`
   is wrong — fix `SPEC.md`, don't silently code around the mismatch, and
   if you can't fix it yourself, say so in `docs/PROGRESS.md`.
@@ -34,7 +34,7 @@ of memoryos's multi-wave workspace.
   this file's verdicts — an agent proposes a row's content, the lead
   marks it `done`.
 
-Both `docs/SPEC.md` and `docs/adr/` already exist for mikavt. If a future
+Both `docs/SPEC.md` and `docs/adr/` already exist for cofferak. If a future
 project forked from this one, or a genuinely new subsystem, needs its own
 `docs/` tree that doesn't exist yet, create it in this same shape —
 `docs/SPEC.md` + `docs/adr/` + `docs/PROGRESS.md` — rather than inventing
