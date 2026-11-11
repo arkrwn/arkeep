@@ -1,6 +1,12 @@
 # ADR 0012: Import, export and migration; the daemon reloads vault changes live
 
-Status: accepted
+Status: accepted, amended by ADR 0013
+
+> **Amended by [ADR 0013](0013-coffer-identities-and-peer-transfers.md):**
+> the "encrypt to the destination's public key" alternative below is now
+> implemented as signed peer transfers between paired coffers
+> (`identity`, `peer`, `export --to`), and `export` can select paths with
+> `--prefix`. Passphrase bundles are unchanged.
 
 ## Context
 
@@ -86,7 +92,7 @@ before (ADR 0010). The check is one `stat` per request.
   conservative choice.
 - **Encrypting bundles to the destination's public key** (no passphrase):
   stronger, but needs the destination set up first and an extra key
-  exchange step; may be added later as an option.
+  exchange step; added in ADR 0013.
 - **A database backend:** not needed; a single atomically written file is
   simpler to back up, move and audit.
 

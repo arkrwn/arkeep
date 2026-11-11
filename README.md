@@ -426,8 +426,10 @@ on macOS). `set`/`get`/`rm`/`list` additionally accept `--socket <PATH>`
 | `import-env <file\|-> --prefix <p>` | Import a `.env` file (each `KEY=value` → `<p>/KEY`); `--dry-run`, `--overwrite`. |
 | `export-env --prefix <p> -o <file\|->` | Write the variables under `<p>` as a `.env` file (mode 0600). |
 | `run --prefix <p> [--prefix <q>] -- <cmd>` | Run a command with those secrets as environment variables; nothing written to disk. |
-| `export -o <file>` | Whole vault (secrets + service tokens) as a passphrase-encrypted bundle, for backup or moving to another machine/OS. |
-| `import <file>` | Restore a bundle into this vault; `--dry-run`, `--overwrite`. Apps keep their tokens. |
+| `export -o <file> [--to <peer>] [--prefix <p>]` | Secrets (and service tokens) as a bundle: passphrase-encrypted, or with `--to` encrypted for a paired coffer and signed by this one. `--prefix` selects part of the vault. |
+| `import <file>` | Restore a passphrase bundle or a peer transfer (sender verified) into this vault; `--dry-run`, `--overwrite`, `--from <identity file>`. |
+| `identity [-o <file>]` | Print this coffer's public identity, to pair with another coffer. |
+| `peer add <name> <file>` / `peer list` / `peer rm <name>` | Manage the coffers this one trusts for transfers. |
 
 `cofferakd` itself takes no CLI flags; it reads `COFFERAK_DATA_DIR` and
 `COFFERAK_SOCKET` from the environment (same per-OS defaults as above),
@@ -450,17 +452,25 @@ cofferak export-env --prefix myapp/env -o app.env      # back to a .env file
 
 cofferak export -o backup.cfk                          # old machine: encrypted bundle, passphrase-protected
 cofferak import backup.cfk                             # new machine (any OS): secrets and app tokens restored
-                                                       # (export/import are admin commands: on Linux use $ADMIN)
+
+cofferak export --to server --prefix myapp -o x.cfk    # between paired coffers: no passphrase, only the
+cofferak import x.cfk                                  # server can open it, and it verifies who sent it
+                                                       # (export/import/peer are admin commands: on Linux use $ADMIN)
 
 vault kv get -format=json secret/myapp \
   | jq -r '.data.data | to_entries[] | "\(.key)=\(.value | @json)"' \
   | cofferak import-env - --prefix myapp/env           # from HashiCorp Vault KV
 ```
 
-Bundles are AES-256-GCM-SIV encrypted with a PBKDF2-HMAC-SHA384 key from
-your passphrase, hold no machine-specific keys, and work between Linux
-and macOS. A running daemon picks up imports and newly enrolled services
-immediately, with no restart ([ADR 0012](docs/adr/0012-import-export-and-live-reload.md)).
+Passphrase bundles are AES-256-GCM-SIV encrypted under a
+PBKDF2-HMAC-SHA384 key. Transfers between paired coffers (`cofferak
+identity`, `cofferak peer add`) are encrypted to the receiving coffer
+with X25519 + ML-KEM-1024 and signed with ECDSA P-384 + ML-DSA-87; the
+receiver re-encrypts everything under its own master key, so each coffer
+keeps exactly one. Neither kind holds machine-specific keys, both work
+between Linux and macOS, and a running daemon picks up imports
+immediately ([ADR 0012](docs/adr/0012-import-export-and-live-reload.md),
+[ADR 0013](docs/adr/0013-coffer-identities-and-peer-transfers.md)).
 
 ## SDKs
 

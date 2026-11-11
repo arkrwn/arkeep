@@ -114,6 +114,16 @@ impl Aad {
         Self::ctx("service-token", service_id)
     }
 
+    /// For this coffer's identity private key (ADR 0013).
+    pub fn identity() -> Self {
+        Self::ctx("identity", "")
+    }
+
+    /// For a trusted peer's public identity, by peer name (ADR 0013).
+    pub fn peer(name: &str) -> Self {
+        Self::ctx("peer", name)
+    }
+
     fn host_wrap(host_id: &str) -> Self {
         Self::ctx("host-wrap", host_id)
     }

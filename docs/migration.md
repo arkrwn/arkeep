@@ -10,6 +10,7 @@ another machine is done with five commands:
 | Run an app with those secrets, no file on disk | `cofferak run --prefix myapp/env -- ./app` |
 | Produce a `.env` file for a tool that needs one | `cofferak export-env --prefix myapp/env -o app.env` |
 | Back up, or move the whole vault to another machine/OS | `cofferak export -o backup.cfk` then `cofferak import backup.cfk` |
+| Move or append secrets between **your own coffers** (laptop ↔ server), no passphrase | pair once, then `cofferak export --to server --prefix myapp -o x.cfk` and `cofferak import x.cfk` |
 | Move from HashiCorp Vault | `vault kv get -format=json … \| jq … \| cofferak import-env -` |
 
 The `.env` commands use a service token (like `get`/`set`); `export`
@@ -108,7 +109,52 @@ directory (`vault.cofferak`, `meta.json`) to the new machine, then run
 ([recovery-runbook.md](recovery-runbook.md)). This also works between
 Linux and macOS. It needs the offline root key; the bundle method doesn't.
 
-## 4. Move secrets from HashiCorp Vault
+## 4. Coffer to coffer, with keys instead of a passphrase
+
+For regular moves between coffers you own, pair them once; afterwards a
+transfer can only be opened by the coffer it was made for, and that
+coffer verifies which coffer sent it. Each coffer keeps its own master
+key: imported secrets are re-encrypted under the receiver's key. Design:
+[ADR 0013](adr/0013-coffer-identities-and-peer-transfers.md).
+
+**Pair once** (each side shares its public identity; it's not secret):
+
+```bash
+# on the mac
+cofferak identity -o mac.id          # prints a fingerprint, e.g. 6d0b 3ad3 f8a8 96f6 …
+# on the server
+cofferak identity -o server.id
+# copy mac.id to the server and server.id to the mac, then:
+cofferak peer add mac mac.id         # on the server
+cofferak peer add server server.id   # on the mac
+cofferak peer list                   # compare fingerprints with the other side
+```
+
+**Transfer** (any direction, any OS):
+
+```bash
+# on the mac: everything under myapp/ for the server
+cofferak export --to server --prefix myapp -o myapp.cfk
+# on the server
+cofferak import myapp.cfk --dry-run
+cofferak import myapp.cfk            # "imported from peer 'mac' (signature verified)…"
+```
+
+- Only the server can open `myapp.cfk` (X25519 + ML-KEM-1024 to the
+  server's identity); the server checks two signatures (ECDSA P-384 +
+  ML-DSA-87) proving the mac made it, then stores the secrets under its
+  own key. A running daemon picks them up immediately.
+- Without `--prefix` the whole vault is sent, service tokens included;
+  with `--prefix`, tokens are left out unless you add `--with-tokens`.
+- Existing paths on the receiver are kept unless `--overwrite`: imports
+  append.
+- Refused, with nothing changed: a file made for a different coffer, a
+  modified or truncated file, or a sender that isn't a trusted peer. To
+  accept a one-off file from a coffer you haven't added, pin its identity
+  explicitly: `cofferak import x.cfk --from other.id`.
+- `cofferak peer rm NAME` stops trusting a coffer.
+
+## 5. Move secrets from HashiCorp Vault
 
 For each KV path, turn Vault's JSON into `.env` lines and pipe them in
 (`jq`'s `@json` produces double-quoted, escaped values the parser reads
@@ -132,10 +178,12 @@ valid variable names. Non-string values (numbers, JSON objects) arrive
 as their JSON text. Map Vault policies to cofferak service tokens with
 `enroll-service --paths … --perm ro|rw`.
 
-## 5. What doesn't move
+## 6. What doesn't move
 
 - **Host keys** stay sealed to the machine (TPM2/Keychain); every machine
   enrolls itself.
 - **The root key** is per vault; a new vault gets a new one.
+- **The coffer identity and peer list** belong to each coffer and are
+  never exported.
 - **The audit log** (`audit.jsonl`) is not part of a bundle; copy it
   alongside if you need the history.

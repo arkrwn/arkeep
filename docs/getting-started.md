@@ -302,8 +302,10 @@ $ADMIN export -o backup.cfk       # asks for a passphrase (14+ characters), twic
 $ADMIN import backup.cfk          # secrets and app tokens restored; the daemon picks them up live
 ```
 
-Works between Linux and macOS. Details, backups and moving from
-HashiCorp Vault: [migration.md](migration.md).
+Works between Linux and macOS. For regular moves between your own
+coffers without a passphrase, pair them once (`cofferak identity`,
+`cofferak peer add`) and use `cofferak export --to <peer>`. Details,
+backups and moving from HashiCorp Vault: [migration.md](migration.md).
 
 ## 8. Read-only tokens
 

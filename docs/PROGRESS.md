@@ -55,6 +55,8 @@ from a command or test that was actually run. States: `todo`, `doing`,
 | `.env` import/export and `cofferak run` (ADR 0012) | done | `cofferak-core::dotenv` unit tests (quotes, escapes, `export`, inline comments, multi-line values, CRLF/BOM, round trip); `cli_transfer.rs` over a real socket; `quickstart-check.sh` in CI |
 | Encrypted export/import bundles for migration (ADR 0012) | done | `cofferak-core::bundle` tests (round trip, no plaintext, wrong passphrase/tampering/truncation/weakened header rejected); `cli_transfer.rs` moves secrets and tokens between two vaults; CI exports and re-imports |
 | Live reload of vault changes in the daemon (ADR 0012) | done | `daemon_persistence.rs`: imported entries served and new services authenticated without restart; removed services denied immediately |
+| Coffer identities, trusted peers and signed peer transfers (ADR 0013) | done | `identity.rs` tests (recipient-only, tamper/forgery rejected); `cli_transfer.rs` Mac↔server both ways with `--prefix`, untrusted sender / wrong recipient refused, survives `rotate-dek`; `quickstart-check.sh` pairs two coffers in CI on Linux and macOS |
+| Vault format 3 (identity, peers) with format-2 upgrade | done | `format.rs` test loads a format-2 file and upgrades it |
 | Benchmarks | done | `scripts/bench.sh`, run in CI on every build; results in `docs/benchmarks.md` |
 
 ## Known gaps / open items

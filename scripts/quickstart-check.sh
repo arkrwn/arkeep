@@ -20,7 +20,10 @@ DPID=""
 cleanup() {
   if [[ "$OS" == "Linux" ]]; then sudo systemctl stop "$UNIT" 2>/dev/null || true; fi
   [[ -n "$DPID" ]] && kill "$DPID" 2>/dev/null || true
-  if [[ "$OS" == "Darwin" ]]; then security delete-generic-password -s cofferak -a "$HOST" >/dev/null 2>&1 || true; fi
+  if [[ "$OS" == "Darwin" ]]; then
+    security delete-generic-password -s cofferak -a "$HOST" >/dev/null 2>&1 || true
+    security delete-generic-password -s cofferak -a "qsb-$$" >/dev/null 2>&1 || true
+  fi
   sudo -n rm -rf "$WORK" 2>/dev/null || rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -82,5 +85,24 @@ printf 'correct horse battery staple\n' > "$WORK/pass"
 $ADMIN export -o "$WORK/backup.cfk" --passphrase-file "$WORK/pass"
 if LC_ALL=C grep -a -q 'p@ss' "$WORK/backup.cfk"; then echo "plaintext in bundle" >&2; exit 1; fi
 $ADMIN import "$WORK/backup.cfk" --passphrase-file "$WORK/pass" --dry-run | grep -q "0 new, 0 replaced, 5 kept"
+
+step "8. coffer-to-coffer transfer with identities (no passphrase), both directions"
+B_DIR="$WORK/vault-b"; B_HOST="qsb-$$"
+mkdir -p "$B_DIR" && chmod 700 "$B_DIR"
+if [[ "$OS" == "Linux" ]]; then ADMIN_B="sudo env COFFERAK_DATA_DIR=$B_DIR $(command -v cofferak)"; else ADMIN_B="env COFFERAK_DATA_DIR=$B_DIR cofferak"; fi
+$ADMIN_B init --root >/dev/null
+$ADMIN_B init --host "$B_HOST"
+$ADMIN identity -o "$WORK/a.id" >/dev/null
+$ADMIN_B identity -o "$WORK/b.id" >/dev/null
+$ADMIN peer add b "$WORK/b.id" >/dev/null
+$ADMIN_B peer add a "$WORK/a.id" >/dev/null
+$ADMIN export --to b --prefix myapp/env -o "$WORK/a2b.cfk" | grep -q "for peer 'b'"
+$ADMIN_B import "$WORK/a2b.cfk" | grep -q "from peer 'a' (signature verified): secrets 3 new"
+$ADMIN_B export --to a -o "$WORK/b2a.cfk" >/dev/null
+$ADMIN import "$WORK/b2a.cfk" | grep -q "from peer 'b' (signature verified): secrets 0 new, 0 replaced, 3 kept"
+# A file made for B must not open on A, and B must refuse an untrusted sender.
+if $ADMIN import "$WORK/a2b.cfk" 2>/dev/null; then echo "A imported a bundle addressed to B" >&2; exit 1; fi
+$ADMIN_B peer rm a >/dev/null
+if $ADMIN_B import "$WORK/a2b.cfk" 2>/dev/null; then echo "B accepted an untrusted sender" >&2; exit 1; fi
 
 echo "== README quickstart: all steps passed ($OS)"
