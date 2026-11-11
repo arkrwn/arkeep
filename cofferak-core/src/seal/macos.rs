@@ -59,13 +59,18 @@ impl HostSeal for KeychainSeal {
 
     fn unseal(&self, blob: &SealedBlob) -> Result<[u8; 32], SealError> {
         if blob.0 != SEALED_MARKER {
-            return Err(SealError::Invalid);
+            return Err(SealError::Invalid(
+                "sealed blob does not match the expected marker".to_string(),
+            ));
         }
 
         let bytes = get_generic_password(&self.service, &self.account).map_err(map_sf_error)?;
 
         if bytes.len() != 32 {
-            return Err(SealError::Invalid);
+            return Err(SealError::Invalid(format!(
+                "Keychain item was {} bytes, expected 32",
+                bytes.len()
+            )));
         }
 
         let mut key = [0u8; 32];
@@ -81,7 +86,7 @@ impl HostSeal for KeychainSeal {
 /// `Unavailable`, anything else maps to `Io`.
 fn map_sf_error(e: SfError) -> SealError {
     match e.code() {
-        ERR_SEC_ITEM_NOT_FOUND => SealError::Invalid,
+        ERR_SEC_ITEM_NOT_FOUND => SealError::Invalid("Keychain item not found".to_string()),
         ERR_SEC_INTERACTION_NOT_ALLOWED | ERR_SEC_NOT_AVAILABLE => SealError::Unavailable,
         _ => SealError::Io(std::io::Error::other(format!("keychain error: {e}"))),
     }

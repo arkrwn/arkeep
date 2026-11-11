@@ -85,15 +85,17 @@ COFFERAK_TLS_KEY=./server.key \
 | `COFFERAK_TLS_ADDR` | `host:port` to listen on. Unset = server mode is off (Unix socket only). |
 | `COFFERAK_TLS_CERT` / `COFFERAK_TLS_KEY` | Server certificate + private key (PEM). Required once `COFFERAK_TLS_ADDR` is set. |
 | `COFFERAK_TLS_CLIENT_CA` | Optional. CA (PEM) to verify client certificates against — turns on mutual TLS. |
+| `COFFERAK_TLS_MAX_CONNECTIONS` | Optional. Maximum concurrent TLS connections (default `256`); connections beyond it are closed immediately. |
 
 TLS is pure-Rust (`rustls`, no OpenSSL/C dependency), **TLS 1.3-only**
 (both ends are cofferak's own code, so there's no compatibility reason to
 allow the older, weaker protocol version), with bounded request/response
 lines and a 30-second per-connection timeout — see
 [ADR 0008](docs/adr/0008-server-mode-rpc-over-tls.md)'s "Security
-hardening applied" section, including the one disclosed limitation
-(no connection-rate limiting yet — put a reverse proxy in front for an
-internet-facing deployment). **All four SDKs** support this transport
+hardening applied" section. Concurrent connections are capped
+(`COFFERAK_TLS_MAX_CONNECTIONS`); there is no per-client rate limit yet, so
+for an internet-facing deployment keep a firewall or per-IP-limiting
+proxy in front and prefer mTLS. **All four SDKs** support this transport
 today, each using only its own language's standard-library TLS (no
 third-party TLS dependency anywhere): Rust (`rustls`), Go
 (`crypto/tls`), Python (`ssl`), TypeScript/JavaScript (`node:tls`) — see
@@ -170,8 +172,16 @@ SDD.md             # the design/documentation practice this repo follows
 
 ## Quickstart
 
-Requires a stable Rust toolchain (MSRV 1.75, pinned in
-`rust-toolchain.toml`).
+Requires a stable Rust toolchain (MSRV 1.89; CI uses the exact version
+pinned in `rust-toolchain.toml`).
+
+This quickstart runs everything as your own user, which works on macOS.
+**On Linux, run the admin commands (`init`, `enroll-*`, `rotate-dek`,
+`recover`) with `sudo`**: `systemd-creds`' host scope is root-only. For a
+real Linux install — unprivileged daemon under systemd, host key delivered
+via `LoadCredentialEncrypted=` — follow
+[`docs/deployment.md`](docs/deployment.md) and
+[ADR 0009](docs/adr/0009-linux-host-key-via-systemd-credentials.md).
 
 ```bash
 # Build everything (library, daemon, CLI).
@@ -198,8 +208,11 @@ COFFERAK_DATA_DIR=./data COFFERAK_SOCKET=./data/cofferakd.sock \
 
 # 4. Enroll a consuming service, scoped to a path prefix. The printed
 #    token is shown exactly once — hand it to the service's own config.
+#    The daemon loads tokens at startup, so restart it afterwards.
 ./target/release/cofferak enroll-service myapp \
-  --paths myapp/ --perm rw --data-dir ./data
+  --paths myapp --perm rw --data-dir ./data
+kill %1; COFFERAK_DATA_DIR=./data COFFERAK_SOCKET=./data/cofferakd.sock \
+  ./target/release/cofferakd &
 
 # 5. Set and get a secret over the daemon's socket.
 export COFFERAK_TOKEN=<token printed by step 4>
@@ -228,7 +241,7 @@ on macOS). `set`/`get`/`rm`/`list` additionally accept `--socket <PATH>`
 | `get <path> --token <t>` | Read a secret (over the daemon socket). |
 | `rm <path> --token <t>` | Remove a secret (over the daemon socket). |
 | `list [prefix] --token <t>` | List secret paths under a prefix (over the daemon socket). |
-| `rotate-dek --hosts <csv>` | Generate a fresh DEK, re-encrypt every entry/token, and re-wrap it for the root key and the given hosts. Operates on `vault.cofferak` directly, not over the socket. |
+| `rotate-dek --hosts <csv>` | Generate a fresh DEK, re-encrypt every entry/token, and re-wrap it for the root key and the given hosts. Operates on `vault.cofferak` directly, not over the socket. Restart `cofferakd` afterwards: until then it refuses writes rather than using the stale DEK. |
 | `recover --root-key <path> --new-host <id>` | Disaster recovery: enroll a new host using the offline root private key, bypassing every enrolled host's own sealed blob. See [`docs/recovery-runbook.md`](docs/recovery-runbook.md). |
 | `audit tail [--count N]` | Print the last `N` (default 20) entries of the daemon's audit log, read directly from `<data_dir>/audit.jsonl`. |
 

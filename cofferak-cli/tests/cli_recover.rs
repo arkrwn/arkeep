@@ -51,7 +51,9 @@ impl HostSeal for FakeHostSeal {
 
     fn unseal(&self, blob: &SealedBlob) -> Result<[u8; 32], SealError> {
         if blob.0.len() != 33 || blob.0[0] != self.tag {
-            return Err(SealError::Invalid);
+            return Err(SealError::Invalid(
+                "fake seal: marker/tag mismatch".to_string(),
+            ));
         }
         let mut key = [0u8; 32];
         for (i, b) in blob.0[1..].iter().enumerate() {

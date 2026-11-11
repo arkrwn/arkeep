@@ -25,21 +25,24 @@
 //! written to the audit log. Only [`AccessToken::service_id`] — an opaque
 //! label chosen by whoever provisioned the token, not derived from the
 //! secret — ever reaches an [`AuditEntry`].
-
-// `token_key` and `save_to` are part of this module's public surface for
-// callers that land in later tasks (real token provisioning, vault
-// persistence on shutdown) and for the test harness; `main`'s current
-// minimal wiring doesn't exercise them yet.
-#![allow(dead_code)]
+//!
+//! ## Durability (ADR 0010)
+//!
+//! A `Daemon` built with [`Daemon::with_persistence`] writes every
+//! successful `set`/`rm` through to `vault.cofferak` *before* acknowledging
+//! it: under the vault's exclusive [`VaultLock`], it re-reads the file
+//! from disk, applies exactly that one change, and saves atomically. If
+//! the write fails, the in-memory state is left unchanged and the client
+//! gets `Response::Err` — a write is never acknowledged unless it is on
+//! disk. A `Daemon` built with plain [`Daemon::new`] is in-memory only
+//! (used by tests and the dev-only harness).
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::PathBuf;
 
 use cofferak_core::acl::{path_allowed, AccessToken};
-use cofferak_core::crypto::{
-    decrypt_entry, encrypt_entry, DekWrapHost, DekWrapRoot, EncryptedEntry, KeyBytes,
-};
-use cofferak_core::format::{VaultEntry, VaultFile};
+use cofferak_core::crypto::{decrypt_entry, encrypt_entry, DekWrapHost, KeyBytes};
+use cofferak_core::format::{VaultEntry, VaultFile, VaultLock};
 
 use crate::audit::{AuditEntry, AuditLog};
 use crate::protocol::{Request, Response};
@@ -64,28 +67,44 @@ fn now_unix() -> i64 {
         .unwrap_or(0)
 }
 
-/// In-memory daemon state: the unwrapped DEK, the vault's entries (plus the
-/// bits of `VaultFile` needed to write a complete vault back out), the
-/// tokens allowed to operate on those entries, and the audit log every
-/// outcome is appended to.
+/// Where and how a persistent `Daemon` writes its changes back to disk.
+struct Persistence {
+    vault_path: PathBuf,
+    host_id: String,
+    /// This host's DEK wrap as it was when the daemon unsealed the DEK at
+    /// startup. If the on-disk wrap no longer matches (a `rotate-dek` ran,
+    /// or this host was re-enrolled), the daemon's in-memory DEK is stale:
+    /// writing entries encrypted under it would corrupt the vault, so
+    /// writes are refused until the daemon is restarted.
+    host_wrap: DekWrapHost,
+}
+
+/// One entry-level change to write through to disk.
+enum Change<'a> {
+    Upsert(&'a str, &'a VaultEntry),
+    Remove(&'a str),
+}
+
+/// Daemon state: the unwrapped DEK, the vault's entries, the tokens
+/// allowed to operate on those entries, the audit log every outcome is
+/// appended to, and (optionally) where to persist changes.
 ///
-/// Fields are private: only `handle_request` and `save_to` expose behavior,
-/// so nothing outside this module can accidentally print or leak token
-/// secrets or the DEK.
+/// Fields are private: only `handle_request` exposes behavior, so nothing
+/// outside this module can accidentally print or leak token secrets or the
+/// DEK.
 pub struct Daemon {
     dek: KeyBytes,
-    version: u16,
-    created_at: i64,
-    root_wrap: Option<DekWrapRoot>,
-    services: BTreeMap<String, EncryptedEntry>,
     entries: BTreeMap<String, VaultEntry>,
     tokens: BTreeMap<String, AccessToken>,
     audit: AuditLog,
+    persistence: Option<Persistence>,
 }
 
 impl Daemon {
-    /// Build a `Daemon` from an unwrapped `dek`, the loaded `vault`, a map
-    /// of tokens keyed by [`token_key`], and an already-open audit log.
+    /// Build an in-memory `Daemon` from an unwrapped `dek`, the loaded
+    /// `vault`, a map of tokens keyed by [`token_key`], and an already-open
+    /// audit log. Changes are NOT persisted — call
+    /// [`with_persistence`](Self::with_persistence) for a real daemon.
     pub fn new(
         dek: [u8; 32],
         vault: VaultFile,
@@ -94,14 +113,30 @@ impl Daemon {
     ) -> Self {
         Daemon {
             dek: KeyBytes::new(dek),
-            version: vault.version,
-            created_at: vault.created_at,
-            root_wrap: vault.root_wrap,
-            services: vault.services,
             entries: vault.entries,
             tokens,
             audit,
+            persistence: None,
         }
+    }
+
+    /// Make every successful `set`/`rm` durable: written through to
+    /// `vault_path` (under the vault lock, atomically) before it is
+    /// acknowledged. `host_id`/`host_wrap` identify the wrap the DEK was
+    /// unsealed from, so a re-keyed vault on disk is detected rather than
+    /// silently overwritten with entries under a stale DEK.
+    pub fn with_persistence(
+        mut self,
+        vault_path: PathBuf,
+        host_id: String,
+        host_wrap: DekWrapHost,
+    ) -> Self {
+        self.persistence = Some(Persistence {
+            vault_path,
+            host_id,
+            host_wrap,
+        });
+        self
     }
 
     /// Handle one request: resolve the token, enforce the ACL, perform the
@@ -115,25 +150,35 @@ impl Daemon {
         }
     }
 
-    /// Serialize the current entries/services (plus a caller-supplied root
-    /// pubkey and per-host DEK wraps, which the daemon itself doesn't own)
-    /// into a `VaultFile` and write it to `path`.
-    pub fn save_to(
-        &self,
-        path: &Path,
-        root_pubkey: [u8; 32],
-        host_wraps: BTreeMap<String, DekWrapHost>,
-    ) -> std::io::Result<()> {
-        let vault = VaultFile {
-            version: self.version,
-            created_at: self.created_at,
-            root_pubkey,
-            root_wrap: self.root_wrap.clone(),
-            hosts: host_wraps,
-            services: self.services.clone(),
-            entries: self.entries.clone(),
+    /// Write one change through to disk, if this daemon is persistent.
+    /// Re-reads the vault under its exclusive lock and applies only this
+    /// change, so concurrent CLI admin edits to other parts of the file
+    /// (hosts, services) are never clobbered.
+    fn persist(&self, change: Change<'_>) -> Result<(), String> {
+        let Some(p) = &self.persistence else {
+            return Ok(());
         };
-        vault.save(path)
+        let _lock =
+            VaultLock::acquire(&p.vault_path).map_err(|e| format!("could not lock vault: {e}"))?;
+        let mut disk = VaultFile::load(&p.vault_path)
+            .map_err(|e| format!("could not re-read vault before writing: {e}"))?;
+        if disk.hosts.get(&p.host_id) != Some(&p.host_wrap) {
+            return Err(format!(
+                "vault on disk was re-keyed (rotate-dek) or host '{}' was re-enrolled \
+                 since cofferakd started; refusing to write with a stale DEK — restart cofferakd",
+                p.host_id
+            ));
+        }
+        match change {
+            Change::Upsert(path, entry) => {
+                disk.entries.insert(path.to_string(), entry.clone());
+            }
+            Change::Remove(path) => {
+                disk.entries.remove(path);
+            }
+        }
+        disk.save(&p.vault_path)
+            .map_err(|e| format!("could not write vault: {e}"))
     }
 
     /// Append one audit entry. I/O failure here is best-effort: it must
@@ -189,16 +234,22 @@ impl Daemon {
             self.log(&tok.service_id, path, "set", "denied");
             return Response::Denied;
         }
-        let version = self.entries.get(path).map(|e| e.version + 1).unwrap_or(1);
-        let ciphertext = encrypt_entry(&self.dek, &value);
-        self.entries.insert(
-            path.to_string(),
-            VaultEntry {
-                ciphertext,
-                version,
-                updated_at: now_unix(),
-            },
-        );
+        let version = self
+            .entries
+            .get(path)
+            .map(|e| e.version.saturating_add(1))
+            .unwrap_or(1);
+        let entry = VaultEntry {
+            ciphertext: encrypt_entry(&self.dek, &value),
+            version,
+            updated_at: now_unix(),
+        };
+        if let Err(e) = self.persist(Change::Upsert(path, &entry)) {
+            eprintln!("cofferakd: set for '{path}' not persisted: {e}");
+            self.log(&tok.service_id, path, "set", "error");
+            return Response::Err("write could not be persisted; see cofferakd logs".to_string());
+        }
+        self.entries.insert(path.to_string(), entry);
         self.log(&tok.service_id, path, "set", "ok");
         Response::Ok
     }
@@ -213,16 +264,18 @@ impl Daemon {
             self.log(&tok.service_id, path, "rm", "denied");
             return Response::Denied;
         }
-        match self.entries.remove(path) {
-            Some(_) => {
-                self.log(&tok.service_id, path, "rm", "ok");
-                Response::Ok
-            }
-            None => {
-                self.log(&tok.service_id, path, "rm", "not_found");
-                Response::NotFound
-            }
+        if !self.entries.contains_key(path) {
+            self.log(&tok.service_id, path, "rm", "not_found");
+            return Response::NotFound;
         }
+        if let Err(e) = self.persist(Change::Remove(path)) {
+            eprintln!("cofferakd: rm for '{path}' not persisted: {e}");
+            self.log(&tok.service_id, path, "rm", "error");
+            return Response::Err("write could not be persisted; see cofferakd logs".to_string());
+        }
+        self.entries.remove(path);
+        self.log(&tok.service_id, path, "rm", "ok");
+        Response::Ok
     }
 
     fn handle_list(&mut self, token: &str, prefix: &str) -> Response {

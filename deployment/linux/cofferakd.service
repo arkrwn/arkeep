@@ -1,9 +1,12 @@
 # systemd unit template for cofferakd.
 #
-# Copy to /etc/systemd/system/cofferakd.service and edit the marked lines.
+# Copy to /etc/systemd/system/cofferakd.service, replace every
+# REPLACE_WITH_HOST_ID with the id you passed to `cofferak init --host`, then
+# `systemctl daemon-reload && systemctl enable --now cofferakd`.
 # See docs/deployment.md for the full install procedure.
 [Unit]
 Description=cofferak secrets vault daemon
+Documentation=https://github.com/arkrwn/cofferak/blob/main/docs/deployment.md
 After=local-fs.target
 Wants=local-fs.target
 
@@ -16,18 +19,33 @@ Group=cofferak
 # Installed binary. Adjust if you installed it somewhere else.
 ExecStart=/usr/local/bin/cofferakd
 
-# Where vault.cofferak, meta.json, host.seal and audit.jsonl live. host.seal is the
-# systemd-creds sealed host key, read directly by cofferakd (see docs/deployment.md).
+# This host's unseal key (ADR 0009). systemd decrypts the sealed blob AS
+# ROOT before starting the daemon and exposes the plaintext only to this
+# unit, at $CREDENTIALS_DIRECTORY/cofferak-<host id>, on a private tmpfs.
+# cofferakd itself never needs access to systemd-creds' root-only host secret.
+# The credential name must be "cofferak-<host id>" — the name
+# `cofferak init --host` sealed it under.
+LoadCredentialEncrypted=cofferak-REPLACE_WITH_HOST_ID:/var/lib/cofferak/hosts/REPLACE_WITH_HOST_ID.seal
+Environment=COFFERAK_HOST_ID=REPLACE_WITH_HOST_ID
+
+# Where vault.cofferak, meta.json, hosts/ and audit.jsonl live.
 Environment=COFFERAK_DATA_DIR=/var/lib/cofferak
 # Unix socket the daemon listens on. The directory is created by RuntimeDirectory.
-# Socket is cofferak:cofferak, mode 0660; add consuming services to the cofferak group.
+# Socket is cofferak:cofferak, mode 0660; add consuming services' users to the cofferak group.
 Environment=COFFERAK_SOCKET=/run/cofferak/cofferakd.sock
+
+# Server mode (ADR 0008), optional. Uncomment to also listen on TLS/TCP.
+# Keep the key file readable only by root/cofferak.
+#Environment=COFFERAK_TLS_ADDR=0.0.0.0:8443
+#Environment=COFFERAK_TLS_CERT=/etc/cofferak/tls/server.pem
+#Environment=COFFERAK_TLS_KEY=/etc/cofferak/tls/server.key
+#Environment=COFFERAK_TLS_CLIENT_CA=/etc/cofferak/tls/client-ca.pem
 
 # Creates /run/cofferak owned by User=cofferak. Group members need traverse
 # access to reach the socket.
 RuntimeDirectory=cofferak
 RuntimeDirectoryMode=0750
-# Creates /var/lib/cofferak owned by User=cofferak.
+# Creates /var/lib/cofferak owned by User=cofferak (the only writable path).
 StateDirectory=cofferak
 StateDirectoryMode=0700
 UMask=0077
@@ -35,11 +53,39 @@ UMask=0077
 Restart=on-failure
 RestartSec=5
 
-# Basic hardening.
+# --- Hardening -----------------------------------------------------------
+# A secrets daemon must never leave key material in a core dump.
+LimitCORE=0
+# No privileges at all: no capabilities, no way to gain any.
 NoNewPrivileges=yes
-PrivateTmp=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+# Filesystem: everything read-only except StateDirectory/RuntimeDirectory.
 ProtectSystem=strict
 ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+# Kernel and process isolation.
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+# Only the socket families cofferakd uses (Unix socket; TCP for server mode).
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+SystemCallErrorNumber=EPERM
 
 [Install]
 WantedBy=multi-user.target

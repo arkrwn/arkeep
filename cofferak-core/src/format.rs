@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
 
+use bincode::Options as _;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -99,20 +100,127 @@ impl VaultFile {
         }
     }
 
-    /// Serialize this vault with `bincode` and write it to `path`.
+    /// Serialize this vault with `bincode` and write it to `path`
+    /// atomically (see [`write_atomic`]): a crash mid-write leaves either
+    /// the previous complete file or the new complete file, never a
+    /// truncated one.
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
-        let bytes = bincode::serialize(self)
+        let bytes = bincode_options()
+            .serialize(self)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        std::fs::write(path, bytes)
+        write_atomic(path, &bytes)
     }
 
     /// Read and deserialize a vault previously written by [`VaultFile::save`].
     ///
     /// Returns `Err(FormatError::Corrupt)` (never panics) if the file is
-    /// truncated or otherwise not a valid encoding of `VaultFile`.
+    /// truncated or otherwise not a valid encoding of `VaultFile`. Decoding
+    /// is size-limited ([`MAX_VAULT_BYTES`]), so a corrupted length prefix
+    /// can't make the decoder try to allocate an absurd amount of memory.
     pub fn load(path: &Path) -> Result<Self, FormatError> {
         let bytes = std::fs::read(path)?;
-        bincode::deserialize(&bytes).map_err(|_| FormatError::Corrupt)
+        if bytes.len() as u64 > MAX_VAULT_BYTES {
+            return Err(FormatError::Corrupt);
+        }
+        bincode_options()
+            .deserialize(&bytes)
+            .map_err(|_| FormatError::Corrupt)
+    }
+}
+
+/// Upper bound on a `vault.cofferak` file, enforced on both encode and decode.
+pub const MAX_VAULT_BYTES: u64 = 256 * 1024 * 1024;
+
+/// The exact `bincode` configuration `vault.cofferak` uses: identical wire
+/// encoding to `bincode::serialize`/`deserialize` (fixed-width integers,
+/// little-endian, trailing bytes tolerated), plus a hard size limit.
+fn bincode_options() -> impl bincode::Options {
+    bincode::DefaultOptions::new()
+        .with_fixint_encoding()
+        .allow_trailing_bytes()
+        .with_limit(MAX_VAULT_BYTES)
+}
+
+/// Write `bytes` to `path` atomically and durably: write a temporary file
+/// in the same directory (mode `0600` on Unix), `fsync` it, `rename` it
+/// over `path`, then `fsync` the directory so the rename itself survives
+/// a crash. Readers only ever observe the old complete file or the new
+/// complete file.
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+
+    let dir = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| std::io::Error::other("write_atomic: path has no file name"))?;
+    let tmp = dir.join(format!(
+        ".{}.tmp-{}-{}",
+        file_name.to_string_lossy(),
+        std::process::id(),
+        now_nanos()
+    ));
+
+    let result = (|| {
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&tmp)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&tmp, path)?;
+        #[cfg(unix)]
+        {
+            std::fs::File::open(dir)?.sync_all()?;
+        }
+        Ok(())
+    })();
+
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
+}
+
+fn now_nanos() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0)
+}
+
+/// An exclusive, process-wide advisory lock on a vault, held for as long
+/// as this value is alive. Every read-modify-write of `vault.cofferak` — the
+/// daemon persisting a `set`/`rm`, and every CLI admin command — takes
+/// this lock first, so two writers can never interleave and silently drop
+/// each other's changes. The lock file is `<vault path>.lock`.
+pub struct VaultLock {
+    _file: std::fs::File,
+}
+
+impl VaultLock {
+    /// Block until the exclusive lock for the vault at `vault_path` is
+    /// acquired.
+    pub fn acquire(vault_path: &Path) -> std::io::Result<Self> {
+        let mut lock_name = vault_path.as_os_str().to_owned();
+        lock_name.push(".lock");
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true).write(true).create(true).truncate(false);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let file = options.open(std::path::PathBuf::from(lock_name))?;
+        file.lock()?;
+        Ok(VaultLock { _file: file })
     }
 }
 
@@ -142,11 +250,12 @@ impl VaultMeta {
         }
     }
 
-    /// Serialize this metadata as JSON and write it to `path`.
+    /// Serialize this metadata as JSON and write it to `path` atomically
+    /// (see [`write_atomic`]).
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
         let json = serde_json::to_vec_pretty(self)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        std::fs::write(path, json)
+        write_atomic(path, &json)
     }
 
     /// Read and deserialize metadata previously written by
@@ -314,6 +423,90 @@ mod tests {
         let result = VaultMeta::load(&path);
 
         assert!(matches!(result, Err(FormatError::Corrupt)));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn write_atomic_replaces_contents_and_leaves_no_temp_files() {
+        let dir = temp_path("atomic-dir");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("vault.cofferak");
+
+        write_atomic(&path, b"first").unwrap();
+        write_atomic(&path, b"second, longer contents").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"second, longer contents");
+
+        let leftovers: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .filter(|n| n != "vault.cofferak")
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "temp files left behind: {leftovers:?}"
+        );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "vault file must not be group/world readable");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn vault_lock_is_exclusive_across_threads() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        let path = temp_path("lock-vault.cofferak");
+        let held = Arc::new(AtomicBool::new(false));
+        let overlapped = Arc::new(AtomicBool::new(false));
+
+        let handles: Vec<_> = (0..4)
+            .map(|_| {
+                let path = path.clone();
+                let held = Arc::clone(&held);
+                let overlapped = Arc::clone(&overlapped);
+                std::thread::spawn(move || {
+                    for _ in 0..10 {
+                        let _guard = VaultLock::acquire(&path).unwrap();
+                        if held.swap(true, Ordering::SeqCst) {
+                            overlapped.store(true, Ordering::SeqCst);
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(1));
+                        held.store(false, Ordering::SeqCst);
+                    }
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+        assert!(
+            !overlapped.load(Ordering::SeqCst),
+            "two holders observed the vault lock at the same time"
+        );
+        let mut lock_name = path.as_os_str().to_owned();
+        lock_name.push(".lock");
+        let _ = std::fs::remove_file(std::path::PathBuf::from(lock_name));
+    }
+
+    #[test]
+    fn vault_file_load_rejects_oversized_length_prefix_without_allocating() {
+        // A file whose leading bytes decode as an absurd collection length
+        // must fail cleanly as Corrupt, not attempt a huge allocation.
+        let path = temp_path("oversized-prefix.cofferak");
+        let mut bytes = vec![1u8, 0]; // version: u16
+        bytes.extend_from_slice(&0i64.to_le_bytes()); // created_at
+        bytes.extend_from_slice(&[0u8; 32]); // root_pubkey
+        bytes.push(0); // root_wrap: None
+        bytes.extend_from_slice(&u64::MAX.to_le_bytes()); // hosts len
+        std::fs::write(&path, &bytes).unwrap();
+
+        assert!(matches!(VaultFile::load(&path), Err(FormatError::Corrupt)));
         let _ = std::fs::remove_file(&path);
     }
 }

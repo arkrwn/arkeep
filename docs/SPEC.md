@@ -41,6 +41,15 @@ DekWrapHost>`, `services: BTreeMap<service_id, EncryptedEntry>`,
 `meta.json` (non-secret, informational): version, root pubkey fingerprint,
 host/service IDs — safe to read without unsealing.
 
+Both are written atomically (unique `0600` temp file → fsync → rename →
+fsync directory), so a crash leaves the old or the new file, never a torn
+one. Every writer — the daemon persisting a `set`/`rm`, and every CLI
+admin command — holds an exclusive advisory lock on `vault.cofferak.lock`
+while it reads-modifies-writes. Loading rejects files over 256 MiB and
+decodes with a size limit. Host and service ids are restricted to
+`[A-Za-z0-9._-]{1,64}`, not starting with `.`/`-`, since they become file
+paths and credential names. (ADR 0010.)
+
 ## 4. Crates
 
 ```
@@ -55,17 +64,24 @@ cofferak-cli/    # `cofferak` binary: init, enroll-host, enroll-service, set,
 
 ## 5. Daily operation
 
-Boot → OS delivers the host's sealed unseal key → `cofferakd` unseals the
-DEK → decrypts the entry table into memory → serves requests over a
+Boot → OS delivers the host's unseal key (on Linux: systemd decrypts it
+as root via `LoadCredentialEncrypted=` into `$CREDENTIALS_DIRECTORY`, so
+the unprivileged daemon never needs systemd-creds itself — ADR 0009) →
+`cofferakd` unwraps the DEK → decrypts the entry table into memory → serves requests over a
 local Unix socket, and over TLS/TCP if server mode (§6a) is on,
 enforcing each token's path-prefix ACL, until shutdown (DEK zeroized).
+Every acknowledged `set`/`rm` is already durable in `vault.cofferak`; a write
+that cannot be persisted is answered with `Err` and not applied. If the
+vault on disk was re-keyed since startup (`rotate-dek`), writes are
+refused until restart (ADR 0010).
 No creator/root-private-key interaction on any normal boot, restart,
 read, or write.
 
 `cofferakd` needs `$COFFERAK_HOST_ID` to know which enrolled host it is
 running as whenever the vault has more than one (default: the single
-host, if there's only one). It reads that host's sealed key from
-`hosts/<id>.seal`, unwraps the DEK from `vault.hosts[id]`, and decrypts
+host, if there's only one). It reads that host's key from
+`$CREDENTIALS_DIRECTORY/cofferak-<id>` if present, else unseals
+`hosts/<id>.seal` itself, unwraps the DEK from `vault.hosts[id]`, and decrypts
 every `vault.services` entry into an `AccessToken` keyed by the hex of
 its own `secret` (matching the wire `token` string clients send) before
 serving any request (see ADR 0006 — this token-loading step was
@@ -112,7 +128,11 @@ reject/accept paths, by `scripts/server-mode-smoke.sh`.
 `init --root|--host`, `enroll-host`, `enroll-service`, `set|get|rm|list`
 (over the socket), `rotate-dek` (direct file, atomic write-temp-then-rename),
 `recover --root-key` (disaster recovery, zero-side-effect on failure),
-`audit tail`. See `cofferak-cli/src/main.rs` for exact flags — this spec
+`audit tail`. Admin commands run under the vault lock; on Linux the ones
+that touch a host key need root, and they hand created files back to the
+data directory's owner. Restart `cofferakd` after `enroll-service`,
+`rotate-dek`, or re-enrolling its host: tokens and the DEK are loaded at
+startup. See `cofferak-cli/src/main.rs` for exact flags — this spec
 does not restate flag syntax.
 
 ## 8. SDKs

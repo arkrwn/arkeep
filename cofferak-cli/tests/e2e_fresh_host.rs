@@ -8,24 +8,11 @@
 //!
 //! `cofferak-cli` has no library target, so `commands/init.rs`,
 //! `commands/enroll.rs`, `commands/secrets.rs`, `commands/audit.rs`, and
-//! `src/client.rs` are pulled in directly via `#[path]`, mirroring the
-//! convention `cli_init.rs`/`cli_enroll.rs`/`cli_secrets.rs`/`cli_audit.rs`
-//! already use. The daemon-side `protocol`/`audit`/`daemon` modules are
-//! likewise pulled in via `#[path]` (not `cofferakd::...`, even though
-//! `cofferakd` now has a library target) so that every piece in this test
-//! — the `Client` built from the real `src/client.rs`, the accept loop
-//! below, and the `Daemon` itself — shares exactly one `Request`/
-//! `Response`/`AuditLog` type, the same way `cli_secrets.rs` does; this
-//! is the proven-working pattern the task brief points at, and it avoids
-//! any question of whether two independently-compiled copies of the same
-//! source file count as "the same type" for the in-process
-//! `daemon.handle_request(req)` call in the accept loop. `run_audit_tail`
-//! (from `commands/audit.rs`) is the one exception: it genuinely depends
-//! on `cofferakd::audit::{AuditLog, AuditEntry}` as a real crate
-//! dependency (that's what Task 15's library target was for), and reads
-//! the same on-disk JSON-lines file the local `audit` module's `Daemon`
-//! wrote — the two types are structurally identical and serde-compatible,
-//! so there is nothing to reconcile.
+//! `src/client.rs` are pulled in directly via `#[path]`. The daemon-side
+//! `protocol`/`audit`/`daemon` modules come from the real `cofferakd`
+//! library crate and are re-exported at this test's crate root, so the
+//! CLI files' `crate::protocol` paths resolve to the very same types the
+//! `Daemon` uses — one definition of each, exactly as in the real binaries.
 //!
 //! The socket server itself (bind a `UnixListener`, spawn one thread per
 //! connection, decode/dispatch/encode each line through
@@ -33,24 +20,21 @@
 //! copy of `cofferakd/src/main.rs`'s accept loop that `cli_secrets.rs`
 //! already uses.
 
-#[path = "../../cofferakd/src/audit.rs"]
-mod audit;
+use cofferakd::audit;
 #[allow(dead_code)] // each test binary uses only a subset of these shared source modules
 #[path = "../src/commands/audit.rs"]
 mod audit_cmd;
 #[allow(dead_code)] // each test binary uses only a subset of these shared source modules
 #[path = "../src/client.rs"]
 mod client;
-#[path = "../../cofferakd/src/daemon.rs"]
-mod daemon;
+use cofferakd::daemon;
 #[allow(dead_code)] // each test binary uses only a subset of these shared source modules
 #[path = "../src/commands/enroll.rs"]
 mod enroll;
 #[allow(dead_code)] // each test binary uses only a subset of these shared source modules
 #[path = "../src/commands/init.rs"]
 mod init;
-#[path = "../../cofferakd/src/protocol.rs"]
-mod protocol;
+use cofferakd::protocol;
 #[allow(dead_code)] // each test binary uses only a subset of these shared source modules
 #[path = "../src/commands/secrets.rs"]
 mod secrets;
@@ -95,7 +79,9 @@ impl HostSeal for FakeHostSeal {
 
     fn unseal(&self, blob: &SealedBlob) -> Result<[u8; 32], SealError> {
         if blob.0.len() != 33 || blob.0[0] != self.tag {
-            return Err(SealError::Invalid);
+            return Err(SealError::Invalid(
+                "fake seal: marker/tag mismatch".to_string(),
+            ));
         }
         let mut key = [0u8; 32];
         for (i, b) in blob.0[1..].iter().enumerate() {

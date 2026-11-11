@@ -95,12 +95,12 @@ Reviewed and fixed before this reached `main`:
   by a *different, untrusted* CA, and accepts only a cert signed by the
   configured one.
 
-**Known, disclosed limitation — not fixed here:** there is no
-connection-count or rate limit on the TLS listener. The 30-second
-timeout bounds how long any *one* connection can hold a thread, but an
-attacker opening many connections in parallel can still exhaust threads
-for that duration. For an internet-facing deployment, put a reverse
-proxy or load balancer with connection/rate limiting in front of
-`$COFFERAK_TLS_ADDR` rather than exposing it directly; a connection
-semaphore inside `cofferakd` itself is a reasonable future improvement,
-tracked in `docs/PROGRESS.md`, not implemented yet.
+**Concurrent connection cap (added later, see PROGRESS).** The listener
+holds at most `$COFFERAK_TLS_MAX_CONNECTIONS` (default 256) connections at
+once; any connection past the cap is closed immediately without spawning
+a thread, so a connection flood cannot exhaust threads or memory.
+**Still disclosed:** there is no *per-client* rate limit — one client can
+occupy every slot (for up to 30s each). For an internet-facing
+deployment, keep a firewall or a proxy with per-IP limits in front of
+`$COFFERAK_TLS_ADDR`, and prefer mTLS so unauthenticated peers fail at the
+handshake.
