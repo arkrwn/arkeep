@@ -44,8 +44,9 @@ const client = Client.connectTls({
   addr: "cofferak.example.internal:8443",
   serverName: "cofferak.example.internal",
   caCertPath: "/path/to/ca.pem",
-  // clientCertPath/clientKeyPath: set both together only if the server
-  // requires mutual TLS ($COFFERAK_TLS_CLIENT_CA).
+  // Mutual TLS is mandatory in cofferakd server mode (ADR 0011):
+  clientCertPath: "/path/to/client.pem",
+  clientKeyPath: "/path/to/client.key",
 });
 ```
 

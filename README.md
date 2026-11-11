@@ -6,9 +6,9 @@
 </p>
 
 <p align="center">
-  <strong>Self-hosted secrets vault for services on Linux and macOS.</strong><br>
-  Envelope encryption · OS-sealed keys · per-service tokens · local socket or TLS 1.3 server mode<br>
-  No external server, cloud KMS or account required.
+  <strong>A military-grade, superfast coffer for your secrets and credentials.</strong><br>
+  CNSA 2.0 algorithms · post-quantum recovery key · mutual TLS 1.3 · 0.24 µs decrypt · sub-millisecond reads<br>
+  Self-hosted on Linux and macOS. No external server, cloud KMS or account.
 </p>
 
 <p align="center">
@@ -17,7 +17,9 @@
   <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg"></a>
   <img alt="Rust 1.89+" src="https://img.shields.io/badge/rust-1.89%2B-C75126.svg?logo=rust">
   <img alt="Platforms: Linux | macOS" src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS-264233.svg">
-  <img alt="TLS 1.3 only" src="https://img.shields.io/badge/server%20mode-TLS%201.3%20%2B%20mTLS-264233.svg">
+  <a href="docs/adr/0011-cnsa-grade-crypto-and-hardened-transport.md"><img alt="Crypto: CNSA 2.0 algorithms, post-quantum" src="https://img.shields.io/badge/crypto-CNSA%202.0%20%7C%20post--quantum-264233.svg"></a>
+  <a href="docs/adr/0011-cnsa-grade-crypto-and-hardened-transport.md"><img alt="Server mode: TLS 1.3 + mandatory mTLS" src="https://img.shields.io/badge/server%20mode-TLS%201.3%20%2B%20mandatory%20mTLS-264233.svg"></a>
+  <a href="docs/benchmarks.md"><img alt="Benchmarks" src="https://img.shields.io/badge/decrypt-0.24%20%C2%B5s-C75126.svg"></a>
   <img alt="SDKs: Rust, Go, Python, TypeScript" src="https://img.shields.io/badge/SDKs-Rust%20%7C%20Go%20%7C%20Python%20%7C%20TypeScript-C75126.svg">
 </p>
 
@@ -25,6 +27,7 @@
   <a href="#quickstart">Quickstart</a> ·
   <a href="#how-it-works-envelope-encryption-briefly">How it works</a> ·
   <a href="#server-mode">Server mode</a> ·
+  <a href="docs/benchmarks.md">Benchmarks</a> ·
   <a href="#sdks">SDKs</a> ·
   <a href="docs/deployment.md">Deployment</a> ·
   <a href="docs/SPEC.md">Spec</a>
@@ -35,23 +38,50 @@
 **cofferak** keeps application secrets (API keys, database passwords,
 tokens) in a single encrypted file and serves them to your services
 through a small daemon, `cofferakd`. The key that decrypts the vault is
-sealed by the operating system itself — `systemd-creds` on Linux,
-Keychain on macOS — so there is never a plaintext master key on disk.
-Each service gets its own token, limited to the paths and permissions you
-grant it.
+sealed by the operating system itself — `systemd-creds` (with the TPM2
+when present) on Linux, Keychain on macOS — so there is never a plaintext
+master key on disk. Each service gets its own token, limited to the paths
+and permissions you grant it.
 
 By default `cofferakd` listens only on a local Unix socket. Turn on
 **[server mode](#server-mode)** and it is also reachable over the
-network through TLS 1.3, optionally with mutual TLS, using the same
+network through TLS 1.3 with mandatory mutual TLS, using the same
 protocol and the same tokens.
+
+### What "military-grade" and "superfast" mean here
+
+Both claims are specific and checked on every commit:
+
+- **Military-grade** = the NSA's CNSA 2.0 algorithms (the suite for
+  protecting classified national-security systems) for everything that
+  encrypts or exchanges keys: AES-256 for data, ML-KEM-1024 (FIPS 203,
+  post-quantum; the only ML-KEM size CNSA 2.0 accepts) for the recovery
+  key and as the preferred TLS key exchange, SHA-384 for key derivation
+  and TLS. Certificates use ECDSA P-384 (CNSA 1.0) until TLS libraries
+  support ML-DSA certificates. All of it runs on AWS-LC, a FIPS 140-3
+  validated module. Details and test evidence:
+  [ADR 0011](docs/adr/0011-cnsa-grade-crypto-and-hardened-transport.md).
+- **Superfast** = decrypting a secret takes **0.24–0.26 µs**, large
+  values stream at **1.4 GB/s (Apple M3 Pro) to 4.3 GB/s (x86-64 Linux
+  CI runner)**, and a complete local read through the daemon has a
+  **~83 µs** median latency on both. Reproduce with
+  `./scripts/bench.sh`; CI runs it on every build. Full table:
+  [docs/benchmarks.md](docs/benchmarks.md).
 
 ### Highlights
 
-- **Envelope encryption** — AES-256-GCM-SIV data key, wrapped per host
-  and once for an offline X25519 recovery key.
+- **Envelope encryption** — one AES-256-GCM-SIV data key (DEK), wrapped
+  per host and once for an offline recovery key; every ciphertext is
+  bound to its path, so ciphertexts can't be swapped between secrets.
+- **Post-quantum recovery key** — the recovery wrap uses X25519 *and*
+  ML-KEM-1024 together, so a copy of the vault stolen today stays safe
+  against a future quantum computer.
 - **OS-sealed host keys** — the unseal key never sits next to the vault
   as a plain file; on Linux the daemon runs unprivileged and receives it
   from systemd.
+- **Mandatory mutual TLS for remote access** — TLS 1.3 only, AES-256-GCM
+  only, ML-KEM-1024 key exchange preferred, and no connection without a
+  client certificate you issued.
 - **Least-privilege tokens** — each service is scoped to path prefixes
   with read, write or read-write access.
 - **Durable, crash-safe writes** — every acknowledged write is already on
@@ -60,7 +90,7 @@ protocol and the same tokens.
 - **Disaster recovery** — rebuild access on a new machine with the
   offline root key.
 - **Client SDKs** — Rust, Go, Python and TypeScript/JavaScript, each
-  tested against a real daemon in CI over the Unix socket and TLS/mTLS.
+  tested against a real daemon in CI over the Unix socket and mTLS.
 
 > **Status: v0.1.0, pre-1.0.** Feature-complete and tested on every
 > commit on Linux and macOS, including real systemd-creds sealing, a
@@ -72,16 +102,59 @@ protocol and the same tokens.
 ## Why cofferak
 
 Most secrets-management setups either hand you a server to operate
-(Vault, a cloud KMS) or a flat encrypted file with one shared passphrase.
+(HashiCorp Vault, a cloud KMS) or a flat file with one shared passphrase.
 cofferak is neither: it's an **envelope-encryption** vault where the key
 that decrypts your secrets is itself sealed by the operating system's own
 secure-storage primitive — `systemd-creds` on Linux, Keychain on macOS —
 so the unseal key is never a plaintext file sitting next to the vault.
 
+How an application gets one secret, in each model:
+
+**HashiCorp Vault / cloud secrets manager** — a separate service you run
+(or rent), reached over the network, unsealed by key shares or a cloud
+KMS:
+
+```mermaid
+flowchart LR
+    App["Your app"] -- "auth (AppRole / IAM)<br/>over the network" --> V["Vault cluster<br/>or cloud API"]
+    V -- "unseal: key shares<br/>or cloud KMS call" --> K["KMS / operators"]
+    V -- "read" --> S[("Storage backend<br/>Raft / Consul / cloud")]
+    V -- "secret, over TLS" --> App
+```
+
+**`.env` / encrypted file** — no server, but the secret (or the one
+passphrase that opens every secret) sits next to the app:
+
+```mermaid
+flowchart LR
+    App["Your app"] -- "read" --> F[(".env file<br/>plaintext, or one<br/>shared passphrase")]
+    F -- "every secret,<br/>to anyone who can read the file" --> App
+```
+
+**cofferak** — the vault lives on the same host; the OS unseals the key
+once at boot; each app asks for only the paths its token allows:
+
+```mermaid
+flowchart LR
+    OS["OS key store<br/>systemd-creds + TPM2<br/>or macOS Keychain"] -- "host key, once at boot" --> D["cofferakd"]
+    App["Your app"] -- "token + path<br/>Unix socket, or mutual TLS 1.3" --> D
+    D -- "decrypt only that entry<br/>AES-256-GCM-SIV" --> V[("vault.cofferak<br/>encrypted, path-bound")]
+    D -- "the one secret" --> App
+    R["Offline recovery key<br/>X25519 + ML-KEM-1024"] -. "only for disaster recovery" .-> V
+```
+
+| | Vault / cloud manager | `.env` file | cofferak |
+|---|---|---|---|
+| Something extra to operate | A cluster or a cloud account | Nothing | One small daemon per host |
+| Where the unlock key lives | Key shares / external KMS | Next to the app (or no key) | Sealed by the OS (TPM2 / Keychain) |
+| Network hop to read a secret | Yes | No | No (Unix socket); optional mTLS |
+| Per-app least privilege | Yes (policies) | No | Yes (path-prefix tokens) |
+| Post-quantum recovery path | Depends on setup | No | Yes (ML-KEM-1024 hybrid) |
+
 - **No external dependency.** No third-party server to run, no account
-  to create, no call out to any third-party KMS. `cofferak` is the only
+  to create, no call out to any third-party KMS. `cofferakd` is the only
   server involved, and it's yours — local Unix socket by default, or
-  your own TLS endpoint if you turn on server mode.
+  your own mutual-TLS endpoint if you turn on server mode.
 - **One codebase, two platforms.** `cofferak-core` (crypto, on-disk
   format, ACL) is entirely platform-agnostic; only the small `HostSeal`
   trait has a platform-specific implementation, so the same logic — and
@@ -95,13 +168,14 @@ and AWS Secrets Manager — including when one of those fits better — see
 
 ## How it works (envelope encryption, briefly)
 
-- A **root keypair** (X25519) is generated once, offline. Its private
-  half is exported once for the operator to store off-machine; it is
-  never kept on any host running the daemon.
+- A **root keypair** (X25519 + ML-KEM-1024) is generated once. Its
+  private half is printed once, as an armored block, for the operator to
+  store off-machine; it is never kept on any host running the daemon.
 - A random 256-bit **DEK** (Data Encryption Key) encrypts the secrets
-  store (AES-256-GCM-SIV). It is never stored unwrapped: it's wrapped
-  once per enrolled host (under that host's sealed unseal key) and once
-  under the root public key (for disaster recovery).
+  store (AES-256-GCM-SIV, each value bound to its path). It is never
+  stored unwrapped: it's wrapped once per enrolled host (under that
+  host's sealed unseal key) and once under the root public key with the
+  hybrid post-quantum KEM (for disaster recovery).
 - Each enrolled **host** has its own random unseal key, sealed by the
   platform's `HostSeal` backend so it is only recoverable on that
   specific host, inside the daemon process.
@@ -126,46 +200,53 @@ API to learn, not a second thing to keep in sync. See
 over TLS) was chosen over REST or WebSocket.
 
 ```bash
-# Server side: turn on TLS alongside the existing Unix socket.
+# Server side: turn on TLS alongside the existing Unix socket. All four
+# TLS variables are required: mutual TLS is mandatory.
 COFFERAK_DATA_DIR=./data \
 COFFERAK_TLS_ADDR=0.0.0.0:8443 \
 COFFERAK_TLS_CERT=./server.pem \
 COFFERAK_TLS_KEY=./server.key \
+COFFERAK_TLS_CLIENT_CA=./client-ca.pem \
   ./target/release/cofferakd &
-
-# Optional: require a client certificate too (mutual TLS), on top of
-# the service's access token — belt and suspenders, not a replacement.
-# COFFERAK_TLS_CLIENT_CA=./ca.pem
 ```
 
 | Variable | Purpose |
 |---|---|
 | `COFFERAK_TLS_ADDR` | `host:port` to listen on. Unset = server mode is off (Unix socket only). |
 | `COFFERAK_TLS_CERT` / `COFFERAK_TLS_KEY` | Server certificate + private key (PEM). Required once `COFFERAK_TLS_ADDR` is set. |
-| `COFFERAK_TLS_CLIENT_CA` | Optional. CA (PEM) to verify client certificates against — turns on mutual TLS. |
+| `COFFERAK_TLS_CLIENT_CA` | **Required.** CA (PEM) that signs every client certificate. The daemon refuses to start server mode without it. |
 | `COFFERAK_TLS_MAX_CONNECTIONS` | Optional. Maximum concurrent TLS connections (default `256`); connections beyond it are closed immediately. |
 
-TLS is pure-Rust (`rustls`, no OpenSSL/C dependency), **TLS 1.3-only**
-(both ends are cofferak's own code, so there's no compatibility reason to
-allow the older, weaker protocol version), with bounded request/response
-lines and a 30-second per-connection timeout — see
-[ADR 0008](docs/adr/0008-server-mode-rpc-over-tls.md)'s "Security
-hardening applied" section. Concurrent connections are capped
-(`COFFERAK_TLS_MAX_CONNECTIONS`); there is no per-client rate limit yet, so
-for an internet-facing deployment keep a firewall or per-IP-limiting
-proxy in front and prefer mTLS. **All four SDKs** support this transport
-today, each using only its own language's standard-library TLS (no
-third-party TLS dependency anywhere): Rust (`rustls`), Go
-(`crypto/tls`), Python (`ssl`), TypeScript/JavaScript (`node:tls`) — see
-each SDK's page under [`docs/sample-integration/`](docs/sample-integration/)
-for its `connect_tls`/`ConnectTLS`/`connect_tls`/`connectTls` usage.
-Proven for real, for every one of them — server-cert validation,
-hostname-mismatch rejection, and mutual-TLS's reject/accept paths
-(including a cert signed by a different, untrusted CA) — by:
+The transport is locked to the strongest settings every SDK supports
+([ADR 0011](docs/adr/0011-cnsa-grade-crypto-and-hardened-transport.md)):
+
+- **TLS 1.3 only** — the newest TLS version; 1.2 and older are refused.
+- **One cipher suite:** `TLS_AES_256_GCM_SHA384`. AES-128 is refused.
+- **Key exchange:** post-quantum `ML-KEM-1024` first (CNSA 2.0), then
+  the `X25519MLKEM768` hybrid that Go and newer OpenSSL clients offer,
+  then classical `P-384` for TLS libraries with no post-quantum support
+  yet.
+- **Mutual TLS, always:** no client certificate from your CA, no
+  connection. The per-service token is still checked on every request.
+- Bounded request/response lines, a 30-second per-connection timeout,
+  and a concurrent-connection cap. There is no per-client rate limit
+  yet; for an internet-facing deployment keep a firewall or a
+  per-IP-limiting proxy in front.
+
+All four SDKs support this transport: Rust (`rustls` + AWS-LC), Go
+(`crypto/tls`), Python (`ssl`), TypeScript/JavaScript (`node:tls`); see
+each SDK's page under [`docs/sample-integration/`](docs/sample-integration/).
+Every claim above is tested on every commit by:
 
 ```bash
 ./scripts/server-mode-smoke.sh
 ```
+
+It proves that server mode won't start without a client CA; that every
+SDK is rejected without a client certificate, with one from an untrusted
+CA, or with the wrong hostname; that TLS 1.2 and AES-128 clients are
+refused; and that the Rust SDK negotiates
+`TLSv1_3 TLS13_AES_256_GCM_SHA384 MLKEM1024`.
 
 ## Repository layout
 
@@ -184,9 +265,11 @@ cofferak/
 
 ## What's implemented
 
-- **Envelope crypto** (`cofferak-core::crypto`): AES-256-GCM-SIV DEK
-  wrap/unwrap per host, X25519 ECIES wrap/unwrap for the offline root key,
-  AEAD entry encryption, zeroize-on-drop key handling.
+- **Envelope crypto** (`cofferak-core::crypto`, on AWS-LC):
+  hardware-accelerated AES-256-GCM-SIV for entries, tokens and per-host
+  DEK wraps, each bound to its context; a hybrid X25519 + ML-KEM-1024
+  recovery wrap with HKDF-SHA-384; an armored, checksummed root private
+  key; zeroize-on-drop key handling.
 - **On-disk format** (`cofferak-core::format`): the `vault.cofferak` binary
   file and its `meta.json` sidecar, with corrupt/truncated input returned
   as a typed error rather than a panic or a silently fresh vault.
@@ -213,9 +296,11 @@ cofferak/
   and refuses to start rather than silently creating an empty vault if
   `vault.cofferak` or the sealed host key is missing or unreadable.
 - **Server mode** (`cofferakd::tls_server`): opt-in TLS/TCP listener
-  alongside the Unix socket, pure-Rust TLS (`rustls`), optional mutual
-  TLS. See [Server mode](#server-mode) and
-  [ADR 0008](docs/adr/0008-server-mode-rpc-over-tls.md).
+  alongside the Unix socket (`rustls` on AWS-LC): TLS 1.3 only,
+  `TLS_AES_256_GCM_SHA384` only, ML-KEM-1024 key exchange preferred, and
+  mandatory mutual TLS. See [Server mode](#server-mode), ADR
+  [0008](docs/adr/0008-server-mode-rpc-over-tls.md) and
+  [0011](docs/adr/0011-cnsa-grade-crypto-and-hardened-transport.md).
 - **`cofferak-cli`** (binary name `cofferak`): the admin CLI (see
   [Commands](#commands) below) —
   vault/host bootstrap, service enrollment, `set`/`get`/`rm`/`list` over
@@ -246,10 +331,11 @@ via `LoadCredentialEncrypted=` — follow
 # Build everything (library, daemon, CLI).
 cargo build --workspace --release
 
-# 1. Create a brand-new vault and its root keypair. The root private key
-#    is printed to stdout exactly once — copy it offline (e.g. onto a
-#    hardware token or a printed page) and never store it on a host that
-#    runs the daemon. It is the only way to recover the vault if every
+# 1. Create a brand-new vault and its root keypair (X25519 + ML-KEM-1024).
+#    The root private key is printed exactly once, as a
+#    -----BEGIN COFFERAK ROOT PRIVATE KEY----- block: save the whole block
+#    to a file on offline media and never store it on a host that runs
+#    the daemon. It is the only way to recover the vault if every
 #    enrolled host is lost; see docs/key-security.md (how to actually
 #    secure it) and docs/recovery-runbook.md (how to use it to recover).
 ./target/release/cofferak init --root --data-dir ./data
@@ -292,7 +378,7 @@ on macOS). `set`/`get`/`rm`/`list` additionally accept `--socket <PATH>`
 
 | Command | Purpose |
 |---------|---------|
-| `init --root` | Create a brand-new vault and root X25519 keypair. Prints the root private key once. |
+| `init --root` | Create a brand-new vault and a hybrid root keypair (X25519 + ML-KEM-1024). Prints the root private key once, as an armored block. |
 | `init --host <id>` | Enroll the *first* host into a vault created by `init --root`. |
 | `enroll-host <new-id> --this-host <id>` | Enroll an *additional* host, using an already-enrolled host's own sealed key to recover the DEK. |
 | `enroll-service <id> --paths <csv> --perm <ro\|rw>` | Enroll a consuming service and print its one-time access token. |
@@ -301,7 +387,7 @@ on macOS). `set`/`get`/`rm`/`list` additionally accept `--socket <PATH>`
 | `rm <path> --token <t>` | Remove a secret (over the daemon socket). |
 | `list [prefix] --token <t>` | List secret paths under a prefix (over the daemon socket). |
 | `rotate-dek --hosts <csv>` | Generate a fresh DEK, re-encrypt every entry/token, and re-wrap it for the root key and the given hosts. Operates on `vault.cofferak` directly, not over the socket. Restart `cofferakd` afterwards: until then it refuses writes rather than using the stale DEK. |
-| `recover --root-key <path> --new-host <id>` | Disaster recovery: enroll a new host using the offline root private key, bypassing every enrolled host's own sealed blob. See [`docs/recovery-runbook.md`](docs/recovery-runbook.md). |
+| `recover --root-key <path> --new-host <id>` | Disaster recovery: enroll a new host using the offline root private key (the saved armored block), bypassing every enrolled host's own sealed blob. See [`docs/recovery-runbook.md`](docs/recovery-runbook.md). |
 | `audit tail [--count N]` | Print the last `N` (default 20) entries of the daemon's audit log, read directly from `<data_dir>/audit.jsonl`. |
 
 `cofferakd` itself takes no CLI flags; it reads `COFFERAK_DATA_DIR` and

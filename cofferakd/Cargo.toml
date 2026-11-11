@@ -19,5 +19,5 @@ bincode = "1"
 # protocol are cofferak's own code (the daemon and its own SDKs), so
 # there's no legacy-client compatibility reason to allow TLS 1.2 —
 # TLS 1.3-only is strictly the safer default here.
-rustls = { version = "0.23", default-features = false, features = ["std", "ring"] }
+rustls = { version = "0.23", default-features = false, features = ["std", "aws_lc_rs"] }
 rustls-pemfile = "2"

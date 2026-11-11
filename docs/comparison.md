@@ -10,13 +10,13 @@ when that tool isn't cofferak.
 
 | | `.env` files | HashiCorp Vault | Infisical | AWS Secrets Manager | **cofferak** |
 |---|---|---|---|---|---|
-| Encrypted at rest | ❌ (plaintext file) | ✅ | ✅ | ✅ | ✅ |
+| Encrypted at rest | ❌ (plaintext file) | ✅ | ✅ | ✅ | ✅ (AES-256-GCM-SIV, each value bound to its path; post-quantum recovery wrap, ADR 0011) |
 | Runs without a separate server to operate | ✅ (it's a file) | ❌ | ❌ (SaaS or self-host a full stack) | ✅ (AWS operates it) | ✅ (one daemon binary) |
 | Self-hosted, no cloud account required | ✅ | ✅ | Partial (self-host option exists, SaaS is the default path) | ❌ (AWS-only) | ✅ |
 | Per-service least-privilege access tokens | ❌ | ✅ | ✅ | ✅ (IAM) | ✅ |
 | Audit log of every access | ❌ | ✅ | ✅ | ✅ (CloudTrail) | ✅ |
 | Dependency footprint | None | Large (its own clustering, storage backends, plugins) | Large (API server, DB, queue, web UI) | None (fully managed) | Minimal — one daemon, one on-disk file, your OS's own key storage |
-| Network service by default | ❌ | ✅ (always) | ✅ (always) | ✅ (always, AWS's network) | ❌ — local Unix socket by default; network (TLS/mTLS) is opt-in |
+| Network service by default | ❌ | ✅ (always) | ✅ (always) | ✅ (always, AWS's network) | ❌ — local Unix socket by default; network access is opt-in and always mutual TLS 1.3 |
 | Offline / air-gapped friendly | ✅ | Hard (needs its own HA setup) | Hard (SaaS-first design) | ❌ (needs AWS reachability) | ✅ (root key workflow is explicitly offline-first) |
 | Setup complexity | Trivial | High (unseal process, storage backend, policies, HA) | Medium–high (full platform) | Low (if you're already on AWS) | Low (one binary, one init command) |
 | Vendor/cloud lock-in | None | None (self-hosted) | Low (open-source core) | High (AWS-specific) | None |

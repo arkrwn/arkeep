@@ -66,9 +66,10 @@ type TLSOptions struct {
 	// deployment, not the public web — this client trusts ONLY this CA,
 	// never the OS's default/system trust store.
 	CACertPath string
-	// ClientCertPath/ClientKeyPath (PEM), both set together, enable
-	// mutual TLS — required only if the server was started with
-	// $COFFERAK_TLS_CLIENT_CA.
+	// ClientCertPath/ClientKeyPath (PEM), both set together: the client
+	// certificate for mutual TLS. cofferakd's server mode always requires
+	// one (ADR 0011); they are optional here only so a client can be built
+	// to prove that a certificate-less connection is refused.
 	ClientCertPath string
 	ClientKeyPath  string
 }
@@ -96,6 +97,11 @@ func ConnectTLS(opts TLSOptions) (*Client, error) {
 		ServerName: opts.ServerName,
 		MinVersion: tls.VersionTLS13,
 		MaxVersion: tls.VersionTLS13,
+		// Key exchange, strongest first, matching the server (ADR 0011):
+		// post-quantum hybrid X25519MLKEM768, then classical P-384. (Go
+		// does not let callers restrict TLS 1.3 cipher suites; the server
+		// accepts only TLS_AES_256_GCM_SHA384.)
+		CurvePreferences: []tls.CurveID{tls.X25519MLKEM768, tls.CurveP384},
 		// InsecureSkipVerify is deliberately never set (defaults to
 		// false). Hostname verification against ServerName happens
 		// automatically; there is no code path in this SDK that can

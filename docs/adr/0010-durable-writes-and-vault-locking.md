@@ -1,6 +1,16 @@
 # ADR 0010: Daemon writes are durable before they are acknowledged; one lock for all vault writers
 
-Status: accepted
+Status: accepted, amended by ADR 0011
+
+> **Amended by [ADR 0011](0011-cnsa-grade-crypto-and-hardened-transport.md):**
+> `vault.cofferak` is now format version 2. Point 5's statement that
+> existing vaults load unchanged applied to format v1 at the time; since
+> ADR 0011, `VaultFile::load` returns `UnsupportedVersion` for any file
+> that is not version 2, so v1 vaults must be recreated. Everything else
+> here (write-through, atomic writes, the vault lock, bounded decoding)
+> is unchanged.
+
+## Context
 
 A production-readiness review found that `cofferakd` applied `set`/`rm`
 only to its in-memory map. `Daemon::save_to` existed but nothing called
@@ -11,7 +21,7 @@ mode) was silently lost on restart — while the client had been told
 and nothing stopped the CLI and the daemon from read-modify-writing the
 file at the same time and dropping each other's changes.
 
-**Decision:**
+## Decision
 
 1. **Write-through, acknowledge after disk.** A daemon built with
    `Daemon::with_persistence` (always, in `cofferakd`'s `main`) handles a
@@ -45,12 +55,16 @@ file at the same time and dropping each other's changes.
    The encoding is byte-identical to before (fixed-int, little-endian),
    so existing vaults load unchanged.
 
-**Not changed:** the daemon still loads service tokens at startup, so
+## Not changed
+
+The daemon still loads service tokens at startup, so
 `enroll-service` needs a daemon restart to take effect (documented in
 `docs/deployment.md`). Hot reload was deferred: restart is simple,
 explicit and already required after `rotate-dek`.
 
-**Proof:** `cofferakd/tests/daemon_persistence.rs` (set is on disk before
+## Proof
+
+`cofferakd/tests/daemon_persistence.rs` (set is on disk before
 `ok` and survives a restart; rm reaches disk; a re-keyed vault and an
 unwritable vault both get `Err` with memory unchanged; concurrent CLI
 changes are not clobbered), `format.rs` unit tests (atomic replace

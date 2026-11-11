@@ -10,7 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use cofferak_core::acl::{AccessToken, Permission};
 use cofferak_core::crypto::{
-    decrypt_entry, encrypt_entry, generate_root_keypair, wrap_dek_for_host,
+    decrypt_entry, encrypt_entry, generate_root_keypair, wrap_dek_for_host, Aad,
 };
 use cofferak_core::format::VaultFile;
 use cofferakd::audit::AuditLog;
@@ -44,11 +44,12 @@ fn fixture(tag: &str) -> Fixture {
     ));
     std::fs::create_dir_all(&dir).unwrap();
     let vault_path = dir.join("vault.cofferak");
-    let (root_pubkey, _) = generate_root_keypair();
+    let (root_pubkey, _) = generate_root_keypair().unwrap();
     let mut vault = VaultFile::new(root_pubkey);
-    vault
-        .hosts
-        .insert(HOST_ID.to_string(), wrap_dek_for_host(&DEK, &HOST_KEY));
+    vault.hosts.insert(
+        HOST_ID.to_string(),
+        wrap_dek_for_host(&DEK, HOST_ID, &HOST_KEY),
+    );
     vault.save(&vault_path).unwrap();
     Fixture { dir, vault_path }
 }
@@ -102,7 +103,10 @@ fn set_is_on_disk_before_it_is_acknowledged_and_survives_a_restart() {
     // Straight off disk, decrypted with the DEK — not via the daemon.
     let on_disk = VaultFile::load(&f.vault_path).unwrap();
     let entry = &on_disk.entries["app/DB_PASSWORD"];
-    assert_eq!(decrypt_entry(&DEK, &entry.ciphertext).unwrap(), b"s3cr3t");
+    assert_eq!(
+        decrypt_entry(&DEK, &Aad::entry("app/DB_PASSWORD"), &entry.ciphertext).unwrap(),
+        b"s3cr3t"
+    );
 
     // A fresh daemon (simulated restart) sees it.
     drop(d);
@@ -140,7 +144,7 @@ fn write_is_refused_and_not_applied_when_the_vault_was_rekeyed_on_disk() {
     let mut disk = VaultFile::load(&f.vault_path).unwrap();
     disk.hosts.insert(
         HOST_ID.to_string(),
-        wrap_dek_for_host(&[0x99; 32], &HOST_KEY),
+        wrap_dek_for_host(&[0x99; 32], HOST_ID, &HOST_KEY),
     );
     disk.save(&f.vault_path).unwrap();
 
@@ -169,8 +173,10 @@ fn persisting_does_not_clobber_changes_another_writer_made_to_the_file() {
     // Simulate the CLI enrolling a service (and adding an unrelated entry)
     // after the daemon loaded the vault.
     let mut disk = VaultFile::load(&f.vault_path).unwrap();
-    disk.services
-        .insert("new-svc".to_string(), encrypt_entry(&DEK, b"token-blob"));
+    disk.services.insert(
+        "new-svc".to_string(),
+        encrypt_entry(&DEK, &Aad::service_token("new-svc"), b"token-blob"),
+    );
     disk.save(&f.vault_path).unwrap();
 
     assert_eq!(set(&mut d, "app/C", b"v"), Response::Ok);
@@ -185,7 +191,7 @@ fn persisting_does_not_clobber_changes_another_writer_made_to_the_file() {
 
 #[test]
 fn in_memory_daemon_still_works_without_persistence() {
-    let (root_pubkey, _) = generate_root_keypair();
+    let (root_pubkey, _) = generate_root_keypair().unwrap();
     let mut tokens = BTreeMap::new();
     tokens.insert(
         token(),
@@ -201,4 +207,30 @@ fn in_memory_daemon_still_works_without_persistence() {
     let mut d = Daemon::new(DEK, VaultFile::new(root_pubkey), tokens, audit);
     assert_eq!(set(&mut d, "app/D", b"x"), Response::Ok);
     assert_eq!(get(&mut d, "app/D"), Response::Value(b"x".to_vec()));
+}
+
+#[test]
+fn ciphertext_moved_to_another_path_on_disk_is_rejected_not_served() {
+    // Crypto format v2 binds each entry to its path (ADR 0011). An attacker
+    // who can edit vault.cofferak and copies app/A's ciphertext over app/B
+    // must not get app/A's secret back when reading app/B.
+    let f = fixture("swap");
+    let mut d = persistent_daemon(&f);
+    assert_eq!(set(&mut d, "app/A", b"secret-a"), Response::Ok);
+    assert_eq!(set(&mut d, "app/B", b"secret-b"), Response::Ok);
+    drop(d);
+
+    let mut disk = VaultFile::load(&f.vault_path).unwrap();
+    let a = disk.entries["app/A"].clone();
+    disk.entries.insert("app/B".to_string(), a);
+    disk.save(&f.vault_path).unwrap();
+
+    let mut restarted = persistent_daemon(&f);
+    let resp = get(&mut restarted, "app/B");
+    assert_ne!(resp, Response::Value(b"secret-a".to_vec()));
+    assert!(matches!(resp, Response::Err(_)), "got {resp:?}");
+    assert_eq!(
+        get(&mut restarted, "app/A"),
+        Response::Value(b"secret-a".to_vec())
+    );
 }

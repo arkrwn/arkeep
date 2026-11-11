@@ -3,13 +3,17 @@
 //! enabling this never disables or changes the Unix socket path.
 //!
 //! Enabled by setting `$COFFERAK_TLS_ADDR` (e.g. `0.0.0.0:8443`).
-//! `$COFFERAK_TLS_CERT`/`$COFFERAK_TLS_KEY` (PEM files) are then required.
-//! `$COFFERAK_TLS_CLIENT_CA` (PEM file) is optional: when set, the server
-//! requires and verifies a client certificate signed by that CA (mutual
-//! TLS) in addition to the unconditional per-service access token check
-//! `Daemon::handle_request` already performs — TLS adds transport
-//! confidentiality/integrity (and optionally client identity), it is
-//! never a substitute for the token.
+//! `$COFFERAK_TLS_CERT`/`$COFFERAK_TLS_KEY` (PEM) and
+//! `$COFFERAK_TLS_CLIENT_CA` (PEM) are then all required: **mutual TLS is
+//! mandatory** (ADR 0011). A peer without a client certificate signed by
+//! that CA fails the handshake before it can send a single request, and
+//! the per-service access token is still checked on every request on top.
+//!
+//! The TLS stack is pinned to the strongest settings cofferak's clients all
+//! support ([`hardened_provider`]): TLS 1.3 only, the AES-256-GCM-SHA384
+//! cipher suite only, and key exchange limited to ML-KEM-1024
+//! (preferred), the X25519MLKEM768 post-quantum hybrid, or classical P-384
+//! as the fallback.
 
 use std::io::{BufReader, Write};
 use std::net::{TcpListener, TcpStream};
@@ -31,7 +35,7 @@ pub struct TlsServerConfig {
     pub addr: String,
     pub cert_path: String,
     pub key_path: String,
-    pub client_ca_path: Option<String>,
+    pub client_ca_path: String,
     /// Maximum concurrent TLS connections (`$COFFERAK_TLS_MAX_CONNECTIONS`).
     pub max_connections: usize,
 }
@@ -48,7 +52,14 @@ pub fn resolve() -> Result<Option<TlsServerConfig>, String> {
         .map_err(|_| "COFFERAK_TLS_ADDR is set but COFFERAK_TLS_CERT is not".to_string())?;
     let key_path = std::env::var("COFFERAK_TLS_KEY")
         .map_err(|_| "COFFERAK_TLS_ADDR is set but COFFERAK_TLS_KEY is not".to_string())?;
-    let client_ca_path = std::env::var("COFFERAK_TLS_CLIENT_CA").ok();
+    let client_ca_path = std::env::var("COFFERAK_TLS_CLIENT_CA")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| {
+            "COFFERAK_TLS_ADDR is set but COFFERAK_TLS_CLIENT_CA is not: server mode requires \
+             mutual TLS (a CA that signs every client certificate), see docs/adr/0011"
+                .to_string()
+        })?;
     let max_connections = parse_max_connections(
         std::env::var("COFFERAK_TLS_MAX_CONNECTIONS")
             .ok()
@@ -91,28 +102,54 @@ fn load_private_key(path: &str) -> Result<PrivateKeyDer<'static>, String> {
         .ok_or_else(|| format!("no private key found in {path}"))
 }
 
+/// The TLS crypto provider every server-mode connection uses: AWS-LC
+/// (FIPS 140-3 validated module) restricted to
+///
+/// - cipher suite **TLS13_AES_256_GCM_SHA384** only (CNSA: AES-256, SHA-384);
+/// - key exchange **MLKEM1024** (post-quantum, the only ML-KEM parameter
+///   set CNSA 2.0 approves; preferred), then **X25519MLKEM768** (the
+///   IETF post-quantum hybrid that Go and OpenSSL 3.5+ clients offer),
+///   then **SECP384R1** (CNSA 1.0 classical fallback for TLS libraries
+///   without post-quantum support).
+///
+/// Combined with `TLS13` as the only protocol version in
+/// [`build_server_config`].
+pub fn hardened_provider() -> rustls::crypto::CryptoProvider {
+    use rustls::crypto::aws_lc_rs::{cipher_suite, default_provider, kx_group};
+    rustls::crypto::CryptoProvider {
+        cipher_suites: vec![cipher_suite::TLS13_AES_256_GCM_SHA384],
+        kx_groups: vec![
+            kx_group::MLKEM1024,
+            kx_group::X25519MLKEM768,
+            kx_group::SECP384R1,
+        ],
+        ..default_provider()
+    }
+}
+
 fn build_server_config(config: &TlsServerConfig) -> Result<Arc<ServerConfig>, String> {
     let certs = load_certs(&config.cert_path)?;
     let key = load_private_key(&config.key_path)?;
+    let provider = Arc::new(hardened_provider());
 
-    let builder = rustls::ServerConfig::builder();
-    let builder = if let Some(ca_path) = &config.client_ca_path {
-        let ca_certs = load_certs(ca_path)?;
-        let mut roots = RootCertStore::empty();
-        for cert in ca_certs {
-            roots
-                .add(cert)
-                .map_err(|e| format!("adding client CA from {ca_path}: {e}"))?;
-        }
-        let verifier = WebPkiClientVerifier::builder(Arc::new(roots))
-            .build()
-            .map_err(|e| format!("building client cert verifier: {e}"))?;
-        builder.with_client_cert_verifier(verifier)
-    } else {
-        builder.with_no_client_auth()
-    };
+    let ca_path = &config.client_ca_path;
+    let mut roots = RootCertStore::empty();
+    for cert in load_certs(ca_path)? {
+        roots
+            .add(cert)
+            .map_err(|e| format!("adding client CA from {ca_path}: {e}"))?;
+    }
+    if roots.is_empty() {
+        return Err(format!("no CA certificate found in {ca_path}"));
+    }
+    let verifier = WebPkiClientVerifier::builder_with_provider(Arc::new(roots), provider.clone())
+        .build()
+        .map_err(|e| format!("building client cert verifier: {e}"))?;
 
-    let server_config = builder
+    let server_config = ServerConfig::builder_with_provider(provider)
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .map_err(|e| format!("TLS configuration: {e}"))?
+        .with_client_cert_verifier(verifier)
         .with_single_cert(certs, key)
         .map_err(|e| format!("invalid server certificate/key: {e}"))?;
     Ok(Arc::new(server_config))
@@ -139,13 +176,8 @@ pub fn start(config: TlsServerConfig, daemon: Arc<Mutex<Daemon>>) {
     });
 
     println!(
-        "cofferakd: server mode listening on {} (TLS{})",
-        config.addr,
-        if config.client_ca_path.is_some() {
-            ", client certs required"
-        } else {
-            ""
-        }
+        "cofferakd: server mode listening on {} (TLS 1.3, mutual TLS required)",
+        config.addr
     );
 
     let limiter = ConnectionLimiter::new(config.max_connections);

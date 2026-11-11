@@ -41,7 +41,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use cofferak_core::acl::{path_allowed, AccessToken};
-use cofferak_core::crypto::{decrypt_entry, encrypt_entry, DekWrapHost, KeyBytes};
+use cofferak_core::crypto::{decrypt_entry, encrypt_entry, Aad, DekWrapHost, KeyBytes};
 use cofferak_core::format::{VaultEntry, VaultFile, VaultLock};
 
 use crate::audit::{AuditEntry, AuditLog};
@@ -211,7 +211,7 @@ impl Daemon {
                 self.log(&tok.service_id, path, "get", "not_found");
                 Response::NotFound
             }
-            Some(entry) => match decrypt_entry(&self.dek, &entry.ciphertext) {
+            Some(entry) => match decrypt_entry(&self.dek, &Aad::entry(path), &entry.ciphertext) {
                 Ok(plaintext) => {
                     self.log(&tok.service_id, path, "get", "ok");
                     Response::Value(plaintext)
@@ -240,7 +240,7 @@ impl Daemon {
             .map(|e| e.version.saturating_add(1))
             .unwrap_or(1);
         let entry = VaultEntry {
-            ciphertext: encrypt_entry(&self.dek, &value),
+            ciphertext: encrypt_entry(&self.dek, &Aad::entry(path), &value),
             version,
             updated_at: now_unix(),
         };

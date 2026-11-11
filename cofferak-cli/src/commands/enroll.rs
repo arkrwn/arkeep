@@ -31,7 +31,7 @@
 use std::path::Path;
 
 use cofferak_core::acl::{AccessToken, Permission};
-use cofferak_core::crypto::{encrypt_entry, unwrap_dek_for_host, wrap_dek_for_host, KeyBytes};
+use cofferak_core::crypto::{encrypt_entry, unwrap_dek_for_host, wrap_dek_for_host, Aad, KeyBytes};
 use cofferak_core::format::{VaultFile, VaultMeta};
 use cofferak_core::seal::{HostSeal, SealedBlob};
 
@@ -83,7 +83,7 @@ pub fn run_enroll_host_with_seal(
         .map_err(|e| CliError::Io(std::io::Error::other(e)))?;
 
     let dek = KeyBytes::new(
-        unwrap_dek_for_host(&this_wrap, &this_host_key)
+        unwrap_dek_for_host(&this_wrap, this_host_id, &this_host_key)
             .map_err(|e| CliError::Io(std::io::Error::other(e)))?,
     );
 
@@ -97,7 +97,7 @@ pub fn run_enroll_host_with_seal(
 
     vault.hosts.insert(
         new_host_id.to_string(),
-        wrap_dek_for_host(&dek, &new_host_key),
+        wrap_dek_for_host(&dek, new_host_id, &new_host_key),
     );
 
     vault.save(&vpath)?;
@@ -198,7 +198,7 @@ pub fn run_enroll_service_with_seal(
         .map_err(|e| CliError::Io(std::io::Error::other(e)))?;
 
     let dek = KeyBytes::new(
-        unwrap_dek_for_host(&wrap, &host_key)
+        unwrap_dek_for_host(&wrap, host_id, &host_key)
             .map_err(|e| CliError::Io(std::io::Error::other(e)))?,
     );
 
@@ -211,7 +211,7 @@ pub fn run_enroll_service_with_seal(
 
     let plaintext =
         bincode::serialize(&token).map_err(|e| CliError::Io(std::io::Error::other(e)))?;
-    let entry = encrypt_entry(&dek, &plaintext);
+    let entry = encrypt_entry(&dek, &Aad::service_token(service_id), &plaintext);
 
     vault.services.insert(service_id.to_string(), entry);
 

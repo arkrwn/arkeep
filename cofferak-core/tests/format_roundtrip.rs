@@ -3,7 +3,7 @@
 //! the public API only, reading/writing real files on disk.
 
 use cofferak_core::crypto::{
-    encrypt_entry, generate_root_keypair, wrap_dek_for_host, wrap_dek_for_root,
+    encrypt_entry, generate_root_keypair, wrap_dek_for_host, wrap_dek_for_root, Aad,
 };
 use cofferak_core::format::{FormatError, VaultEntry, VaultFile, VaultMeta};
 
@@ -25,7 +25,7 @@ fn temp_path(name: &str) -> std::path::PathBuf {
 
 #[test]
 fn vault_file_round_trips_with_no_dek_yet() {
-    let (root_pubkey, _root_privkey) = generate_root_keypair();
+    let (root_pubkey, _root_privkey) = generate_root_keypair().unwrap();
     let vault = VaultFile::new(root_pubkey);
     assert!(vault.root_wrap.is_none());
 
@@ -39,21 +39,23 @@ fn vault_file_round_trips_with_no_dek_yet() {
 
 #[test]
 fn vault_file_round_trips_with_hosts_services_entries_and_root_wrap() {
-    let (root_pubkey, _root_privkey) = generate_root_keypair();
+    let (root_pubkey, _root_privkey) = generate_root_keypair().unwrap();
     let dek = [0x5Cu8; 32];
 
-    let mut vault = VaultFile::new(root_pubkey);
-    vault.root_wrap = Some(wrap_dek_for_root(&dek, &root_pubkey));
-    vault
-        .hosts
-        .insert("laptop".to_string(), wrap_dek_for_host(&dek, &[0x22u8; 32]));
-    vault
-        .services
-        .insert("github".to_string(), encrypt_entry(&dek, b"gh-token"));
+    let mut vault = VaultFile::new(root_pubkey.clone());
+    vault.root_wrap = Some(wrap_dek_for_root(&dek, &root_pubkey).unwrap());
+    vault.hosts.insert(
+        "laptop".to_string(),
+        wrap_dek_for_host(&dek, "laptop", &[0x22u8; 32]),
+    );
+    vault.services.insert(
+        "github".to_string(),
+        encrypt_entry(&dek, &Aad::service_token("github"), b"gh-token"),
+    );
     vault.entries.insert(
         "db/prod".to_string(),
         VaultEntry {
-            ciphertext: encrypt_entry(&dek, b"password"),
+            ciphertext: encrypt_entry(&dek, &Aad::entry("db/prod"), b"password"),
             version: 3,
             updated_at: 1_730_000_000,
         },
@@ -69,17 +71,18 @@ fn vault_file_round_trips_with_hosts_services_entries_and_root_wrap() {
 
 #[test]
 fn vault_file_load_of_truncated_file_is_corrupt_not_panic() {
-    let (root_pubkey, _root_privkey) = generate_root_keypair();
+    let (root_pubkey, _root_privkey) = generate_root_keypair().unwrap();
     let dek = [0x9Bu8; 32];
-    let mut vault = VaultFile::new(root_pubkey);
-    vault.root_wrap = Some(wrap_dek_for_root(&dek, &root_pubkey));
-    vault
-        .hosts
-        .insert("laptop".to_string(), wrap_dek_for_host(&dek, &[0x22u8; 32]));
+    let mut vault = VaultFile::new(root_pubkey.clone());
+    vault.root_wrap = Some(wrap_dek_for_root(&dek, &root_pubkey).unwrap());
+    vault.hosts.insert(
+        "laptop".to_string(),
+        wrap_dek_for_host(&dek, "laptop", &[0x22u8; 32]),
+    );
     vault.entries.insert(
         "secret".to_string(),
         VaultEntry {
-            ciphertext: encrypt_entry(&dek, b"super secret value"),
+            ciphertext: encrypt_entry(&dek, &Aad::entry("secret"), b"super secret value"),
             version: 1,
             updated_at: 1_700_000_000,
         },
@@ -107,16 +110,18 @@ fn vault_file_load_of_missing_file_is_io_error_not_panic() {
 
 #[test]
 fn vault_meta_round_trips_and_matches_vault_contents() {
-    let (root_pubkey, _root_privkey) = generate_root_keypair();
+    let (root_pubkey, _root_privkey) = generate_root_keypair().unwrap();
     let dek = [0x3Du8; 32];
-    let mut vault = VaultFile::new(root_pubkey);
-    vault.root_wrap = Some(wrap_dek_for_root(&dek, &root_pubkey));
-    vault
-        .hosts
-        .insert("host-1".to_string(), wrap_dek_for_host(&dek, &[0x44u8; 32]));
-    vault
-        .services
-        .insert("slack".to_string(), encrypt_entry(&dek, b"xoxb-token"));
+    let mut vault = VaultFile::new(root_pubkey.clone());
+    vault.root_wrap = Some(wrap_dek_for_root(&dek, &root_pubkey).unwrap());
+    vault.hosts.insert(
+        "host-1".to_string(),
+        wrap_dek_for_host(&dek, "host-1", &[0x44u8; 32]),
+    );
+    vault.services.insert(
+        "slack".to_string(),
+        encrypt_entry(&dek, &Aad::service_token("slack"), b"xoxb-token"),
+    );
 
     let meta = VaultMeta::from_vault(&vault);
     let path = temp_path("meta.json");

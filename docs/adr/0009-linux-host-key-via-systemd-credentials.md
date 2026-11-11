@@ -2,6 +2,8 @@
 
 Status: accepted
 
+## Context
+
 The Linux `HostSeal` backend (ADR 0002) seals each host's 32-byte key
 with `systemd-creds encrypt --name=cofferak-<id> - -`. The first time this
 ran on a real CI runner, both `seal_linux` and the full-mode SDK smoke
@@ -23,7 +25,7 @@ test failed with `host seal backend rejected input`. Capturing
 Every earlier "works on Linux" claim had only been checked by
 cross-compiling or in skip paths. The rest of this ADR addresses (2).
 
-Options considered:
+## Alternatives considered
 
 1. **Run `cofferakd` as root.** Rejected: a network-reachable secrets
    daemon (server mode, ADR 0008) must not run with full privileges.
@@ -33,7 +35,7 @@ Options considered:
    now: excludes current Ubuntu LTS / Debian stable.
 4. **Let systemd decrypt it for the daemon.** Accepted.
 
-**Decision:**
+## Decision
 
 - **Admin commands run as root on Linux** (`sudo cofferak init --host`,
   `enroll-host`, `enroll-service`, `rotate-dek`, `recover`): they are the
@@ -57,14 +59,18 @@ Options considered:
   `[A-Za-z0-9._-]{1,64}`, not starting with `.`/`-`) in both the CLI and
   the daemon, since ids become file paths and credential names.
 
-**Proof, not a claim:** CI re-runs the real `seal_linux` round trip as
+## Proof
+
+CI re-runs the real `seal_linux` round trip as
 root (and fails if it skips), and `scripts/sdk-smoke.sh` full mode runs
 the whole production layout on every Linux build — root admin commands,
 a check that no vault file is left root-owned, and the real `cofferakd`
 running as the non-root runner user inside a transient systemd service
 with `LoadCredentialEncrypted=`, serving all four SDKs.
 
-**Consequences:** Linux operators need root for admin commands (they
+## Consequences
+
+Linux operators need root for admin commands (they
 already needed it to install the unit). Normal secret reads/writes
 through the daemon need no privileges. A host with TPM2 gets TPM-bound
 sealing automatically from systemd-creds; nothing in cofferak changes.

@@ -13,9 +13,8 @@ use std::path::Path;
 
 use bincode::Options as _;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
-use crate::crypto::{DekWrapHost, DekWrapRoot, EncryptedEntry};
+use crate::crypto::{DekWrapHost, DekWrapRoot, EncryptedEntry, RootPublicKey};
 
 /// Current time as Unix seconds, saturating to 0 if the clock is somehow
 /// before the epoch.
@@ -34,6 +33,9 @@ pub enum FormatError {
     /// The file's contents could not be decoded (truncated, malformed, or
     /// otherwise not a valid instance of the expected format).
     Corrupt,
+    /// The file is a vault of a format version this build doesn't read
+    /// (e.g. a crypto-format v1 vault, see ADR 0011).
+    UnsupportedVersion(u16),
 }
 
 impl fmt::Display for FormatError {
@@ -41,6 +43,10 @@ impl fmt::Display for FormatError {
         match self {
             FormatError::Io(e) => write!(f, "I/O error: {e}"),
             FormatError::Corrupt => write!(f, "corrupt or malformed vault file"),
+            FormatError::UnsupportedVersion(v) => write!(
+                f,
+                "vault format version {v} is not supported by this build (expected {VAULT_FORMAT_VERSION})"
+            ),
         }
     }
 }
@@ -49,7 +55,7 @@ impl std::error::Error for FormatError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             FormatError::Io(e) => Some(e),
-            FormatError::Corrupt => None,
+            FormatError::Corrupt | FormatError::UnsupportedVersion(_) => None,
         }
     }
 }
@@ -78,7 +84,7 @@ pub struct VaultEntry {
 pub struct VaultFile {
     pub version: u16,
     pub created_at: i64,
-    pub root_pubkey: [u8; 32],
+    pub root_pubkey: RootPublicKey,
     pub root_wrap: Option<DekWrapRoot>,
     pub hosts: BTreeMap<String, DekWrapHost>,
     pub services: BTreeMap<String, EncryptedEntry>,
@@ -88,9 +94,9 @@ pub struct VaultFile {
 impl VaultFile {
     /// Create a fresh vault for the given root public key: no DEK wrap yet,
     /// and empty hosts/services/entries.
-    pub fn new(root_pubkey: [u8; 32]) -> Self {
+    pub fn new(root_pubkey: RootPublicKey) -> Self {
         VaultFile {
-            version: 1,
+            version: VAULT_FORMAT_VERSION,
             created_at: now_unix(),
             root_pubkey,
             root_wrap: None,
@@ -122,11 +128,26 @@ impl VaultFile {
         if bytes.len() as u64 > MAX_VAULT_BYTES {
             return Err(FormatError::Corrupt);
         }
+        // The format version is the first field (a little-endian u16).
+        // Check it before decoding the rest, so a vault from another format
+        // version gets a clear error instead of being misparsed.
+        let version = match bytes.get(..2) {
+            Some(b) => u16::from_le_bytes([b[0], b[1]]),
+            None => return Err(FormatError::Corrupt),
+        };
+        if version != VAULT_FORMAT_VERSION {
+            return Err(FormatError::UnsupportedVersion(version));
+        }
         bincode_options()
             .deserialize(&bytes)
             .map_err(|_| FormatError::Corrupt)
     }
 }
+
+/// The `vault.cofferak` format version this build reads and writes. Version
+/// 2 is crypto format v2 (ADR 0011): hybrid post-quantum root wrap and
+/// context-bound ciphertexts.
+pub const VAULT_FORMAT_VERSION: u16 = 2;
 
 /// Upper bound on a `vault.cofferak` file, enforced on both encode and decode.
 pub const MAX_VAULT_BYTES: u64 = 256 * 1024 * 1024;
@@ -235,16 +256,11 @@ pub struct VaultMeta {
 
 impl VaultMeta {
     /// Derive a `VaultMeta` snapshot from a `VaultFile`. The fingerprint is
-    /// the lowercase hex encoding of the SHA-256 digest of `root_pubkey`.
+    /// [`RootPublicKey::fingerprint`] (SHA-256 over both root public keys).
     pub fn from_vault(v: &VaultFile) -> Self {
-        let mut hasher = Sha256::new();
-        hasher.update(v.root_pubkey);
-        let digest = hasher.finalize();
-        let root_pubkey_fingerprint = digest.iter().map(|b| format!("{b:02x}")).collect();
-
         VaultMeta {
             version: v.version,
-            root_pubkey_fingerprint,
+            root_pubkey_fingerprint: v.root_pubkey.fingerprint(),
             host_ids: v.hosts.keys().cloned().collect(),
             service_ids: v.services.keys().cloned().collect(),
         }
@@ -273,7 +289,7 @@ impl VaultMeta {
 mod tests {
     use super::*;
     use crate::crypto::{
-        encrypt_entry, generate_root_keypair, wrap_dek_for_host, wrap_dek_for_root,
+        encrypt_entry, generate_root_keypair, wrap_dek_for_host, wrap_dek_for_root, Aad,
     };
 
     /// Build a unique path under the OS temp dir for this test process, so
@@ -295,30 +311,31 @@ mod tests {
     }
 
     fn sample_vault_with_root_wrap_none() -> VaultFile {
-        let (root_pubkey, _root_privkey) = generate_root_keypair();
+        let (root_pubkey, _root_privkey) = generate_root_keypair().unwrap();
         VaultFile::new(root_pubkey)
     }
 
     fn sample_vault_with_root_wrap_some() -> VaultFile {
-        let (root_pubkey, _root_privkey) = generate_root_keypair();
+        let (root_pubkey, _root_privkey) = generate_root_keypair().unwrap();
         let dek = [0x7Au8; 32];
-        let mut vault = VaultFile::new(root_pubkey);
-        vault.root_wrap = Some(wrap_dek_for_root(&dek, &root_pubkey));
+        let mut vault = VaultFile::new(root_pubkey.clone());
+        vault.root_wrap = Some(wrap_dek_for_root(&dek, &root_pubkey).unwrap());
 
         let host_key = [0x11u8; 32];
-        vault
-            .hosts
-            .insert("host-a".to_string(), wrap_dek_for_host(&dek, &host_key));
+        vault.hosts.insert(
+            "host-a".to_string(),
+            wrap_dek_for_host(&dek, "host-a", &host_key),
+        );
 
         vault.services.insert(
             "service-a".to_string(),
-            encrypt_entry(&dek, b"service secret"),
+            encrypt_entry(&dek, &Aad::service_token("service-a"), b"service secret"),
         );
 
         vault.entries.insert(
             "entry-a".to_string(),
             VaultEntry {
-                ciphertext: encrypt_entry(&dek, b"entry secret"),
+                ciphertext: encrypt_entry(&dek, &Aad::entry("entry-a"), b"entry secret"),
                 version: 1,
                 updated_at: 1_700_000_000,
             },
@@ -329,9 +346,10 @@ mod tests {
 
     #[test]
     fn new_vault_has_no_root_wrap_and_empty_maps() {
-        let (root_pubkey, _) = generate_root_keypair();
-        let vault = VaultFile::new(root_pubkey);
+        let (root_pubkey, _) = generate_root_keypair().unwrap();
+        let vault = VaultFile::new(root_pubkey.clone());
 
+        assert_eq!(vault.version, VAULT_FORMAT_VERSION);
         assert_eq!(vault.root_pubkey, root_pubkey);
         assert!(vault.root_wrap.is_none());
         assert!(vault.hosts.is_empty());
@@ -384,6 +402,22 @@ mod tests {
     }
 
     #[test]
+    fn vault_file_load_rejects_other_format_versions_clearly() {
+        let vault = sample_vault_with_root_wrap_some();
+        let path = temp_path("v1.cofferak");
+        vault.save(&path).unwrap();
+        let mut bytes = std::fs::read(&path).unwrap();
+        bytes[..2].copy_from_slice(&1u16.to_le_bytes());
+        std::fs::write(&path, &bytes).unwrap();
+
+        assert!(matches!(
+            VaultFile::load(&path),
+            Err(FormatError::UnsupportedVersion(1))
+        ));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
     fn vault_meta_round_trips_from_vault() {
         let vault = sample_vault_with_root_wrap_some();
         let meta = VaultMeta::from_vault(&vault);
@@ -397,14 +431,10 @@ mod tests {
         assert_eq!(meta.host_ids, vec!["host-a".to_string()]);
         assert_eq!(meta.service_ids, vec!["service-a".to_string()]);
 
-        let mut hasher = Sha256::new();
-        hasher.update(vault.root_pubkey);
-        let expected_fingerprint = hasher
-            .finalize()
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect::<String>();
-        assert_eq!(meta.root_pubkey_fingerprint, expected_fingerprint);
+        assert_eq!(
+            meta.root_pubkey_fingerprint,
+            vault.root_pubkey.fingerprint()
+        );
 
         let _ = std::fs::remove_file(&path);
     }
@@ -499,11 +529,10 @@ mod tests {
         // A file whose leading bytes decode as an absurd collection length
         // must fail cleanly as Corrupt, not attempt a huge allocation.
         let path = temp_path("oversized-prefix.cofferak");
-        let mut bytes = vec![1u8, 0]; // version: u16
+        let mut bytes = VAULT_FORMAT_VERSION.to_le_bytes().to_vec(); // version: u16
         bytes.extend_from_slice(&0i64.to_le_bytes()); // created_at
-        bytes.extend_from_slice(&[0u8; 32]); // root_pubkey
-        bytes.push(0); // root_wrap: None
-        bytes.extend_from_slice(&u64::MAX.to_le_bytes()); // hosts len
+        bytes.extend_from_slice(&[0u8; 32]); // root_pubkey.x25519
+        bytes.extend_from_slice(&u64::MAX.to_le_bytes()); // root_pubkey.mlkem1024 len
         std::fs::write(&path, &bytes).unwrap();
 
         assert!(matches!(VaultFile::load(&path), Err(FormatError::Corrupt)));

@@ -36,8 +36,9 @@ client = Client.connect_tls(
     addr="cofferak.example.internal:8443",
     server_name="cofferak.example.internal",
     ca_cert_path="/path/to/ca.pem",
-    # client_cert_path/client_key_path: set both together only if the
-    # server requires mutual TLS ($COFFERAK_TLS_CLIENT_CA).
+    # Mutual TLS is mandatory in cofferakd server mode (ADR 0011):
+    client_cert_path="/path/to/client.pem",
+    client_key_path="/path/to/client.key",
 )
 ```
 
@@ -48,7 +49,7 @@ only (`minimum_version`/`maximum_version` both pinned to `TLSv1_3`),
 store contains only the CA you provide (`load_default_certs()` is never
 called, so Python's system/public root store is never trusted here).
 Proven for real — including rejecting a wrong hostname, rejecting a
-connection with no client cert against an mTLS-only server, and
+connection with no client cert, and
 rejecting a client cert signed by a different, untrusted CA — by
 [`sdk/python/cofferak_sdk/examples/smoke_tls.py`](../../sdk/python/cofferak_sdk/examples/smoke_tls.py),
 run by `scripts/server-mode-smoke.sh`.

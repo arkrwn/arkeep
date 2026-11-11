@@ -1,7 +1,20 @@
 # Securing the root (master) private key
 
-`cofferak init --root` prints the root X25519 private key to stdout
-**exactly once** and never writes it to disk itself. Everything in this
+`cofferak init --root` prints the root private key to stdout **exactly
+once** and never writes it to disk itself. It is an ASCII-armored block
+(`-----BEGIN COFFERAK ROOT PRIVATE KEY-----`, about 70 lines of base64)
+holding both halves of the hybrid post-quantum root key, X25519 and
+ML-KEM-1024, plus a checksum ([ADR 0011](adr/0011-cnsa-grade-crypto-and-hardened-transport.md)).
+Save the whole block, including the BEGIN/END lines, as a text file:
+
+```bash
+sudo cofferak init --root --data-dir /var/lib/cofferak | tee /dev/tty | \
+  sed -n '/-----BEGIN COFFERAK ROOT PRIVATE KEY-----/,/-----END COFFERAK ROOT PRIVATE KEY-----/p' \
+  > /Volumes/OFFLINE-USB/cofferak-root.key
+```
+
+(or copy it by hand from the terminal into a file on the offline
+medium). Everything in this
 vault's security model (`docs/SPEC.md` §1) rests on what happens to
 that printed value in the seconds after it appears. This page is about
 that, specifically — not the per-host unseal keys or service tokens
@@ -36,9 +49,11 @@ as a signal to review what happened.
    - An encrypted USB drive (e.g. LUKS/FileVault-encrypted volume) kept
      physically secured (a safe, a locked drawer with controlled
      access), with the key written as one unlabeled text file.
-   - A paper or metal backup (printed or hand-transcribed hex), stored
-     like you would a legal document or a hardware wallet seed phrase —
-     a safe or safety-deposit box, not a desk drawer.
+   - A paper backup: print the armored block (about 70 lines; a single
+     page in a small monospace font) and store it like a legal document
+     or a hardware-wallet seed phrase, in a safe or safety-deposit box,
+     not a desk drawer. The built-in checksum catches a typo when it is
+     typed back in.
 3. **Verify the backup before you consider the key "stored."** Read it
    back from the offline medium and compare against what was printed
    (or, better, run it through `cofferak recover --root-key` in a throwaway
@@ -59,15 +74,23 @@ as a signal to review what happened.
 
 ## Splitting custody (optional, for teams)
 
-If no single person should be able to recover the vault alone, split
-the raw key with an external secret-sharing tool *before* it goes to
-offline storage — e.g. Shamir's Secret Sharing via `ssss` (`ssss-split`/
-`ssss-combine`, widely available on Linux/macOS package managers) with
-a threshold like 3-of-5 custodians. cofferak does not implement secret
-sharing itself (ADR 0001 deliberately rejected building this in — see
-that ADR for why), so this is an operational practice layered on top:
-split the key, distribute shares to separate custodians/locations,
-destroy the unsplit copy once shares are distributed and verified.
+If no single person should be able to recover the vault alone, encrypt
+the key file with a random passphrase and split the *passphrase* with
+Shamir's Secret Sharing. (The key itself is about 3 KB, larger than
+tools like `ssss` accept, so split the short passphrase instead.)
+
+```bash
+PASS="$(openssl rand -hex 32)"
+age -p -o cofferak-root.key.age cofferak-root.key      # enter $PASS when prompted
+echo "$PASS" | ssss-split -t 3 -n 5 -q                  # 3-of-5 shares
+```
+
+Give each custodian one share; store copies of the encrypted
+`cofferak-root.key.age` anywhere offline (it is useless without three
+shares); destroy the unencrypted key file and the passphrase once the
+shares are distributed and a test recovery has succeeded. cofferak does
+not implement secret sharing itself (ADR 0001 deliberately rejected
+building this in), so this is an operational practice layered on top.
 
 ## Never do this
 

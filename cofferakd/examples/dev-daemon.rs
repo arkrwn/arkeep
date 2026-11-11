@@ -57,7 +57,8 @@ fn main() {
     }
 
     let dek = [0x42u8; 32]; // fixed, arbitrary — no sealing/persistence in this harness
-    let (root_pubkey, _root_privkey) = cofferak_core::crypto::generate_root_keypair();
+    let (root_pubkey, _root_privkey) =
+        cofferak_core::crypto::generate_root_keypair().expect("generate root keypair");
     let vault = VaultFile::new(root_pubkey);
 
     let mut tokens = BTreeMap::new();
